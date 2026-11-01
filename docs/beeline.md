@@ -11,7 +11,7 @@ beeline **住在盒子里**：`boxes/<box>/beeline.py`。
 
 理由不是「整齐」，是事实：beeline 与盒子是 **1:1 且不可分割** 的——
 它引用的 schema id 全部来自本盒的 `schemas.py`，每个 op 的 handler
-都在本盒的 `runner.py` 里。9 只盒子 9 条 beeline，没有一条被两只盒子
+都在本盒的 `runner.py` 里。每只盒子一条 beeline，没有一条被两只盒子
 共享，没有一条引用过别的盒子的 schema。
 
 放在仓库顶层一个单独的目录，只会让人以为存在一种「可复用的跨盒作业路线」，
@@ -70,7 +70,7 @@ flowchart TB
 
 5 个 operation / 1 个入口 / 1 个终态 / 线性链。
 
-> **当前已注册的 8 只盒子，beeline 全是线性链。**
+> **当前已注册的盒子，beeline 全是线性链。**
 > runtime 支持分支（`next` 带 `when` 条件）与 fan-in，
 > 但产品侧暂时没有用到——「声明了分支能力」和「产品真有分支」是两件事，
 > 这里只说前者。

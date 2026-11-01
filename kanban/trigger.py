@@ -53,6 +53,22 @@ from boxes.receipt.measure import COMPUTERS as RECEIPT_COMPUTERS
 from boxes.wms_requirement import get_definition as get_capture_definition
 from boxes.wms_requirement.measure import COMPUTERS as CAPTURE_COMPUTERS
 from boxes.wms_requirement.runner import RUNNER as CAPTURE_RUNNER
+from boxes.learning_growth.beeline import get_beeline as get_learning_growth_beeline
+from boxes.learning_growth.measure import COMPUTERS as LEARNING_GROWTH_COMPUTERS
+from boxes.learning_growth.runner import RUNNER as LEARNING_GROWTH_RUNNER
+from boxes.learning_growth import get_definition as get_learning_growth_definition
+from boxes.learning_math.beeline import get_beeline as get_learning_math_beeline
+from boxes.learning_math.measure import COMPUTERS as LEARNING_MATH_COMPUTERS
+from boxes.learning_math.runner import RUNNER as LEARNING_MATH_RUNNER
+from boxes.learning_math import get_definition as get_learning_math_definition
+from boxes.learning_chinese.beeline import get_beeline as get_learning_chinese_beeline
+from boxes.learning_chinese.measure import COMPUTERS as LEARNING_CHINESE_COMPUTERS
+from boxes.learning_chinese.runner import RUNNER as LEARNING_CHINESE_RUNNER
+from boxes.learning_chinese import get_definition as get_learning_chinese_definition
+from boxes.learning_english.beeline import get_beeline as get_learning_english_beeline
+from boxes.learning_english.measure import COMPUTERS as LEARNING_ENGLISH_COMPUTERS
+from boxes.learning_english.runner import RUNNER as LEARNING_ENGLISH_RUNNER
+from boxes.learning_english import get_definition as get_learning_english_definition
 from core import metrics as core_metrics
 from core.beeline_models import Beeline
 from core.field_map import (
@@ -111,6 +127,22 @@ BOX_REGISTRY: dict[
         get_receipt_definition,
         {"beeline_receipt_capture_v1": get_receipt_capture_beeline},
     ),
+    "learning_growth_box": (
+        get_learning_growth_definition,
+        {"beeline_learning_growth_v1": get_learning_growth_beeline},
+    ),
+    "learning_math_box": (
+        get_learning_math_definition,
+        {"beeline_learning_math_v1": get_learning_math_beeline},
+    ),
+    "learning_chinese_box": (
+        get_learning_chinese_definition,
+        {"beeline_learning_chinese_v1": get_learning_chinese_beeline},
+    ),
+    "learning_english_box": (
+        get_learning_english_definition,
+        {"beeline_learning_english_v1": get_learning_english_beeline},
+    ),
 }
 
 # box_id → 指标采集算法表。跟 BOX_REGISTRY 一一对应：
@@ -125,6 +157,10 @@ METRIC_COMPUTERS: dict[str, dict[str, core_metrics.Computer]] = {
     "wms_testing_box": WMS_TEST_COMPUTERS,
     "wms_ops_box": WMS_OPS_COMPUTERS,
     "wms_analysis_box": WMS_ANALYSIS_COMPUTERS,
+    "learning_growth_box": LEARNING_GROWTH_COMPUTERS,
+    "learning_math_box": LEARNING_MATH_COMPUTERS,
+    "learning_chinese_box": LEARNING_CHINESE_COMPUTERS,
+    "learning_english_box": LEARNING_ENGLISH_COMPUTERS,
 }
 
 # box_id → 该盒自带的 op 实现。
@@ -140,6 +176,10 @@ RUNNER_REGISTRY: dict[str, HandlerRunner] = {
     "wms_testing_box": WMS_TEST_RUNNER,
     "wms_ops_box": WMS_OPS_RUNNER,
     "wms_analysis_box": WMS_ANALYSIS_RUNNER,
+    "learning_growth_box": LEARNING_GROWTH_RUNNER,
+    "learning_math_box": LEARNING_MATH_RUNNER,
+    "learning_chinese_box": LEARNING_CHINESE_RUNNER,
+    "learning_english_box": LEARNING_ENGLISH_RUNNER,
 }
 
 # ~~Box 元信息（归属 / 接线）~~
@@ -311,11 +351,19 @@ def scope_field_map(scope: str) -> BeeBoxMap:
 
 
 def _layout_from_map(m: BeeBoxMap) -> dict[str, Any]:
-    """Map → 看板的布局 dict（形状不变，只是多了一个来源）"""
+    """Map → 看板的布局 dict（形状不变，只是多了一个来源）
+
+    **`shape` 告诉前端这是哪种形状**：
+    `"ring"` = 环（源盒在环上相邻，相邻即有交接），
+    `"star"` = 放射（源盒之间没有交接，**不能**摆在环上相邻的位置）。
+    前端按它选画法——画错了就是在暗示不存在的接线关系。
+    """
     return {
         "domain": m.domain,
         "layout": "radial" if m.drawable else "flat",
         "reason": m.reason,
+        "reason_code": m.reason_code,
+        "shape": m.shape,
         "center": m.center,
         "ring": list(m.ring),
         "handoffs": [list(e) for e in m.handoffs],

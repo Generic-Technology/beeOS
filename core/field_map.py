@@ -55,6 +55,17 @@ class BeeBoxMap:
     跨域、没有汇点、汇点不唯一、交接成环——四种情况各有各的原因，
     不合并成一个「画不出来」。
 
+    ## `shape`：这个域的接线是哪种形状
+
+    - `"ring"` —— **环**：域内是一条链（每环交给下一环），产出同时直投汇点
+    - `"star"` —— **放射**：域内**没有交接**，多只盒子各自直投汇点
+      （例如「数学 / 语文 / 英语」三只学科盒 → 一份成长记录）
+
+    为什么要分形状：环上**相邻 = 有交接边**是环的前提；
+    放射形状里源盒之间根本没有交接，把它们摆在环上相邻的位置
+    就是在暗示「这两只有关系」——那是一张撒谎的图。
+    所以放射的源盒**不摆成环**，摆成一把扇子。
+
     ## `reason_code`：`reason` 的机器可读版本
 
     `reason` 是**给人读的一句话**。但程序要判断的是另一件事：
@@ -78,6 +89,8 @@ class BeeBoxMap:
     reason: str = ""
     # 机器可读的判定码：见类文档。空 reason ⇔ "ok"
     reason_code: str = "ok"
+    # 这个域的接线形状："ring" / "star" / ""（画不出来）
+    shape: str = ""
 
     @property
     def drawable(self) -> bool:
@@ -96,6 +109,7 @@ class BeeBoxMap:
             "feedback": [list(e) for e in self.feedback],
             "reason": self.reason,
             "reason_code": self.reason_code,
+            "shape": self.shape,
             "drawable": self.drawable,
         }
 
@@ -190,6 +204,7 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
 
     reason = ""
     reason_code = "ok"
+    shape = ""
     if center is None:
         if len(ids) < 3:
             reason = f"域内只有 {len(ids)} 只盒子，撑不起环"
@@ -210,6 +225,29 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
             "闭环那条边应该声明成 feedback_into，不是 feeds_into"
         )
         reason_code = "cycle"
+    elif not handoffs:
+        # **域内一条交接边都没有** → 多源单汇（放射形状）。
+        #
+        # 例如「数学 / 语文 / 英语」三只学科盒，各自直投「成长记录」：
+        # 它们之间**没有交接**（数学的产出不是语文的输入），
+        # 所以这不是「一条链」，是一把扇子。
+        #
+        # 以前这里会判成「不是一条链」→ 域退回平铺 → 域画不出来。
+        # 但接线其实**没错**，错的是「域必须是链」这个前提。
+        #
+        # 孤岛要单独抓出来：有盒子既不投汇点、也不交接给任何人，
+        # 它在这个域里没有任何接线——那不是放射，是接错了。
+        orphans = [b for b in ids if b != center and b not in feeds_center]
+        if orphans:
+            reason = (
+                f"域内有盒子既不投给汇点、也不交接给谁：{'、'.join(orphans)} ——"
+                "它在这个域里没有任何接线"
+            )
+            reason_code = "isolated_box"
+        else:
+            shape = "star"
+            # 「放射」不是「坏」：它是**另一种成立的形状**，没有 reason。
+            reason_code = "star"
     else:
         broken = _broken_adjacency(ordered, handoffs)
         if broken:
@@ -229,6 +267,8 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
                 "要么**自己开一条链**"
             )
             reason_code = "not_a_chain"
+        else:
+            shape = "ring"
 
     return BeeBoxMap(
         domain=domain,
@@ -240,6 +280,7 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
         feedback=tuple(feedback),
         reason=reason,
         reason_code=reason_code,
+        shape=shape,
     )
 
 

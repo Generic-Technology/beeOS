@@ -2156,6 +2156,8 @@ const VS_PALETTE = {{
   // 三条价值流在一屏上分得开
   'Warehouse Management': {{ core: '217,119,6', edge: '180,83,9' }},
   'Expense Reimbursement': {{ core: '13,148,136', edge: '15,118,110' }},
+  // 学习线走玫红：跟上面四条都不撞，一屏上分得开是它的老问题
+  'Learning': {{ core: '219,39,119', edge: '190,24,93' }},
 }};
 
 function vsPalette(box) {{
@@ -2615,6 +2617,12 @@ const RADIAL_CARD_W = 204;
 // 紧凑卡（名字 + 未实现徽章 + 一行实测）把这个空档还回来。
 const RADIAL_CARD_H = 170;
 const RADIAL_GAP = 50;
+// **放射形状**里，源盒那一行与汇点之间留出的**空带**。
+//
+// 为什么要有它：两条斜辐条要从这条带子里斜着收拢到汇点卡的上沿。
+// 行贴得太近时，它们会擦过中间那只源盒的铭牌——
+// 一条线从别人的名字上穿过去，比没有这条线还糟。
+const STAR_GAP = 70;
 // 环半径要比卡高大一倍多，虚线才有地方站：中心卡边框到环卡边框的距离
 // 就是 R − 卡高。贴着卡走等于没有连线。
 const RADIAL_R_FACTOR = 1.9;
@@ -2643,10 +2651,20 @@ function renderRadial(layout, stats) {{
   const byId = {{}};
   for (const s of stats) byId[s.box_id] = s;
 
+  // 这个域是**环**还是**放射**：
+  //   ring —— 源盒在环上相邻，相邻即有交接边（交接边画实线）
+  //   star —— 源盒之间**没有**交接，各自直投汇点（只画累积虚线）
+  //
+  // 两种形状的**位置算法不同**，不能共用：
+  // 环上「相邻 = 有交接」是环的前提；放射里源盒两两之间都没有交接，
+  // 把它们摆在环上相邻的位置，就是在暗示「这两只有关系」——
+  // **画出来的是一张撒谎的图**。所以放射的源盒排成**一行**，不排成环。
+  const isStar = layout.shape === 'star';
+
   // 半径由卡片尺寸和数量**算**出来：
   //   横向：相邻两张的弦长 2R·sin(π/n) ≥ 卡宽 + 间隙
   //   纵向：R ≥ 卡高 × RADIAL_R_FACTOR，让虚线辐条站得住
-  const R = Math.max(
+  const R = isStar ? 0 : Math.max(
     (RADIAL_CARD_W + RADIAL_GAP) / 2 / Math.sin(Math.PI / n) + RADIAL_CHORD_SLACK,
     RADIAL_CARD_H * RADIAL_R_FACTOR,
   );
@@ -2654,9 +2672,25 @@ function renderRadial(layout, stats) {{
   // 一律先在**以圆心为原点**的坐标系里算，最后再平移到画布中心。
   // 直接在画布里猜 W/H，就得靠常数去凑「最远那个点在哪」。
   const pos = {{}};
-  layout.ring.forEach((id, i) => {{
-    pos[id] = polar(0, 0, R, -Math.PI / 2 + i * step);
-  }});
+  if (isStar) {{
+    // **放射**：源盒排成一行，在汇点**上方**。
+    //
+    // 放在上方（不是下方）：汇点卡的铭牌「汇点 · 本域所有产出落进这里」
+    // 挂在它的**下面**，源盒若在下方，那条从中间源盒直下来的辐条
+    // 会正穿在这行字上。
+    //
+    // 行与汇点之间留一条**空带**（STAR_GAP）：两条斜辐条要从这条带子里
+    // 斜着收拢到汇点，行太靠上时它们会擦过中间那只盒子的铭牌。
+    const pitch = RADIAL_CARD_W + RADIAL_GAP;
+    const rowY = -(RADIAL_CARD_H + RADIAL_GAP + STAR_GAP);
+    layout.ring.forEach((id, i) => {{
+      pos[id] = {{ x: (i - (n - 1) / 2) * pitch, y: rowY }};
+    }});
+  }} else {{
+    layout.ring.forEach((id, i) => {{
+      pos[id] = polar(0, 0, R, -Math.PI / 2 + i * step);
+    }});
+  }}
   const center = layout.center;
   const cpos = {{ x: 0, y: 0 }};
 
@@ -2825,16 +2859,25 @@ function renderRadial(layout, stats) {{
   let cards = layout.ring.map(id => card(id, false)).join('');
   if (center) cards += card(center, true);
 
-  return `<div class="radial-legend">
+  // 图例按**形状**给：放射形状里没有交接边，
+  // 还挂着「交接」和「反馈」两行，只会让读者去找不存在的线。
+  const legend = isStar
+    ? `<div class="radial-legend">
+      <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-feed"/></svg>累积：产出直投汇点</span>
+      <span class="muted">放射：这些盒子之间没有交接，各自直投汇点</span>
+    </div>`
+    : `<div class="radial-legend">
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-handoff"/></svg>交接：交出去让下一只验</span>
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-feed"/></svg>累积：产出并进系统档案</span>
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-feedback"/></svg>反馈：上一轮结论变成新一轮输入</span>
       <span class="muted">环序 = 生命周期顺序，箭头顺着环走</span>
-    </div>
+    </div>`;
+
+  return `${{legend}}
     <div class="radial-host">
       <div class="radial-scale">
       <div class="radial" style="width:${{W}}px;height:${{H}}px">
-      <svg class="radial-edges" width="${{W}}" height="${{H}}" viewBox="0 0 ${{W}} ${{H}}">
+      <svg class="radial-edges" width="${{W}}" height="${{H}}" viewBox="0 0 ${{W}} ${{H}}" data-shape="${{layout.shape || 'ring'}}">
         <defs>
           <marker id="arrow-handoff" viewBox="0 0 10 10" refX="9" refY="5"
                   markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -2896,10 +2939,35 @@ function snapRadialEdges() {{
     }};
   }}
   if (!Object.keys(box).length) return;
+  const isStar = svg.getAttribute('data-shape') === 'star';
   for (const el of svg.querySelectorAll('[data-from]')) {{
     const a = box[el.getAttribute('data-from')];
     const b = box[el.getAttribute('data-to')];
     if (!a || !b) continue;
+    if (isStar) {{
+      // **放射形状的锚点跟环不一样**。
+      //
+      // 环里，线按方向从卡片边缘出去：环上的卡片四周都是空的，
+      // 出线方向朝里，擦不到铭牌。
+      // 放射里源盒排成一行、汇点在下面，线是**斜着**收拢过去的——
+      // 按方向算出来的出口在卡片的角上，那条线正好从铭牌上的字穿过去
+      // （实测：它压住了「未跑过」那个徽章）。
+      //
+      // 所以放射的线从源盒的**铭牌下方**出发，落在汇点卡的**上沿**。
+      const p0 = {{ x: a.cx, y: a.cy + a.down }};
+      const dy = b.cy - p0.y;
+      const t = dy === 0 ? 0 : (b.cy - b.up - p0.y) / dy;
+      const land = p0.x + (b.cx - p0.x) * t;
+      const p1 = {{
+        x: Math.max(b.cx - b.hw, Math.min(b.cx + b.hw, land)),
+        y: b.cy - b.up,
+      }};
+      el.setAttribute('x1', p0.x.toFixed(1));
+      el.setAttribute('y1', p0.y.toFixed(1));
+      el.setAttribute('x2', p1.x.toFixed(1));
+      el.setAttribute('y2', p1.y.toFixed(1));
+      continue;
+    }}
     const dx = b.cx - a.cx, dy = b.cy - a.cy;
     const len = Math.hypot(dx, dy) || 1;
     const p0 = edgeExit(a, dx / len, dy / len);
@@ -4162,9 +4230,14 @@ function render(data) {{
     // 其中几只盒子——环上缺段还叫拓扑，那是骗人。所以任务一律平铺。
     const topology = (_view === VIEW_TOPOLOGY && canRadial && !_task);
     if (topology) {{
+      // 标题也跟着**形状**走：放射形状里说「环上 N 只」是错的——
+      // 那里根本没有环，源盒是排成一行、各自直投汇点。
+      const shapeNote = lay.shape === 'star'
+        ? `${{lay.ring.length}} 只直投汇点 · 它们之间没有交接`
+        : `环上 ${{lay.ring.length}} 只 · 汇点由接线推导`;
       html += `<div class="section"><div class="section-title">${{esc(domainLabel(lay.domain))}} 域的
         <span class="brand-case">BeeBox Map</span>
-        （环上 ${{lay.ring.length}} 只 · 汇点由接线推导）</div>`;
+        （${{shapeNote}}）</div>`;
       html += renderRadial(lay, data.box_stats);
       html += `</div>`;
     }} else {{

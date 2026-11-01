@@ -243,11 +243,114 @@ def test_the_verdict_is_machine_readable_not_just_a_sentence():
     ])
     assert two_sinks.reason_code == "multiple_sinks"
 
-    # 判定码和 reason 要**对得上**：不能有码而没话，也不能有话而没码
+    # 判定码和 reason 要**对得上**：有话才需要码。
+    # 「放射」是**另一种成立的形状**，不是「画不出来」——所以它没有 reason。
     for m in (ok, small, branched, cyclic, two_sinks):
-        assert bool(m.reason) == (m.reason_code != "ok"), (
+        assert bool(m.reason) == (m.reason_code not in ("ok", "star")), (
             f"{m.domain}: reason={m.reason!r} / code={m.reason_code!r} 对不上"
         )
+
+
+# ---------- 多源单汇（放射形状） ----------
+
+
+def test_a_star_domain_is_drawn_as_a_fan_not_as_a_ring():
+    """**多源单汇**（放射）：数学 / 语文 / 英语 → 一份成长记录
+
+    这是**另一种成立的形状**，不是「接线坏了」：
+    三只学科盒之间**没有交接**（数学的产出不是语文的输入），
+    各自直投汇点。以前这里会判成「不是一条链」→ 域退回平铺 →
+    「接一个新域」永远接不进来。
+
+    放射里源盒**不能摆在环上相邻的位置**——环上「相邻 = 有交接」
+    是环的前提，在放射里摆成环就是在暗示不存在的接线关系。
+    """
+    m = derive_field_map("Learning", [
+        _p("math_box", domain="Learning", feeds=["growth_box"]),
+        _p("chinese_box", domain="Learning", feeds=["growth_box"]),
+        _p("english_box", domain="Learning", feeds=["growth_box"]),
+        _p("growth_box", domain="Learning"),
+    ])
+    assert m.center == "growth_box"
+    assert m.shape == "star"
+    assert m.reason == "", f"放射形状不该有 reason：{m.reason}"
+    assert m.reason_code == "star"
+    assert m.drawable, "放射是成立的形状，画得出来"
+    # 源盒之间**没有交接**：交接边必须为空
+    assert m.handoffs == ()
+    assert set(m.feeds_center) == {"math_box", "chinese_box", "english_box"}
+
+
+def test_a_star_domain_with_an_isolated_box_is_refused():
+    """放射形状里混进一只**哪都不接**的盒子 → 判红
+
+    它既不投汇点、也不交接给谁 —— 那不是放射，是接错了。
+    放过它 = 它的产出落在虚空里，而图上看不出来。
+    """
+    m = derive_field_map("Learning", [
+        _p("math_box", domain="Learning", feeds=["growth_box"]),
+        _p("growth_box", domain="Learning"),
+        _p("lost_box", domain="Learning"),
+    ])
+    assert not m.drawable
+    assert m.reason_code == "isolated_box"
+    assert "lost_box" in m.reason, "要点名是哪一只接空了"
+
+
+def test_two_independent_chains_are_still_refused():
+    """**两条独立的链**在一个域里 → 仍然判「不是一条链」
+
+    这条是「放射别把真分叉一起放过」的守卫：
+    放射的前提是「域内**一条交接边都没有**」。
+    只要有交接边，环序相邻就必须真的有交接——否则画出来的是撒谎的环。
+    """
+    m = derive_field_map("Learning", [
+        _p("a", feeds=["b"]),
+        _p("b", feeds=["hub"]),
+        _p("x", feeds=["y"]),
+        _p("y", feeds=["hub"]),
+        _p("hub"),
+    ])
+    assert m.center == "hub"
+    assert m.shape == "", "有交接边就不该判成放射"
+    assert m.reason_code == "not_a_chain"
+
+
+def test_the_layout_tells_the_frontend_which_shape_it_is():
+    """看板布局里必须带 `shape` —— 前端要靠它选画法
+
+    画错形状的后果不是「不好看」，是**暗示了不存在的接线关系**：
+    把放射的源盒摆成环，读者就会以为它们两两相邻即相连。
+    """
+    from kanban.trigger import domain_layout
+
+    lay = domain_layout("Learning")
+    assert lay["shape"] in ("ring", "star", "")
+    # 环形状的域（WMS）仍然是环
+    assert domain_layout("WMS")["shape"] == "ring"
+
+
+def test_the_star_layout_does_not_put_the_sources_on_a_ring():
+    """放射形状的源盒**不许**摆成圆 —— 那是在暗示不存在的交接
+
+    环上「相邻 = 有交接」是环的前提；放射里源盒两两之间都没有交接，
+    把它们摆在环上相邻的位置 = 画出一张撒谎的图。
+
+    放射的源盒排成**一行**（按卡宽 + 间隙），汇点在下方的中间。
+    """
+    from tests.test_web_kanban import _extract_js_function
+
+    src = _extract_js_function("renderRadial")
+    assert "layout.shape === 'star'" in src, (
+        "前端没读 shape —— 它不知道这个域是放射形状"
+    )
+    star_branch = src[src.index("if (isStar) {"): src.index("} else {")]
+    assert "polar(" not in star_branch, (
+        "放射的源盒不许摆在圆上：环上相邻 = 有交接，放射里没有交接"
+    )
+    assert "pitch" in star_branch, "放射的源盒排成一行（按卡宽 + 间隙）"
+    ring_branch = src[src.index("} else {"):]
+    assert "polar(" in ring_branch, "环形状还是摆在圆上"
 
 
 # ---------- 它是一个结构，不只是一张图 ----------

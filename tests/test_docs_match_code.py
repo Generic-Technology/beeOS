@@ -299,6 +299,63 @@ def test_readme_has_no_hardcoded_box_count() -> None:
     assert not bad, "\n".join(bad)
 
 
+# 根 README 的盒子清单表：`| [`目录/`](路径) | `box_id` | 域 | 判据 | 例外 | 成熟度 |`
+_ROOT_TABLE_ROW = re.compile(
+    r"^\s*\|\s*\[`[^`]+/`\]\(boxes/[^)]+\)\s*\|\s*"
+    r"`(?P<box_id>[a-z0-9_]+)`\s*\|[^|]*\|\s*"
+    r"(?P<acceptance>\d+)\s*\|\s*(?P<exceptions>\d+)\s*\|\s*"
+    r"(?P<maturity>[a-z]+)\s*\|\s*$",
+    re.M,
+)
+
+
+def test_the_root_readme_box_table_matches_the_definitions() -> None:
+    """根 README 盒子清单里的**条数和成熟度**必须等于实际 definition
+
+    **为什么根 README 也得查**：它是脚手架会改的那一份
+    （`scripts/new_box.py --apply` 往表里加一行）。
+    数字一抄就过期——**真实事故**：`wms_design` 的例外从 4 条变成 5 条，
+    表里还写着 4，而**没有任何东西会报错**：读者照着表核对，
+    差的那一条就被漏掉了。
+
+    早年的理由是「表格里有多只盒子，数字不带归属，拿不准就不查」——
+    但每行都带着自己的 `box_id`，**带得准**。
+
+    域那一列不查：空域在表里显示成「未归域」，那是**显示约定**，
+    不是盒子声明的值。
+    """
+    from kanban.trigger import BOX_REGISTRY
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    rows = list(_ROOT_TABLE_ROW.finditer(readme))
+    assert rows, "根 README 的盒子清单表没解析出任何一行"
+
+    bad: list[str] = []
+    for row in rows:
+        box_id = row.group("box_id")
+        entry = BOX_REGISTRY.get(box_id)
+        if entry is None:
+            bad.append(f"{box_id}: 表里有这只盒子，注册表里没有")
+            continue
+        d = entry[0]()
+        actual = (
+            len(d.result.acceptance),
+            len(d.result.exceptions or []),
+            d.result.maturity,
+        )
+        claimed = (
+            int(row.group("acceptance")),
+            int(row.group("exceptions")),
+            row.group("maturity"),
+        )
+        if actual != claimed:
+            bad.append(
+                f"{box_id}: 表里写着 {claimed[0]} 条判据 / {claimed[1]} 条例外 / "
+                f"{claimed[2]}，实际是 {actual[0]} / {actual[1]} / {actual[2]}"
+            )
+    assert not bad, "\n".join(bad)
+
+
 def _box_facts() -> dict[str, tuple[int, int]]:
     """目录 → (判据条数, 例外条数)。按目录读 definition，不靠目录名猜。"""
     facts: dict[str, tuple[int, int]] = {}

@@ -939,6 +939,10 @@ class TestRadialLayoutIsDerived:
 
         环上相邻 = 有交接边。环序错了，读者会以为相邻两只之间有交接，
         而实际中间隔着别人——比少画一条边更难发现。
+
+        **放射形状（star）另有一条**：域内没有交接边，
+        源盒之间两两都不相连——所以「相邻」在那里根本不成立，
+        该验的是「每只源盒都直投汇点」。
         """
         from kanban.trigger import domain_layout
 
@@ -951,6 +955,23 @@ class TestRadialLayoutIsDerived:
             assert set(ring) | {lay["center"]} == set(lay["boxes"]), (
                 f"{domain!r}: 环 + 圆心没覆盖全域的盒子"
             )
+
+            if lay.get("shape") == "star":
+                # **放射**：源盒各自直投汇点，之间没有交接。
+                # 验的是「每只都真的投过去了」——
+                # 少一只 = 它的产出没落进档案，而图上看不出来。
+                not_fed = [
+                    b for b in ring
+                    if lay["center"] not in BOX_REGISTRY[b][0]().placement.feeds_into
+                ]
+                assert not not_fed, (
+                    f"{domain!r}: 这些盒子没投给汇点：{not_fed}"
+                )
+                assert not handoffs, (
+                    f"{domain!r}: 放射形状里不该有交接边，却有 {handoffs}"
+                )
+                continue
+
             seen = set()
             for i in range(len(ring) - 1):
                 pair = (ring[i], ring[i + 1])
