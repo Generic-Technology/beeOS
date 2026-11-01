@@ -62,8 +62,8 @@ LEARNING_MATH_BOX = BeeBoxDefinition(
         TaskDef(
             type="run_math",
             task_schema="schema_learning_math_input",
-            beeline_id="beeline_learning_math_v1",
-            beeline_version=1,
+            beeline_id="beeline_learning_math_v2",
+            beeline_version=2,
             trigger="记一次数学练习：作业、单元测、订正、复习",
         ),
     ],

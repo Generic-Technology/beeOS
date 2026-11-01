@@ -62,8 +62,8 @@ LEARNING_CHINESE_BOX = BeeBoxDefinition(
         TaskDef(
             type="run_chinese",
             task_schema="schema_learning_chinese_input",
-            beeline_id="beeline_learning_chinese_v1",
-            beeline_version=1,
+            beeline_id="beeline_learning_chinese_v2",
+            beeline_version=2,
             trigger="记一次语文练习：阅读理解、作文、背诵",
         ),
     ],

@@ -62,8 +62,8 @@ LEARNING_ENGLISH_BOX = BeeBoxDefinition(
         TaskDef(
             type="run_english",
             task_schema="schema_learning_english_input",
-            beeline_id="beeline_learning_english_v1",
-            beeline_version=1,
+            beeline_id="beeline_learning_english_v2",
+            beeline_version=2,
             trigger="记一次英语练习：听写、单词、课文朗读",
         ),
     ],

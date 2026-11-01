@@ -22,6 +22,14 @@ from typing import Any, Optional
 from core.models import FieldDef, SchemaDef, is_not_applicable
 
 
+# 媒体字段（media=image）的值能有多大。
+#
+# 8 MB 是**投料口那条线**的同一个数（前端 MEDIA_MAX_BYTES）——
+# 两边不一样的话，就会出现「前端放行、后端拒」或者反过来，
+# 而用户看到的报错会指向一个他改不动的地方。
+MEDIA_MAX_BYTES = 8 * 1024 * 1024
+
+
 # ============================================================
 # 单字段校验
 # ============================================================
@@ -110,12 +118,70 @@ def _missing_field_error(path: str, field: FieldDef) -> str:
     return f"{base}（{desc}）" if desc else base
 
 
+def _check_media(field: FieldDef, value: Any, path: str, errors: list[str]) -> None:
+    """媒体字段的值：必须是一张**认得的**图（data URL 或 http 直链）
+
+    报错都要带能照着做的材料：收什么格式、怎么改。
+    """
+    if not isinstance(value, str) or not value.strip():
+        errors.append(
+            f"{path}: 媒体字段要一张图片（data URL 或 http 直链），现在拿到的是 "
+            f"{type(value).__name__}"
+        )
+        return
+
+    text = value.strip()
+    if text.lower().startswith("data:"):
+        head = text[5:].split(";")[0].strip().lower()
+        allowed = field.accepted_media_types()
+        if head not in allowed:
+            errors.append(
+                f"{path}: 不收 {head or '（没写 MIME）'}——这里只收 "
+                f"{' / '.join(allowed)}。"
+                "手机拍的照片默认是 HEIC，先在相册里另存为 JPEG 再投。"
+            )
+            return
+        # base64 长度 ≈ 原始字节 × 4/3
+        payload = text.partition(",")[2]
+        approx = int(len(payload) * 3 / 4)
+        if approx > MEDIA_MAX_BYTES:
+            errors.append(
+                f"{path}: 图片约 {approx / 1048576:.1f} MB，超过 "
+                f"{MEDIA_MAX_BYTES // 1048576} MB 上限——"
+                "拍小一点，或者裁掉没用的部分再投"
+            )
+        return
+
+    if text.lower().startswith(("http://", "https://")):
+        return
+
+    errors.append(
+        f"{path}: 这不是图片——媒体字段只收 data URL 或 http(s) 直链，"
+        f"现在拿到的是 {text[:40]!r}"
+    )
+
+
 def _check_field(
     field: FieldDef, value: Any, path: str, errors: list[str], schemas: Any = None
 ) -> None:
     """校验单个字段（含 object / array / ref 递归）"""
     if value is None:
         # required=True 时显式 None 视同缺失；缺字段由上层 required 检查兜
+        return
+
+    # ---- media: 媒体字段 ----
+    #
+    # 媒体字段的值是一张图（data URL 或 http 直链）。
+    # 形状上它就是个字符串，所以**光靠类型校验它会一路放行到模型接口**，
+    # 到那儿才来一句 400（invalid param: image data url media type
+    # [...] not supported）——那是确定性拒绝，重试无用，
+    # 而且用户等了一轮才看到一句读不懂的 JSON。
+    #
+    # 所以在这一层就查两件事：**是什么格式**（在字段自己声明的白名单里吗）
+    # 和 **多大**。白名单归字段所有（`media_accept`）——
+    # 盒子说「我收 HEIC」（它在盒子里转 JPEG），前端就不该替它改口径。
+    if field.media:
+        _check_media(field, value, path, errors)
         return
 
     # ---- ref: 引用类型 ----

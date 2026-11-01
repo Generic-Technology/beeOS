@@ -133,15 +133,15 @@ BOX_REGISTRY: dict[
     ),
     "learning_math_box": (
         get_learning_math_definition,
-        {"beeline_learning_math_v1": get_learning_math_beeline},
+        {"beeline_learning_math_v2": get_learning_math_beeline},
     ),
     "learning_chinese_box": (
         get_learning_chinese_definition,
-        {"beeline_learning_chinese_v1": get_learning_chinese_beeline},
+        {"beeline_learning_chinese_v2": get_learning_chinese_beeline},
     ),
     "learning_english_box": (
         get_learning_english_definition,
-        {"beeline_learning_english_v1": get_learning_english_beeline},
+        {"beeline_learning_english_v2": get_learning_english_beeline},
     ),
 }
 
@@ -441,6 +441,15 @@ class TriggerError(ValueError):
     """task 触发校验失败（box 未知 / task_type 未注册 / beeline 不匹配）"""
 
 
+# 一张 1x1 的 JPEG（示例投料里的「图片」就是它）
+_TINY_JPEG_DATA_URL = (
+    "data:image/jpeg;base64,"
+    "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a"
+    "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAA"
+    "AAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="
+)
+
+
 def _sample_field(field: FieldDef, schemas: Any = None) -> Any:
     """按 FieldDef 生成示例值（payload 骨架）
 
@@ -449,6 +458,15 @@ def _sample_field(field: FieldDef, schemas: Any = None) -> Any:
     于是看板给出的示例是一份**投不出去的东西**。
     用户照着示例投，得到的是一句看不懂的契约错误。
     """
+    if field.media:
+        # 媒体字段的示例值必须是一张**真的**图。
+        #
+        # 给个空串或占位符的话，示例投料就**投不出去**——
+        # 契约闸会拒（media 字段的值必须是 data URL 或 http 直链），
+        # 于是看板上的「填入示例」给的是一份投出去就报错的东西。
+        # 1x1 的 JPEG：格式合法，够过契约闸；至于它读不出什么，
+        # 由盒子的核对跳如实报错（那张图里本来就没有分数）。
+        return _TINY_JPEG_DATA_URL
     if field.type == "string":
         return ""
     if field.type == "integer":
@@ -492,6 +510,32 @@ def _resolve_schema(schema_id: str, schemas: Any) -> Any:
 
 # 手写示例（演示效果优于 schema 骨架）；缺省回退到 schema 生成
 _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
+    ("learning_math_box", "run_math"): {
+        # 示例里**没有 photo**：一张图没法用文字示例代替，
+        # 照片那一栏得人自己拍。示例负责把「手填的那几栏」摆出来。
+        "activity": "数学作业",
+        "observed_at": "2026-11-01T16:30",
+        "evidence": "作业本 P12",
+        "source_kind": "observed",
+        "score": 92,
+        "total": 100,
+    },
+    ("learning_chinese_box", "run_chinese"): {
+        "activity": "语文作业",
+        "observed_at": "2026-11-01T16:30",
+        "evidence": "作业本 P12",
+        "source_kind": "observed",
+        "reading_score": 18,
+        "reading_total": 20,
+    },
+    ("learning_english_box", "run_english"): {
+        "activity": "英语听写",
+        "observed_at": "2026-11-01T16:30",
+        "evidence": "听写本 P8",
+        "source_kind": "observed",
+        "dictation_score": 18,
+        "dictation_total": 20,
+    },
     ("wms_design_box", "handle_design_request"): {
         # **需求集整个装在 ref: 字段里**——设计盒的投料走接力通道，
         # 形状由设计盒自己声明（schema_design_task_input）。
@@ -653,6 +697,26 @@ def list_task_entries(box_id: str) -> list[dict[str, Any]]:
                     "accept": f.accepted_media_types(),
                 }
                 for f in media_fields(schema)
+            ],
+            # **投料口表单要用的字段清单**。
+            #
+            # 为什么 media 形态需要它：以前 media 投料口只交图片本身，
+            # 图片之外的字段一个都投不进去——「拍一张作业照，再补一句备注」
+            # 这种最自然的用法做不了。
+            #
+            # 字段形状归 schema 所有：前端照着这份清单渲染输入框，
+            # **不自己猜字段叫什么、是什么类型**。猜一次就多一份会漂的真相。
+            "fields": [
+                {
+                    "name": f.name,
+                    "type": f.type,
+                    "required": f.required,
+                    "media": f.media,
+                    "description": f.description or "",
+                    "values": list(f.values) if f.values else None,
+                    "item_type": (f.items.type if f.items else None),
+                }
+                for f in (schema.fields if schema else [])
             ],
         })
     return entries

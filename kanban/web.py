@@ -1292,6 +1292,36 @@ HTML_PAGE = f"""<!DOCTYPE html>
     font-size: 11px; padding: 1px 5px; border-radius: 4px;
     background: #fff; border: 1px solid #cbd5e1;
   }}
+  /* 「拍照」是手机上最常用的那条路（作业本就在桌上），
+     拖拽和 ⌘V 粘贴是桌面那条路——两条都得摆出来，
+     只摆一条就等于把另一半用户赶到「先去相册存一张再传」去。 */
+  .media-actions {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+  .media-cam-btn {{
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    padding: 6px 14px; border-radius: 8px;
+    border: 1px solid #2563eb; background: #eff6ff; color: #1d4ed8;
+  }}
+  .media-cam-btn:hover {{ background: #dbeafe; }}
+  .media-cam-note {{ font-size: 11px; color: #94a3b8; }}
+  /* 照片之外的事实：表单。放在图片控件下面——
+     「拍一张 + 补一句」是一条动作，分成两屏就断了。 */
+  .media-fields {{ display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }}
+  .media-fields[hidden] {{ display: none; }}
+  .mf-title {{ font-size: 11px; color: #64748b; }}
+  .mf-row {{
+    display: grid; grid-template-columns: 96px 1fr; gap: 6px 8px;
+    align-items: center;
+  }}
+  .mf-label {{ font-size: 12px; color: #334155; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+  .mf-input {{
+    font-size: 12px; padding: 5px 8px; border-radius: 6px;
+    border: 1px solid #cbd5e1; background: #fff; color: #0f172a;
+    width: 100%; box-sizing: border-box;
+  }}
+  .mf-area {{ resize: vertical; min-height: 34px; }}
+  .mf-flag {{ font-size: 10px; color: #94a3b8; grid-column: 2; }}
+  .mf-flag.req {{ color: #b45309; }}
+  .mf-desc {{ font-size: 10px; color: #94a3b8; grid-column: 2; }}
   /* ===== receipt 视图：小票 =====
      金额区用等宽右对齐——对账时要看的是小数点在哪一位。 */
   .rc-head {{ display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 6px; }}
@@ -3522,11 +3552,19 @@ function buildShell(boxId, box, entries) {{
   const payloadBox = isMedia
     ? `<div class="media-intake" id="media-intake">
          <input type="file" id="media-file" accept="${{acceptAttr}}" hidden>
+         <!-- 手机上的「拍照」：capture=environment 直接调后置相机。
+              拖拽 / ⌘V 粘贴是桌面那条路，拍照是手机那条路——两条都得有，
+              否则在手机上只能先去相册选一张，再传上来。 -->
+         <input type="file" id="media-camera" accept="${{acceptAttr}}" capture="environment" hidden>
          <div class="media-drop" id="media-drop">
            <div class="media-drop-title">把图片拖到这里</div>
            <div class="media-drop-hint">
              或 <button type="button" class="link-btn" onclick="pickMedia()">选择文件</button>
              ，也可以直接 <kbd>⌘V</kbd> 粘贴截图
+           </div>
+           <div class="media-actions">
+             <button type="button" class="media-cam-btn" onclick="pickCamera()">📷 拍照</button>
+             <span class="media-cam-note">手机上点它直接调相机</span>
            </div>
            <div class="media-drop-limit">仅支持单张图片，${{acceptHint}} 格式，最大 8 MB</div>
          </div>
@@ -3542,7 +3580,8 @@ function buildShell(boxId, box, entries) {{
            </div>
          </div>
          <div class="media-error" id="media-error" hidden></div>
-       </div>`
+       </div>
+       <div class="media-fields" id="media-fields" hidden></div>`
     : `<textarea id="task-payload" rows="12" spellcheck="false"
                     oninput="onPayloadInput()"
                     placeholder="${{placeholder}}"></textarea>`;
@@ -3584,6 +3623,7 @@ function buildShell(boxId, box, entries) {{
   </div>`;
   onTaskTypeChange();
   initMediaIntake();
+  renderMediaFields(firstEntry);
 
   const stage = document.getElementById('box2d-stage');
   _scene2d = ops.length > 0 ? initBox2D(stage, ops) : null;
@@ -3760,7 +3800,23 @@ function isPristineSample() {{
 function toggleSample() {{
   const typeEl = document.getElementById('task-type');
   const payloadEl = document.getElementById('task-payload');
-  if (!typeEl || !payloadEl) return;
+  if (!typeEl) return;
+  if (!payloadEl) {{
+    // media 形态没有文本框——示例填进**表单**里（图片那一栏填不了，
+    // 得人自己拍）。没有表单就没什么可填的。
+    const entry0 = (window._taskEntries || {{}})[typeEl.value] || {{}};
+    const box0 = document.getElementById('media-fields');
+    if (!box0) return;
+    const sample0 = entry0.sample_payload || {{}};
+    box0.querySelectorAll('.mf-input').forEach((el) => {{
+      const name = el.id.replace(/^mf-/, '');
+      const v = sample0[name];
+      if (v === undefined || v === null) return;
+      el.value = Array.isArray(v) ? v.join('\\n') : String(v);
+    }});
+    clearPayloadError();
+    return;
+  }}
   const entry = (window._taskEntries || {{}})[typeEl.value] || {{}};
 
   if (!payloadEl.value.trim()) {{
@@ -3880,8 +3936,10 @@ function acceptMedia(file) {{
     return;
   }}
   const reader = new FileReader();
-  reader.onload = () => {{
-    window._mediaData = reader.result;
+  reader.onload = async () => {{
+    const raw = reader.result;
+    const shrunk = await shrinkImage(raw);
+    window._mediaData = shrunk || raw;
     const img = document.getElementById('media-img');
     const nm = document.getElementById('media-name');
     const drop = document.getElementById('media-drop');
@@ -3897,7 +3955,7 @@ function acceptMedia(file) {{
     const noPreview = NO_PREVIEW_TYPES[type];
     if (img) {{
       if (noPreview) img.removeAttribute('src');
-      else img.src = reader.result;
+      else img.src = window._mediaData;
       img.hidden = !!noPreview;
     }}
     if (note) note.hidden = !noPreview;
@@ -3913,12 +3971,120 @@ function acceptMedia(file) {{
   reader.readAsDataURL(file);
 }}
 
+// ===== media 投料：图片之外的那些字段 =====
+//
+// 以前 media 投料口只交图片本身，图片之外的字段一个都投不进去——
+// 「拍一张作业照，再补一句备注」这种最自然的用法做不了。
+//
+// 字段清单由后端按 schema 给（entry.fields），**前端不自己列**：
+// 猜一次字段名就多一份会漂的真相——盒子改个字段名，看板就得跟着改。
+function renderMediaFields(entry) {{
+  const box = document.getElementById('media-fields');
+  if (!box) return;
+  const fields = (entry && entry.fields) || [];
+  const rest = fields.filter((f) => !f.media);
+  if (!rest.length) {{
+    box.innerHTML = '';
+    box.hidden = true;
+    return;
+  }}
+  const rows = rest.map((f) => {{
+    const id = 'mf-' + f.name;
+    const desc = f.description ? `<div class="mf-desc">${{esc(f.description)}}</div>` : '';
+    const flag = f.required
+      ? '<span class="mf-flag req">必填</span>'
+      : '<span class="mf-flag opt">照片没读出来时可以留空</span>';
+    let input;
+    if (f.type === 'enum' && f.values && f.values.length) {{
+      const opts = f.values
+        .map((v) => `<option value="${{esc(String(v))}}">${{esc(String(v))}}</option>`)
+        .join('');
+      input = `<select id="${{id}}" class="mf-input"><option value="">（不填）</option>${{opts}}</select>`;
+    }} else if (f.type === 'number' || f.type === 'integer') {{
+      input = `<input id="${{id}}" class="mf-input" type="number" step="any" inputmode="decimal" />`;
+    }} else if (f.type === 'array') {{
+      input = `<textarea id="${{id}}" class="mf-input mf-area" rows="2" placeholder="一行一条"></textarea>`;
+    }} else {{
+      input = `<input id="${{id}}" class="mf-input" type="text" />`;
+    }}
+    return `<div class="mf-row">`
+      + `<label class="mf-label" for="${{id}}">${{esc(f.name)}}</label>`
+      + input + flag + desc
+      + `</div>`;
+  }}).join('');
+  box.innerHTML = `<div class="mf-title">照片之外的事实（照片读不出来的，填这里）</div>${{rows}}`;
+  box.hidden = false;
+}}
+
+function collectMediaFields() {{
+  const box = document.getElementById('media-fields');
+  if (!box) return {{}};
+  const out = {{}};
+  box.querySelectorAll('.mf-input').forEach((el) => {{
+    const name = el.id.replace(/^mf-/, '');
+    const raw = (el.value || '').trim();
+    if (!raw) return;
+    if (el.type === 'number') {{
+      const n = Number(raw);
+      if (!isNaN(n)) out[name] = n;
+      return;
+    }}
+    if (el.tagName === 'TEXTAREA') {{
+      // 数组：一行一条，空行不算
+      const items = raw.split('\\n').map((s) => s.trim()).filter(Boolean);
+      if (items.length) out[name] = items;
+      return;
+    }}
+    out[name] = raw;
+  }});
+  return out;
+}}
+
+function pickCamera() {{
+  const f = document.getElementById('media-camera');
+  if (f) f.click();
+}}
+
+// ===== 大图先缩一缩 =====
+//
+// 手机拍一张作业照 3~5 MB，base64 之后更大；这张图要过投料、传输、
+// 模型接口三道。缩到 2000px 足够看清分数和批注，体积能小一半以上。
+//
+// **只缩浏览器自己画得出的格式**：HEIC 在 Chrome 里根本解不开，
+// 缩图那一步会失败——失败就原样投（服务端会转 JPEG），不猜。
+const MEDIA_SHRINK_MAX_PX = 2000;
+
+function shrinkImage(dataUrl) {{
+  return new Promise((resolve) => {{
+    const img = new Image();
+    img.onload = () => {{
+      const scale = Math.min(1, MEDIA_SHRINK_MAX_PX / Math.max(img.width, img.height));
+      if (scale >= 1) {{ resolve(null); return; }}
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {{ resolve(null); return; }}
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      try {{
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      }} catch (e) {{
+        resolve(null);
+      }}
+    }};
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  }});
+}}
+
 function initMediaIntake() {{
   const drop = document.getElementById('media-drop');
   const file = document.getElementById('media-file');
   if (!drop || !file) return;
   drop.addEventListener('click', () => file.click());
   file.addEventListener('change', (e) => acceptMedia(e.target.files && e.target.files[0]));
+  const cam = document.getElementById('media-camera');
+  if (cam) cam.addEventListener('change', (e) => acceptMedia(e.target.files && e.target.files[0]));
   drop.addEventListener('dragover', (e) => {{
     e.preventDefault(); drop.classList.add('hot');
   }});
@@ -3970,6 +4136,8 @@ async function triggerTask(boxId) {{
       return;
     }}
     payload = {{ [field]: window._mediaData }};
+    // 照片之外的手填字段一起投：照片读不出来的那些，只有人才知道
+    Object.assign(payload, collectMediaFields());
   }} else {{
     const raw = document.getElementById('task-payload').value;
     if (entry.payload_kind === 'text') {{

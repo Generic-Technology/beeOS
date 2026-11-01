@@ -16,19 +16,16 @@ boxes.receipt.runner - 小票识别盒的 3 个 operation 实现
 
 from __future__ import annotations
 
-import base64
-import binascii
 import json
 import math
 import re
 import shutil
 import subprocess
-import tempfile
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from core.models import NOT_APPLICABLE, is_not_applicable
+from runtime import images
 from runtime.llm import complete_json
 from runtime.runner import HandlerRunner
 
@@ -196,8 +193,8 @@ _HH_MM = re.compile(r"^\d{1,2}:\d{2}$")
 # 小票上的日期分隔符：点、斜杠、中文年月日都算
 _DATE_SEPARATORS = re.compile(r"[./年月日]")
 
-# 模型接口 + 浏览器两边都不认的格式，进盒子先转成 JPEG
-_NEEDS_CONVERSION = {"image/heic", "image/heif"}
+# 模型接口 + 浏览器两边都不认的格式，进盒子先转成 JPEG。
+# 常量在 runtime/images.py（NEEDS_CONVERSION）——学习盒也要用同一份。
 
 
 def _num(value: Any) -> float | None:
@@ -268,121 +265,54 @@ def _normalize_date(value: Any) -> str:
 def _as_viewable_image(photo: str) -> str:
     """HEIC 转成 JPEG 再交给模型；别的格式原样透传
 
-    **为什么转在盒子里而不是内核**：HEIC 是 iPhone 拍的票据，是这个盒子的
-    业务事实（小票就是这么来的），不是「系统层面都要处理图片格式」。
-    放进 core 就等于让内核替所有盒子背一条它们用不上的规矩。
+    **实现在 runtime/images.py**：2026-11-01 起学习盒也要收手机拍的作业照片，
+    同样的转换逻辑要出现在四只盒子里——各抄一份就是四份会各自漂移的真相。
 
-    **为什么非得转**：两个独立的原因，少一个都还能忍，两个叠一起就绕不过——
-      1. 模型接口直接 400：invalid param: image data url media type
-         ["image/heic"] not supported（确定性拒绝，重试无用）
-      2. Chrome 解不了 HEIC，投料预览是一张破图。传出去的是 JPEG、
-         PNG 还是 HEIC，取决于下游要什么，不取决于相机怎么存。
+    这里保留一层薄壳（而不是直接 import 过去用）是有原因的：
+    本模块的 `_heic_via_pillow_heif` 是**测试要替换的接缝**——
+    「pillow 这条路挂了，sips 兜底能不能接上」正是靠替换它验出来的。
+    直接改名成 `from runtime.images import as_viewable_image` 的话，
+    那些测试会变成「测的是 runtime 那份、而本盒接缝没被碰过」——
+    测的东西和被测的东西对不上号。
     """
-    head, _, b64 = photo.partition(",")
-    if "base64" not in head:
-        return photo  # 不是 data URL（http 直链之类），本地无从转，原样交给下游
-    mime = head[len("data:"):].split(";")[0].strip().lower()
-    if mime not in _NEEDS_CONVERSION:
-        return photo
-    try:
-        raw = base64.b64decode(b64, validate=False)
-    except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"HEIC 图片 base64 解不开：{exc}") from exc
-    return "data:image/jpeg;base64," + base64.b64encode(
-        _heic_to_jpeg(raw, mime)
-    ).decode("ascii")
+    return images.as_viewable_image(photo, heic_decoder=_heic_to_jpeg)
 
 
 def _heic_to_jpeg(raw: bytes, mime: str) -> bytes:
-    """HEIC/HEIF 字节 → JPEG 字节
+    """HEIC/HEIF 字节 → JPEG 字节（实现见 runtime/images.py）
 
-    **两条解码路都留着，按可用性排队**：
+    两条解码路按可用性排队：`pillow_heif`（跨平台纯 wheel，声明成项目依赖）
+    优先，`sips`（macOS 自带）兜底。两条都试，还都不成就如实报出每条路的原话。
 
-      1. `pillow_heif` —— 跨平台纯 wheel（libheif 打包在 wheel 里），
-         声明成项目依赖，所以 Linux 服务端和 macOS 开发机走同一条路。
-      2. `sips` —— macOS 自带，零安装。没装 pillow_heif 的 macOS 机器靠它兜底。
-
-    **为什么以前只写 sips 会炸**：那是 macOS 专有工具。开发机在 macOS 上，
-    测试全绿；部署到 Linux 服务端第一次投 HEIC 就履约中止——
-    而那条真转换测试在没有 sips 的机器上是 `pytest.skip`，
-    于是「唯一验证过的那条路」恰好是唯一没在生产跑过的路。
-
-    **为什么库优先、sips 兜底**：sips 是子进程 + 临时文件，行为随 OS 变；
-    库是同一个二进制、同一份结果。两条都试，还都不成，就如实报出
-    每条路的原话，不悄悄退回「原样发出去」——那等于把 400 原封不动
-    还给用户，只是晚了一拍。
+    两条路都从 runtime 拿实现，但**接缝留在本模块**——测试替换的是这里。
     """
-    tried: list[str] = []
-    for name, decode in (
-        ("pillow_heif", _heic_via_pillow_heif),
-        ("sips", _heic_via_sips),
-    ):
-        try:
-            jpeg = decode(raw)
-        except Exception as exc:  # noqa: BLE001 - 一条路失败要接着试下一条
-            tried.append(f"{name}: {exc}" or f"{name}: 失败但没给理由")
-            continue
-        # 改个 MIME 标签不叫转码。SOI 魔数是「真的出了 JPEG」的最低证据。
-        if jpeg[:3] == b"\xff\xd8\xff":
-            return jpeg
-        tried.append(f"{name}: 输出不是 JPEG（缺 SOI 魔数）")
-    detail = "；".join(tried) if tried else "没有可用的解码路"
-    raise ValueError(
-        f"这台机器解不了 {mime}，转不成 JPEG（{detail}）。"
-        "运营侧装 pillow-heif（pip install pillow-heif）即可；"
-        "投料侧暂时请把票据另存为 JPEG 再投。"
+    return images.heic_to_jpeg(
+        raw, mime,
+        decoders=(
+            ("pillow_heif", _heic_via_pillow_heif),
+            ("sips", _heic_via_sips),
+        ),
     )
 
 
 def _heic_via_pillow_heif(raw: bytes) -> bytes:
-    """pillow_heif 解码：HEIC → RGB → JPEG 字节
+    """pillow_heif 解码：HEIC → RGB → JPEG 字节（实现见 runtime/images.py）
 
-    延迟 import：这是个只有 HEIC 投料才会走到的分支，
-    不该让没装它的机器在 import 阶段就 ModuleNotFoundError 起不来。
+    接缝留在本模块：测试替换的是这里（验「pillow 挂了 sips 能不能兜底」）。
     """
-    import io
-
-    import pillow_heif
-    from PIL import Image
-
-    # 不用 with：HeifFile 没实现 __exit__，with 会直接 TypeError。
-    # 它也不持有需要显式关闭的文件句柄（字节已在内存里），不解也行。
-    heif = pillow_heif.open_heif(io.BytesIO(raw))
-    # 1.8 起 HeifFile 自己就能 to_pillow()，不再挂在 .primary 上。
-    # getattr 兜住老版本：这条路线在开发机和服务器上是同一个库，
-    # 但两边 pip 装出来的版本不一定同一天。
-    target = getattr(heif, "primary", heif)
-    pil = target.to_pillow()
-    # JPEG 没有 alpha 通道也不吃 16bit，HEIC 里两样都可能带；
-    # 不显式 convert，save 会抛一个和「HEIC 解不开」无关的错。
-    rgb = pil.convert("RGB")
-    out = io.BytesIO()
-    rgb.save(out, format="JPEG", quality=90)
-    return out.getvalue()
+    return images.heic_via_pillow_heif(raw)
 
 
 def _heic_via_sips(raw: bytes) -> bytes:
-    """macOS 自带的 sips 转码：零安装的兜底路"""
-    sips = shutil.which("sips")
-    if sips is None:
+    """macOS 自带的 sips 转码：零安装的兜底路（实现见 runtime/images.py）
+
+    「有没有 sips」这句在盒子里问，不在 runtime 里问——
+    接缝（测试替换 `receipt_runner.shutil.which` / `receipt_runner.subprocess.run`）
+    在本模块，替换的就是这一句。
+    """
+    if shutil.which("sips") is None:
         raise RuntimeError("没装（macOS 自带工具，非 macOS 没有）")
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "in"
-        dst = Path(tmp) / "out.jpg"
-        src.write_bytes(raw)
-        # 不用 shell=True、不经管道：参数是固定字面量，没有拼接用户输入
-        proc = subprocess.run(
-            [sips, "-s", "format", "jpeg", str(src), "--out", str(dst)],
-            capture_output=True, timeout=60, check=False,
-        )
-        if not dst.is_file() or dst.stat().st_size == 0:
-            raise RuntimeError(
-                (proc.stderr or proc.stdout or b"").decode(
-                    "utf-8", "replace"
-                ).strip()
-                or f"退出码 {proc.returncode}，没出文件"
-            )
-        return dst.read_bytes()
+    return images.heic_via_sips(raw)
 
 
 def _simulate_read_receipt(input_data: dict[str, Any]) -> dict[str, Any]:

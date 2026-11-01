@@ -1,9 +1,15 @@
 """boxes.learning_chinese.beeline - 语文盒 的作业路线
 
-op 链（v1）：
-  1. `chinese_intake`      取投料 → 这一跳要做什么
-  2. `chinese_work`        真干活 → 真的观测到的东西
-  3. `chinese_packager`    装配产出
+op 链（v2）：
+  1. `chinese_read_photo` 看照片 → 把图上印着的事实抄出来（没投照片就跳过）
+  2. `chinese_intake`      取投料 → 这一跳要做什么（手工填的优先，照片补空）
+  3. `chinese_work`        真干活 → 真的观测到的东西
+  4. `chinese_packager`    装配产出
+
+**为什么加了这一跳**：v1 只有手工投料，家长得把分数一个个数进表单。
+2026-11-01 起投料口能拍作业照片——但**看图是模型那一腿的事**，
+它得是独立的一跳：只有这样，看图失败、照片读不出分数、
+人工补字段这三件事在履约轨迹上才分得开（op_trace 里看得见停在哪一跳）。
 
 **beeline 跟盒子是 1:1 且不可分割的**：它引用的 schema id 全部来自本盒的
 `schemas.py`，每个 op 的 handler 都在本盒的 `runner.py` 里。
@@ -27,18 +33,29 @@ IDEMPOTENT_BY_TASK = Idempotency(mode="required", key="task_id")
 
 
 LEARNING_CHINESE_BEELINE = Beeline(
-    id="beeline_learning_chinese_v1",
-    version=1,
+    id="beeline_learning_chinese_v2",
+    version=2,
     description=(
         "语文盒 履约作业路线：chinese_intake → chinese_work → chinese_packager"
     ),
 
     operations=[
         Operation(
-            op_id="chinese_intake",
-            type="chinese_intake",
+            op_id="chinese_read_photo",
+            type="chinese_read_photo",
             input_from="external",
             input="schema_learning_chinese_input",
+            output="schema_learning_chinese_photo_read",
+            next=[NextRef(op_id="chinese_intake")],
+            bee=Bee(type="chinese_read_photo_handler"),
+            idempotency=IDEMPOTENT_BY_TASK,
+        ),
+
+        Operation(
+            op_id="chinese_intake",
+            type="chinese_intake",
+            input_from="chinese_read_photo",
+            input="schema_learning_chinese_photo_read",
             output="schema_learning_chinese_plan",
             next=[NextRef(op_id="chinese_work")],
             bee=Bee(type="chinese_intake_handler"),

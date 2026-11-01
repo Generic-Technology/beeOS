@@ -4,7 +4,11 @@
 
 ## 投料：一次语文练习
 
-第一版是**手工投料**：家里把这次练习的事实（做了什么、得分多少、出处在哪）
+**投料可以是照片，也可以是手填**：投一张作业照片，本盒会**看图**读出
+得分、满分、日期和错题（读不出来的留空，不猜）；照片之外的事实手填，
+手填的**优先**——照片只补空。
+
+手工投料也照旧：把这次练习的事实（做了什么、得分多少、出处在哪）
 填进来，本盒把它整理成一条**带出处的学习事件**。
 
 `source_kind` 只有两个取值，**别混**：
@@ -37,40 +41,54 @@ LEARNING_CHINESE_INPUT_SCHEMA = SchemaDef(
     description="投料：一次语文练习的事实",
     fields=[
         FieldDef(
+            name="photo",
+            type="string",
+            media="image",
+            media_accept=[
+                "image/heic", "image/heif",
+                "image/jpeg", "image/png", "image/webp", "image/gif",
+            ],
+            required=False,
+            description=(
+                "作业照片（手机拍的作业/试卷）。填了它，本盒会看图读出得分、"
+                "满分、日期和错题；照片读不出的，在下面手工补"
+            ),
+        ),
+        FieldDef(
             name="activity",
             type="string",
-            required=True,
+            required=False,
             description="这次做了什么：作业 / 单元测 / 订正 / 复习",
         ),
         FieldDef(
             name="observed_at",
             type="string",
-            required=True,
+            required=False,
             description="学习发生的时间（ISO，比如 2026-11-01T16:30）",
         ),
         FieldDef(
             name="evidence",
             type="string",
-            required=True,
+            required=False,
             description="出处：这次是基于什么记的（作业本 P12 / 单元测卷 / 口述）",
         ),
         FieldDef(
             name="source_kind",
             type="enum",
-            required=True,
+            required=False,
             values=['observed', 'reported'],
             description="observed = 这次真的看到了；reported = 家里口述的（两种别混）",
         ),
         FieldDef(
             name="reading_score",
             type="number",
-            required=True,
+            required=False,
             description="阅读理解的得分",
         ),
         FieldDef(
             name="reading_total",
             type="number",
-            required=True,
+            required=False,
             description="阅读理解的满分",
         ),
         FieldDef(
@@ -105,6 +123,12 @@ LEARNING_CHINESE_PLAN_SCHEMA = SchemaDef(
     id="schema_learning_chinese_plan",
     description="计划：这一跳要做什么",
     fields=[
+        FieldDef(
+            name="photo_digest",
+            type="string",
+            required=False,
+            description="这次的照片指纹（从图片字节推导；没有照片就是空串）",
+        ),
         FieldDef(
             name="plan",
             type="string",
@@ -180,6 +204,12 @@ LEARNING_CHINESE_OBSERVATION_SCHEMA = SchemaDef(
     id="schema_learning_chinese_observation",
     description="观测：这一跳真的看到了什么",
     fields=[
+        FieldDef(
+            name="photo_digest",
+            type="string",
+            required=False,
+            description="这次的照片指纹（从图片字节推导；没有照片就是空串）",
+        ),
         FieldDef(
             name="observed",
             type="string",
@@ -329,7 +359,140 @@ LEARNING_CHINESE_OUTPUT_SCHEMA = SchemaDef(
     ],
 )
 
+LEARNING_CHINESE_PHOTO_FACTS_SCHEMA = SchemaDef(
+    id="schema_learning_chinese_photo_facts",
+    description="从作业照片里读出来的事实（读不出来的留空——不猜）",
+    fields=[
+        FieldDef(
+            name="reading_score",
+            type="number",
+            required=False,
+            description="照片上印的得分",
+        ),
+
+        FieldDef(
+            name="reading_total",
+            type="number",
+            required=False,
+            description="照片上印的满分",
+        ),
+
+        FieldDef(
+            name="observed_at",
+            type="string",
+            required=False,
+            description="照片上写的日期（ISO，看不到就空）",
+        ),
+
+        FieldDef(
+            name="activity",
+            type="string",
+            required=False,
+            description="照片上写的这次是什么练习（看不到就空）",
+        ),
+
+        FieldDef(
+            name="errors",
+            type="array",
+            required=False,
+            items=FieldDef(name="error", type="string"),
+            description="照片上看得出的错题（一条一个）",
+        ),
+
+        FieldDef(
+            name="notes",
+            type="string",
+            required=False,
+            description="照片上其他看得出的信息",
+        ),
+    ],
+)
+
+LEARNING_CHINESE_PHOTO_READ_SCHEMA = SchemaDef(
+    id="schema_learning_chinese_photo_read",
+    description="看图那一跳的产出：读出来的事实 + 原样带下去的投料",
+    fields=[
+        FieldDef(
+            name="photo_digest",
+            type="string",
+            required=False,
+            description="照片指纹（从图片字节推导；同一张照片永远是同一个号）",
+        ),
+        FieldDef(
+            name="photo_facts",
+            type="ref:schema_learning_chinese_photo_facts",
+            required=False,
+            description="从照片里读出来的事实",
+        ),
+        FieldDef(
+            name="activity",
+            type="string",
+            required=False,
+            description="这次做了什么：作业 / 单元测 / 订正 / 复习",
+        ),
+        FieldDef(
+            name="observed_at",
+            type="string",
+            required=False,
+            description="学习发生的时间（ISO，比如 2026-11-01T16:30）",
+        ),
+        FieldDef(
+            name="evidence",
+            type="string",
+            required=False,
+            description="出处：这次是基于什么记的（作业本 P12 / 单元测卷 / 口述）",
+        ),
+        FieldDef(
+            name="source_kind",
+            type="enum",
+            required=False,
+            values=['observed', 'reported'],
+            description="observed = 这次真的看到了；reported = 家里口述的（两种别混）",
+        ),
+        FieldDef(
+            name="reading_score",
+            type="number",
+            required=False,
+            description="阅读理解的得分",
+        ),
+        FieldDef(
+            name="reading_total",
+            type="number",
+            required=False,
+            description="阅读理解的满分",
+        ),
+        FieldDef(
+            name="notes",
+            type="string",
+            required=False,
+            description="备注",
+        ),
+        FieldDef(
+            name="writing_words",
+            type="number",
+            required=False,
+            description="作文写了多少字",
+        ),
+        FieldDef(
+            name="new_chars",
+            type="number",
+            required=False,
+            description="新学会的字数",
+        ),
+        FieldDef(
+            name="errors",
+            type="array",
+            required=False,
+            items=FieldDef(name="error", type="string", required=False),
+            description="这次错在哪（人话摘要，一条一个）",
+        ),
+    ],
+)
+
+
 ALL_SCHEMAS = [
+    LEARNING_CHINESE_PHOTO_FACTS_SCHEMA,
+    LEARNING_CHINESE_PHOTO_READ_SCHEMA,
     LEARNING_CHINESE_INPUT_SCHEMA,
     LEARNING_CHINESE_PLAN_SCHEMA,
     LEARNING_CHINESE_OBSERVATION_SCHEMA,
