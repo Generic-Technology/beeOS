@@ -212,6 +212,63 @@ def test_the_box_carries_its_status_for_the_current_scope(tmp_path: Path):
     assert box2["task_run"] is None
 
 
+# ---------- 盒子页的任务列表：只列这只盒子参与过的 ----------
+
+def test_a_box_page_lists_only_the_tasks_that_box_joined(tmp_path: Path):
+    """盒子页的左栏只列**这只盒子参与过**的任务
+
+    盒子页的读者在问「这只盒子干过哪些活儿」，给他一份全平台的清单
+    是在答非所问——右栏的 op 轨迹早就按同一条原则跟着选中的任务走了。
+
+    口径是「参与过」：这件任务牵过的盒子里有它。
+    不按「上下游相关」算——跨盒子的产出→消费溯源没有落盘字段，
+    算不出来的东西不能编成一条关系摆给读者。
+    """
+    store = _store(tmp_path, [
+        _record("wms_requirement_box", "req_1"),
+        _record("wms_design_box", "req_1"),
+        _record("wms_ops_box", "req_2"),
+    ])
+    data = dashboard_data(store, box_filter="wms_requirement_box")
+    assert [t["ref"] for t in data["tasks"]] == ["req_1"], (
+        "盒子页的任务列表混进了跟这只盒子无关的任务"
+    )
+    # 总览页不受影响：那里问的是「平台上有哪些任务在飞」
+    all_tasks = dashboard_data(store)["tasks"]
+    assert sorted(t["ref"] for t in all_tasks) == ["req_1", "req_2"]
+
+
+def test_a_task_that_does_not_belong_to_the_box_is_not_selected(tmp_path: Path):
+    """URL 里塞一个跟这只盒子无关的任务 → 服务端当**没选**
+
+    留着那个选中态就等于在高亮一件服务端没认下的事：
+    左栏高亮、右栏标题都在说一件不存在的事。
+    """
+    store = _store(tmp_path, [
+        _record("wms_requirement_box", "req_1"),
+        _record("wms_ops_box", "req_2"),
+    ])
+    data = dashboard_data(store, box_filter="wms_requirement_box",
+                          task_ref="req_2")
+    assert data["task_filter"] is None, "认下了不属于这只盒子的任务"
+    # 跟这只盒子有关的任务照常能选
+    ok = dashboard_data(store, box_filter="wms_requirement_box",
+                        task_ref="req_1")
+    assert ok["task_filter"] == "req_1"
+
+
+def test_the_sidebar_says_whose_tasks_it_is_listing():
+    """盒子页的左栏要写清楚这一栏在当前口径下回答什么
+
+    不写清楚，读者会以为这就是全平台的任务清单——
+    过滤掉了什么，得说。
+    """
+    fn = _js_function("renderTaskList")
+    assert "data.box_filter" in fn, "任务列表没按当前盒子过滤"
+    assert "这只盒子参与过的" in fn, "盒子页的左栏没写明口径"
+    assert "这只盒子还没参与过任何任务" in fn, "盒子页的空态没按盒子改写"
+
+
 # ---------- 前端结构 ----------
 
 def _js_function(name: str) -> str:

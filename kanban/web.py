@@ -243,7 +243,24 @@ def dashboard_data(
     # 左边那栏回答「现在有哪些任务在飞」，中间那栏回答「这个域的 Map 里有哪些盒子」。
     # 两件事不是一回事：盒子的清单在中间已经全画出来了，左边再列一遍
     # 是同一份信息的第二遍——读者要滚动两处才能拼出一个全貌。
+    #
+    # **单盒视图时，这一栏只列这只盒子参与过的任务**。
+    # 盒子页的读者在问「这只盒子干过哪些活儿」，给他一份全平台的清单
+    # 是在答非所问——右栏的 op 轨迹早就按同一条原则跟着选中的任务走了。
+    #
+    # 口径是「**参与过**」：这件任务牵过的盒子里有它（任务里的盒子清单
+    # 本来就是按履约记录归出来的，见 _collect_tasks）。
+    # 不按「上下游相关」算——跨盒子的产出→消费溯源没有落盘字段，
+    # 算不出来的东西不能编成一条关系摆给读者。
     tasks = _collect_tasks(store._cache)
+    if box_filter:
+        tasks = [
+            t for t in tasks
+            if any(b["box_id"] == box_filter for b in t["boxes"])
+        ]
+    # 任务表按过滤后的口径建：URL 里塞一个跟这只盒子无关的 task 参数，
+    # 服务端就当**没选**（task_filter=null），前端据此把选中态清掉——
+    # 留着它就等于在高亮一件服务端没认下的事。
     task_map = {t["ref"]: t for t in tasks}
     selected_task = task_map.get(task_ref) if task_ref else None
 
@@ -567,6 +584,14 @@ HTML_PAGE = f"""<!DOCTYPE html>
     font-size: 10px; color: #94a3b8; letter-spacing: 0.1em;
     text-transform: uppercase; margin-bottom: 6px;
   }}
+  /* 标签后面那半句：这栏在**当前口径**下回答什么。
+     盒子页的左栏只列这只盒子参与过的任务——不说清楚，
+     读者会以为这就是全平台的任务清单。 */
+  .side-group-sub {{
+    display: block; margin-top: 2px;
+    font-size: 10px; letter-spacing: 0; text-transform: none;
+    color: #64748b;
+  }}
   .side-list {{ display: flex; flex-direction: column; gap: 2px; }}
   .side-item {{
     display: flex; align-items: center; gap: 8px;
@@ -616,6 +641,11 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .side-task-dots {{ display: flex; gap: 3px; margin-top: 2px; }}
   .side-task-dot {{
     width: 6px; height: 6px; border-radius: 50%;
+  }}
+  /* 当前这只盒子的那个点**加一圈**：一件任务牵了几只盒子，
+     读者要能一眼认出「哪几个是我现在这只」。 */
+  .side-task-dot.is-me {{
+    box-shadow: 0 0 0 2px #0f766e;
   }}
   .side-item.active .side-task-meta {{ color: rgba(255, 255, 255, 0.8); }}
   .side-clear {{
@@ -1024,44 +1054,42 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .beebox-nameplate .spec {{ display: flex; gap: 18px; margin-top: 0; flex-wrap: wrap; }}
   .beebox-nameplate .spec-row {{ display: flex; gap: 6px; font-size: 10px; line-height: 1.8; }}
   .beebox-nameplate .spec-row .k {{ width: auto; text-align: left; padding-right: 0; }}
-  /* ===== 单盒视图：一屏装下整只盒子，不出页面滚动条 =====
-     之前 .beebox-body 写死 clamp(380px, 62vh, 560px)。加上 nameplate
-     和 box context 底座之后总和超过一屏，页面开始滚——而看板的用处
-     就是一屏看完这盒子的全貌，滚了就等于把「四栏 + 底座并排对照」
-     这个核心读法拆开了。
-     改成整页 flex 吃满视口，盒子拿剩下的那份高度；四栏各自内部滚动
-     （产出可能很长），但页面本身不动。
-     只在四栏真并排时生效：换行布局下上下叠放，一屏装不下是物理事实。 */
+  /* 接线一行：这只盒子在流程里的位置（上游 → 本盒 → 下游）。
+     本盒自己那截加粗加重——读者要能一眼找到「我这一只」。 */
+  .spec-row .v.wire {{ font-weight: 400; }}
+  .spec-row .wire-me {{ color: #b45309; font-weight: 700; }}
+  /* ===== 单盒视图：允许整页纵向滚动 =====
+     以前这里是 `height:100vh; overflow:hidden` 的整页锁高，理由是
+     「四栏 + 底座一屏看完」。现在底座换成**盒子目录卡**（消费契约 /
+     产出契约 / 实测指标三段），内容一多，硬锁就把底座压扁——挤成一团、
+     字段名被裁，读不出「它吃什么、吐什么」。
+     所以改成正常文档流：页面可滚，四栏保底高度不变，
+     目录卡整块落在四栏下面，不跟四栏抢高度。
+
+     四栏本身仍然自己内部滚动（产出可能很长），页面不动的是**栏**不是页。 */
   @media (min-width: 1461px) {{
     body.single-box {{
-      height: 100vh; min-height: 0; overflow: hidden;
-      display: flex; flex-direction: column;
+      height: auto; min-height: 100vh; overflow: visible;
+      display: block;
       padding: 16px 28px; box-sizing: border-box;
     }}
-    /* 单盒详情页整页吃满视口、外面没有滚动，所以头部卡片必须**比总览页
-       更薄**：padding 从 14px 收到 8px、圆角描边还在，省下的 12px 直接
-       给下面那四栏——那四栏本来就是贴着视口底边算好高度的。 */
+    /* 单盒详情页的头部卡片要**比总览页更薄**：padding 从 14px 收到 8px、
+       圆角描边还在，省下的高度直接给下面那四栏。 */
     body.single-box .page-head {{
-      flex: 0 0 auto; margin-bottom: 10px; padding: 8px 14px;
+      margin-bottom: 10px; padding: 8px 14px;
     }}
     body.single-box h1 {{ font-size: 22px; margin-bottom: 3px; }}
-    body.single-box #content {{
-      flex: 1 1 auto; min-height: 0;
-      display: flex; flex-direction: column;
-    }}
-    body.single-box #content > .section {{
-      flex: 1 1 auto; min-height: 0;
-      display: flex; flex-direction: column; margin-bottom: 0;
-    }}
-    body.single-box .beebox-frame {{
-      flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-    }}
-    body.single-box .beebox-nameplate {{ flex: 0 0 auto; padding: 8px 20px; }}
+    body.single-box #content {{ display: block; }}
+    body.single-box #content > .section {{ display: block; margin-bottom: 0; }}
+    body.single-box .beebox-frame {{ display: block; }}
+    body.single-box .beebox-nameplate {{ padding: 8px 20px; }}
+    /* 四栏要一个**明确的高度**：产出内容再多也不把栏撑长，
+       超出部分各自内部滚动。 */
     body.single-box .beebox-body {{
-      flex: 1 1 auto; min-height: 0; height: auto; padding: 12px 14px 10px;
+      height: clamp(420px, 62vh, 620px); padding: 12px 14px 10px;
     }}
     /* 四栏要能被压扁。grid item 默认不许缩到内容高度以下，不给 min-height:0
-       的话矮屏上内容直接溢出、压到 box context 底座上。
+       的话矮屏上内容直接溢出、压到目录卡上。
        溢出内容由各栏自己收：投料框 / 判据区 / 产出槽本来就是内部滚动。 */
     body.single-box .beebox-body > * {{ min-height: 0; }}
     body.single-box .port, body.single-box .lane, body.single-box .lane-acc {{
@@ -1070,44 +1098,50 @@ HTML_PAGE = f"""<!DOCTYPE html>
     body.single-box .lane-title, body.single-box .lane-ops {{
       flex: 0 0 auto;
     }}
-    /* 工位图吃掉 BEELINE 栏剩下的高度，不撑高整页。
+    /* 工位图吃掉 BEELINE 栏剩下的高度，不撑高整栏。
        svg 是 width:100% + height:auto，max-height 让它按比例缩，
        preserveAspectRatio="xMidYMid meet" 居中留白。 */
     body.single-box #box2d-stage {{ flex: 1 1 auto; min-height: 0; }}
     body.single-box #box2d-stage svg {{ max-height: 100%; }}
     body.single-box #acc-stage {{ flex: 0 0 auto; }}
     body.single-box #acc-stage svg {{ max-height: 16vh; }}
-    body.single-box .ctx-band {{ flex: 0 0 auto; margin-bottom: 12px; }}
   }}
-  /* ===== BOX CONTEXT：四栏都站在这上面 =====
-     它跟四栏不是先后关系，是依赖关系——四栏同时引用它，
-     没有哪一栏排在它前面或后面。所以是底座不是第五栏：
-     摆成第五个并列项，等于谎称「投料 → 算 → 判 → 出 → 上下文」这条链
-     里上下文排在最后一步，可它根本不在这条链上。
+  /* ===== BOX CONTEXT：盒子目录卡 =====
+     这张卡是这只盒子的**索引条目**：它吃什么、吐什么、跑得怎么样——
+     像图书馆目录卡那样一条条对着看。
 
-     位置在四栏下面而不是上面，是因为履约完会往这里沉淀领域知识——
-     它是四栏读写的同一个底座，不是跑完之前的门牌。 */
+     它跟四栏不是先后关系，是依赖关系——四栏同时引用它，
+     没有哪一栏排在它前面或后面。所以它不是第五栏：
+     摆成第五个并列项，等于谎称「投料 → 算 → 判 → 出 → 目录卡」这条链
+     里目录卡排在最后一步，可它根本不在这条链上。
+
+     定位（域 / 价值流 / 角色 / 接线）在**门牌**上，不在这儿——
+     同一份信息两处各留一份，迟早对不上。 */
   .ctx-band {{
-    /* 缩进对齐四栏、上沿加重：读成托着它们的地板，不是第五块面板 */
-    margin: 0 16px 16px; padding: 11px 20px 12px;
-    background: rgba(148,163,184,0.16);
-    border-top: 1.5px solid #94a3b8;
-    border-radius: 0 0 10px 10px;
+    /* 一张白底描边的卡：跟四栏的端口同一种表面，读成「这只盒子的档案」 */
+    margin: 0 16px 16px; padding: 13px 20px 15px;
+    background: #fff; border: 1px solid #dbe3ec; border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(15,23,42,0.05);
   }}
   .ctx-head {{
     font-size: 9px; font-weight: 700; color: #64748b;
-    letter-spacing: 0.9px; margin-bottom: 7px;
+    letter-spacing: 0.9px; margin-bottom: 10px;
   }}
-  .ctx-cols {{ display: grid; grid-template-columns: 1.1fr 1fr 1.4fr; gap: 18px; }}
+  .ctx-cols {{ display: grid; grid-template-columns: 1fr 1.35fr; gap: 22px; }}
   @media (max-width: 1080px) {{ .ctx-cols {{ grid-template-columns: 1fr; gap: 9px; }} }}
+  /* 一栏一节：左边一条竖线当分隔，像目录卡的条目栏 */
+  .ctx-sec {{ border-left: 2px solid #e2e8f0; padding-left: 12px; }}
+  .ctx-line {{ margin-bottom: 6px; }}
+  .ctx-line:last-child {{ margin-bottom: 0; }}
   /* 履约度量：声明（target）跟实测（actual）并排。
      排版原则：actual 是 None 时画成「未测」，绝不能画成 0——
      0 是差，「还没测过」是没有，两回事。 */
   .ctx-metrics {{
-    margin-top: 9px; padding-top: 8px;
+    margin-top: 11px; padding-top: 9px;
     border-top: 1px dashed #cbd5e1;
-    display: flex; flex-wrap: wrap; gap: 7px;
   }}
+  .ctx-metrics-k {{ margin-bottom: 6px; }}
+  .ctx-metric-row {{ display: flex; flex-wrap: wrap; gap: 7px; }}
   .ctx-metric {{
     display: flex; align-items: baseline; gap: 6px;
     padding: 3px 8px; border-radius: 5px;
@@ -1128,8 +1162,6 @@ HTML_PAGE = f"""<!DOCTYPE html>
     word-break: break-word;
   }}
   .ctx-note {{ font-size: 10px; color: #64748b; }}
-  .ctx-me {{ color: #b45309; font-weight: 700; }}
-  .ctx-hop {{ color: #94a3b8; padding: 0 3px; }}
   /* 四栏：TASK IN · BEELINE · ARTIFACTS OUT · ACCEPTANCE。
      产出口排在验收前面：先明确产物，再判它过不过，交付受控。
      验收是终点判定（菱形在最后），不是中途关卡——因为它确实没在拦：
@@ -1796,16 +1828,27 @@ function currentScopeLayout(scopeLayouts) {{
 // 同一个信息放在两个地方，迟早不一致。
 function renderTaskList(data) {{
   const tasks = data.tasks || [];
+  // **单盒视图：只列这只盒子参与过的任务**（服务端已经按这个口径过滤了）。
+  // 盒子页的读者在问「这只盒子干过哪些活儿」——给他全平台的清单是在答非所问。
+  const boxFilter = data.box_filter || '';
   // 列表长了页面就长：只列最近的一批，**并写清楚还剩多少**。
   // 静默截断 = 读者以为就这些任务；写清楚「还有 N 件没列」才是诚实。
   const LIMIT = 12;
   let html = '';
   html += '<div class="side-group">';
-  html += '<div class="side-group-label">任务列表</div><div class="side-list">';
+  html += '<div class="side-group-label">任务列表'
+    + (boxFilter ? '<span class="side-group-sub">这只盒子参与过的</span>' : '')
+    + '</div><div class="side-list">';
   if (!tasks.length) {{
-    html += '<div class="rail-empty">还没有带工作项号的运行记录。'
-      + '没有工作项的运行（某只盒子自己跑过什么）不进这一栏——'
-      + '那是「盒子跑过什么」，不是「哪件任务」。</div>';
+    if (boxFilter) {{
+      html += '<div class="rail-empty">这只盒子还没参与过任何任务。'
+        + '只有带工作项号的运行才算任务——没带工作项号的运行是'
+        + '「这只盒子跑过什么」，不归成任务。</div>';
+    }} else {{
+      html += '<div class="rail-empty">还没有带工作项号的运行记录。'
+        + '没有工作项的运行（某只盒子自己跑过什么）不进这一栏——'
+        + '那是「盒子跑过什么」，不是「哪件任务」。</div>';
+    }}
   }}
   const shown = tasks.slice(0, LIMIT);
   for (const t of shown) {{
@@ -1814,8 +1857,13 @@ function renderTaskList(data) {{
     let dots = '';
     for (const b of (t.boxes || [])) {{
       const c = b.status === 'completed' ? '#16a34a' : '#dc2626';
-      dots += '<span class="side-task-dot" style="background:' + c + '"'
-        + ' title="' + esc(b.display_name + '：' + (b.status === 'completed' ? '跑完' : '跑挂了')) + '"></span>';
+      // 当前这只盒子在任务里的那个点**加个圈**——
+      // 这件任务牵了几只盒子，读者一眼要能认出「哪只是我现在这只」。
+      const me = b.box_id === boxFilter;
+      dots += '<span class="side-task-dot' + (me ? ' is-me' : '') + '"'
+        + ' style="background:' + c + '"'
+        + ' title="' + esc(b.display_name + (me ? '（当前盒子）' : '')
+        + '：' + (b.status === 'completed' ? '跑完' : '跑挂了')) + '"></span>';
     }}
     const kindLabel = t.kind === 'ops_event' ? '运维' : (t.kind === 'requirement' ? '需求' : '');
     html += '<a class="side-item task-item' + (active ? ' active' : '') + '"'
@@ -2133,7 +2181,40 @@ function boxStatePill(box) {{
     + '</span>';
 }}
 
-function captionHtml(box) {{
+// ===== 门牌上的接线一行 =====
+//
+// 这只盒子在流程里的位置：上游是谁、交给谁、谁把结论反馈回来。
+//
+// 它在**门牌**上，不在盒子目录卡里——定位是门牌的事（域 / 价值流 / 角色
+// 都在那儿），卡只讲接口和表现。同一份信息两处各留一份，迟早对不上。
+//
+// 上游是**反推**来的（别人的 feeds_into 声明了本盒），显示名随 id 一起
+// 由后端给（box_context 的 _hop）——前端只有当前这一只盒的名字表，
+// 自己补会露出原始 id。
+function wiringRows(box) {{
+  const ctx = box.box_context || {{}};
+  const self = ctx.self_name || box.box_id;
+  const nm = (h) => esc(h.name || h.id);
+  const up = (ctx.fed_by || []).map(nm);
+  const down = (ctx.feeds_into || []).map(nm);
+  const fbIn = (ctx.feedback_from || []).map(nm);
+  const fbOut = (ctx.feedback_into || []).map(nm);
+  const chain = (up.length ? up.join(' → ') + ' → ' : '')
+    + `<span class="wire-me">${{esc(self)}}</span>`
+    + (down.length ? ' → ' + down.join(' → ') : '');
+  let rows = `<div class="spec-row"><span class="k">接线</span>`
+    + `<span class="v wire">${{chain}}</span></div>`;
+  if (fbIn.length || fbOut.length) {{
+    const fb = [];
+    if (fbIn.length) fb.push('来自 ' + fbIn.join('、'));
+    if (fbOut.length) fb.push('回到 ' + fbOut.join('、'));
+    rows += `<div class="spec-row"><span class="k">反馈</span>`
+      + `<span class="v wire">${{esc(fb.join('；'))}}</span></div>`;
+  }}
+  return rows;
+}}
+
+function captionHtml(box, opts) {{
   const meta = box.meta || {{}};
   const maturity = MATURITY_DISPLAY[box.maturity] || MATURITY_DISPLAY.live;
   const isSkeleton = box.maturity === 'skeleton';
@@ -2149,6 +2230,9 @@ function captionHtml(box) {{
     ? row('本任务 RUNS', (tr.runs != null ? tr.runs : 1) + ' 次')
     : row('RUNS', box.total);
   const accRow = tr ? '' : row('ACCEPTANCE', rate);
+  // 接线那一行**只在单盒门牌上**给：总览的卡片挤在一张环里，
+  // 接线由画布上的线说，不该再在每张卡上抄一遍。
+  const wiring = (opts && opts.wiring) ? wiringRows(box) : '';
   return `<div class="name"><span class="health-dot" style="background:${{isSkeleton ? '#cbd5e1' : healthColor}}"></span>${{meta.display_name || box.box_id}}${{maturity.badge}}<span class="bid">${{box.box_id}}</span></div>
     <div class="spec">
       ${{row('DOMAIN', domainLabel(meta.domain || ''))}}
@@ -2157,6 +2241,7 @@ function captionHtml(box) {{
       ${{runsRow}}
       ${{accRow}}
       <div class="spec-row"><span class="k">状态</span><span class="v">${{boxStatePill(box)}}</span></div>
+      ${{wiring}}
     </div>`;
 }}
 
@@ -3106,40 +3191,37 @@ const REJECT_LABEL = {{
   structural: '结构 / 引用 / 指标不达标',
 }};
 
-// ===== BOX CONTEXT =====
-// 四栏都站在这上面：投料口按消费契约投、op 按契约读写、验收栏按判据判、
-// 产出口按产出契约交。跟四栏是依赖不是先后，所以是底座不是第五栏。
-// 判据不在这里：声明值和实测值都归 ACCEPTANCE 栏，
-// 两处各留一份判据 = 每次改判据要改两个地方。
-function renderBoxContext(boxId, ctx) {{
+// ===== BOX CONTEXT（盒子目录卡）=====
+//
+// 这张卡是这只盒子的**索引条目**：它吃什么（消费契约）、吐什么（产出契约）、
+// 跑得怎么样（实测指标）。像图书馆目录卡那样，一条一条对着看。
+//
+// **定位信息（域 / 价值流 / 角色 / 接线）不在卡上**——那些在门牌
+// （nameplate）上。同一份信息两处各留一份，迟早对不上：门牌改了一句，
+// 卡上那句还是旧的。判据也不在卡上：声明值和实测值都归 ACCEPTANCE 栏。
+//
+// 它不是第五个步骤。四栏跟它是**依赖**关系（同时引用它），
+// 不是先后关系，所以它待在四栏下面，不排在链条末尾。
+function renderBoxContext(ctx) {{
   if (!ctx) return '';
-  // 上游 / 下游的显示名由后端随 id 一起给（box_context 里的 _hop）：
-  // 单盒过滤时前端只有当前这一只盒的名字表，自己补会露出原始 id
-  const hops = [
-    ...(ctx.fed_by || []).map((h) => `${{esc(h.name)}}<span class="ctx-hop">→</span>`),
-    `<span class="ctx-me">${{esc(ctx.self_name || boxId)}}</span>`,
-    ...(ctx.feeds_into || []).map((h) => `<span class="ctx-hop">→</span>${{esc(h.name)}}`),
-  ].join(' ') || '<span class="ctx-note">（价值流首端，没有上游）</span>';
   const consumes = (ctx.consumes || []).map((c) => {{
     const req = (c.required || []).map((f) => esc(f.name)).join(' · ') || '—';
-    return `<div class="ctx-v">${{esc(c.task_type)}}</div>
-            <div class="ctx-v ctx-note">${{esc(c.task_schema)}}　必填 ${{req}}</div>`;
+    return `<div class="ctx-line">
+              <div class="ctx-v">${{esc(c.task_type)}}</div>
+              <div class="ctx-v ctx-note">${{esc(c.task_schema)}}</div>
+              <div class="ctx-v ctx-note">必填 ${{req}}</div>
+            </div>`;
   }}).join('');
   const p = ctx.produces || {{}};
   const outFields = (p.fields || []).map(esc).join(' · ');
   return `<div class="ctx-band">
-    <div class="ctx-head">BOX CONTEXT · 盒子上下文 — 四栏都站在这上面</div>
+    <div class="ctx-head">BOX CONTEXT · 盒子目录卡 —— 它吃什么、吐什么、跑得怎么样</div>
     <div class="ctx-cols">
-      <div>
-        <div class="ctx-k">价值流位置</div>
-        <div class="ctx-v ctx-note">${{esc(ctx.value_stream)}}</div>
-        <div class="ctx-v">${{hops}}</div>
-      </div>
-      <div>
+      <div class="ctx-sec">
         <div class="ctx-k">消费契约 · 吃进去什么</div>
         ${{consumes || '<div class="ctx-v ctx-note">—</div>'}}
       </div>
-      <div>
+      <div class="ctx-sec">
         <div class="ctx-k">产出契约 · 吐出来什么</div>
         <div class="ctx-v">${{esc(p.type)}}</div>
         <div class="ctx-v ctx-note">${{esc(p.result_schema)}}</div>
@@ -3196,7 +3278,12 @@ function renderBoxMetrics(metrics) {{
       <span class="ctx-mt">目标 ${{esc(target)}} · ${{esc(sample)}}</span>
     </span>`;
   }}).join('');
-  return `<div class="ctx-metrics">${{cells}}</div>`;
+  // 目录卡上这一段有小标题：读者得知道这些数是**实测**，
+  // 不是判据（判据在 ACCEPTANCE 栏）。
+  return `<div class="ctx-metrics">
+    <div class="ctx-k ctx-metrics-k">实测指标 · 承诺（target）vs 事实（actual）</div>
+    <div class="ctx-metric-row">${{cells}}</div>
+  </div>`;
 }}
 
 function buildShell(boxId, box, entries) {{
@@ -3323,7 +3410,7 @@ function buildShell(boxId, box, entries) {{
           <div class="acc-detail" id="acc-detail"></div>
         </div>
       </div>
-      ${{renderBoxContext(boxId, (box && box.box_context) || null)}}
+      ${{renderBoxContext((box && box.box_context) || null)}}
     </div>
   </div>`;
   onTaskTypeChange();
@@ -3448,7 +3535,9 @@ function applyRelayFromUrl() {{
 function updateCaption(box) {{
   const el = document.getElementById('cube-caption');
   if (!el) return;
-  el.innerHTML = captionHtml(box);
+  // 单盒门牌**带接线那一行**：这只盒子在流程里的位置是定位信息，
+  // 归门牌；盒子目录卡只讲接口和表现，不重复它。
+  el.innerHTML = captionHtml(box, {{ wiring: true }});
 }}
 
 // 最近一次由按钮写入的示例原文，用来区分「框里是原样示例」还是「用户改过」。
@@ -3883,6 +3972,19 @@ function updateBackLink(scopeLayouts, isSingle) {{
 
 function render(data) {{
   _lastData = data;
+  // **选中的任务必须服务端也认**。
+  // URL 里手塞一个跟当前盒子无关的 task 参数时，服务端会把它当没选
+  // （task_filter=null）——前端要是还留着 _task，左栏高亮、右栏标题
+  // 就都在说一件服务端没认下的事。
+  if (_task && data.task_filter !== _task) {{
+    _task = '';
+    // 地址栏里那个参数也一起清掉：留着它，刷新一次又会被读回来。
+    try {{
+      const u = new URL(location.href);
+      u.searchParams.delete('task');
+      history.replaceState(null, '', u.toString());
+    }} catch (e) {{ /* URL 不可改就不改：界面状态已经对了 */ }}
+  }}
   const box = data.box_filter;
   const isSingle = !!box;
   // 单盒时整页锁成一屏（四栏 + 底座一屏看完）；多盒总览要滚，不锁

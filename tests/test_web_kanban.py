@@ -504,13 +504,14 @@ class TestKanbanServer:
         # 空输入不炸
         assert _readable_error("   \n  ") == ""
 
-    def test_html_ships_no_scroll_lock(self, server_url: tuple[str, TaskRunStore]):
-        """四栏 + 底座要一屏装得下。
+    def test_the_single_box_page_may_scroll_but_its_columns_keep_a_floor(self, server_url: tuple[str, TaskRunStore]):
+        """单盒页允许整页滚动，但四栏不能塌。
 
-        之前 .beebox-body 写死 clamp(380px, 62vh, 560px)，加上 nameplate
-        和 box context 底座之后总和超过一屏，页面开始滚——而看板的用处
-        就是一屏看完这盒子的全貌。整页 flex 锁高 + 四栏 min-height:0 是
-        这件事的全部机制，少一条矮屏上内容就压到底座上。
+        以前这里锁死 `height:100vh; overflow:hidden`，为的是「四栏 + 底座
+        一屏看完」。底座换成**盒子目录卡**（消费契约 / 产出契约 / 实测指标
+        三段）之后内容一多，硬锁就把目录卡压扁——挤成一团、字段名被裁，
+        读不出「它吃什么、吐什么」。所以改成正常文档流：页面可滚，
+        四栏保底高度不变，超出部分各自内部滚动。
         """
         url, _ = server_url
         conn = HTTPConnection(url.replace("http://", ""))
@@ -518,10 +519,19 @@ class TestKanbanServer:
         body = conn.getresponse().read().decode("utf-8")
         conn.close()
         assert "body.single-box" in body
-        assert "100vh" in body
+        # 不再锁死整页高度、不再藏掉滚动条
+        assert "height: 100vh; min-height: 0; overflow: hidden;" not in body, (
+            "单盒页还锁着一屏——目录卡会被压扁"
+        )
+        assert "height: auto; min-height: 100vh; overflow: visible;" in body, (
+            "单盒页要能整页纵向滚动"
+        )
+        # 四栏仍有一个明确高度（不是让它塌成 0）
+        assert "clamp(420px, 62vh, 620px)" in body
         # 四栏能被压扁：grid item 默认不许缩到内容高度以下
         assert ".beebox-body > * { min-height: 0; }" in body
-        assert "single-box" in body
+        # 四栏内部各自滚动（产出可能很长）
+        assert "body.single-box .port, body.single-box .lane" in body
 
     def test_box_context_exposes_box_level_facts(self, server_url: tuple[str, TaskRunStore]):
         """盒子上下文是四栏共同依赖的底座——不是第五个先后步骤。
@@ -1514,15 +1524,71 @@ class TestTheThreeRegionsAreVisuallySeparate:
     def test_the_content_card_is_withheld_from_the_single_box_page(self):
         """单盒详情页不能套内容卡片
 
-        它是 `height:100vh; overflow:hidden` 的整屏 flex 四栏，外面再套一层
-        卡片会凭空多吃 padding，矮屏上把四栏挤破。
+        盒子那块自己有边框有底（beebox-frame），外面再套一层内容卡片
+        就是框里套框——两层 padding 白吃高度，两层描边也把「这是一只盒子」
+        这件事说两遍。
         """
         assert "body:not(.single-box) #content {" in HTML_PAGE, (
-            "内容区卡片必须排除 single-box —— 那是整屏四栏，不该再被卡片包一层"
+            "内容区卡片必须排除 single-box —— 盒子那块自己有边框有底"
         )
         assert "body.single-box .page-head {" in HTML_PAGE, (
             "单盒页的头部卡片要单独收薄（padding 8px），把高度让给四栏"
         )
+
+
+class TestTheBoxContextIsACatalogCard:
+    """BOX CONTEXT 是一张**目录卡**：吃什么、吐什么、跑得怎么样
+
+    为什么这么定：
+    - 定位信息（域 / 价值流 / 角色 / 接线）只在**门牌**上说一次。
+      卡上再抄一遍 = 同一份信息两处，迟早对不上。
+    - 判据不在卡上：声明值和实测值都归 ACCEPTANCE 栏。
+    - 指标段要写明是**实测**——读者得知道那些数是履约历史聚合出来的，
+      不是这只盒子承诺的判据。
+    """
+
+    def test_the_card_only_carries_the_contracts_and_the_measurements(self):
+        card = _strip_js_comments(_extract_js_function("renderBoxContext"))
+        assert "消费契约" in card and "产出契约" in card, (
+            "目录卡的主体是这只盒子的两个契约"
+        )
+        assert "价值流位置" not in card, (
+            "定位归门牌，不该在目录卡上再抄一遍"
+        )
+        assert "fed_by" not in card and "feeds_into" not in card, (
+            "接线归门牌，不该在目录卡上再抄一遍"
+        )
+        assert "renderBoxMetrics" in card, "目录卡要带着实测指标这一段"
+        assert "实测指标" in _strip_js_comments(
+            _extract_js_function("renderBoxMetrics")
+        ), "指标段要写明是实测，不是判据"
+
+    def test_the_wiring_row_lives_on_the_nameplate_only(self):
+        """接线那一行只在**单盒门牌**上给
+
+        总览的卡片挤在一张环里，接线由画布上的线说；
+        每张卡再抄一遍，就是同一份信息两处。
+        """
+        assert "wiring: true" in _extract_js_function("updateCaption"), (
+            "单盒门牌要给出接线那一行"
+        )
+        assert "wiringRows" in _extract_js_function("captionHtml"), (
+            "门牌的接线那一行得由 captionHtml 画"
+        )
+        assert "captionHtml(box)" in HTML_PAGE, (
+            "总览的立方体卡不该带接线那一行"
+        )
+
+    def test_a_task_the_server_did_not_select_is_dropped_by_the_frontend(self):
+        """服务端没认下的任务，前端不能还留着选中态
+
+        盒子页的 URL 里手塞一个跟这只盒子无关的 task 参数，服务端会当
+        没选（task_filter=null）。前端要是还留着 _task，左栏高亮和
+        右栏标题就在说一件服务端没认下的事。
+        """
+        render = _extract_js_function("render")
+        assert "data.task_filter" in render, "前端没按服务端口径校准选中态"
+        assert "_task = ''" in render, "失效的选中态没被清掉"
 
 
 def _run_back_link(scope_layouts: dict, view: str, domain: str, is_single: bool, task: str = "") -> dict:
