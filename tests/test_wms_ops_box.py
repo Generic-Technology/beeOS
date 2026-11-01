@@ -547,6 +547,47 @@ class TestAZeroChangeDeliveryIsStillReleased:
             f"变更单没说清这次没改代码：{request}"
         )
 
+    def test_the_change_request_reads_as_one_change_to_the_ops_box(self):
+        """变更单必须**用运维盒自己的解析方式**读成一条变更
+
+        以前这里只断言「文本里有 sha、有『没有新改动』」——
+        那是**看字符串**，不是看接收方怎么读。
+
+        运维盒按分号把变更单拆成一条条变更。而那句限定语
+        （「本次没有新改动，方案已落地，这份构建来自基线提交」）
+        跟在分号后面 → 被读成**第二条变更** → 它没指名构建 →
+        运维盒判「验的不是要上线的东西」→ 审批率 1/2 → 验收判红 →
+        履约层 failed → **链断在运维这一跳**（2026-11-01 真链撞出来的）。
+
+        所以这条守卫用**运维盒自己的两个函数**来验：
+        `_split_changes`（怎么读）和 `_names_the_build`（怎么判）。
+        """
+        import importlib.util
+        from pathlib import Path
+
+        from boxes.wms_ops.runner import _names_the_build, _split_changes
+
+        path = Path(__file__).resolve().parents[1] / "scripts" / "run_chain.py"
+        spec = importlib.util.spec_from_file_location("run_chain_under_test3", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        artifact = {
+            "commit_sha": "",
+            "base_commit": "449a6992275e0e09910ee92563a04e542ca14b39",
+        }
+        request = mod._build_change_request(
+            artifact,
+            [{"wms_kind": "zone"}, {"wms_kind": "location"}],
+        )
+        changes = _split_changes(request)
+        assert len(changes) == 1, (
+            f"运维盒把这份变更单读成了 {len(changes)} 条变更：{changes}"
+        )
+        assert _names_the_build(changes[0], artifact), (
+            f"运维盒读出来的那条没指名构建：{changes[0]}"
+        )
+
     def test_the_change_request_names_the_new_commit_when_there_is_one(self):
         import importlib.util
         from pathlib import Path

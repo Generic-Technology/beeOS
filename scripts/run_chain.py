@@ -64,6 +64,14 @@ from boxes.wms_testing.probes import SCENARIOS  # noqa: E402
 
 DEFAULT_VERIFY_BASE_URL = "http://127.0.0.1:8081/api/v1"
 
+
+class ChainError(Exception):
+    """链走不下去——**说清是哪一跳、为什么**
+
+    链脚本自己的错，不是盒子的错：盒子已经把自己的失败说清楚了，
+    链脚本要做的只是**把那句话传出去**，别用不相干的错盖住它。
+    """
+
 # 验证实例的启动参数（**可配**——机器不同，端口/库/用户也不同）
 VERIFY_DB_URL_ENV = "BEEOS_VERIFY_DB_URL"
 VERIFY_DB_USER_ENV = "BEEOS_VERIFY_DB_USER"
@@ -234,11 +242,55 @@ def _build_change_request(
     if commit_sha:
         return f"放行 {commit_sha[:8]} 这份构建（{label}）"
     if base_commit:
+        # **这里不许用「；」**（2026-11-01 真链撞出来的）：
+        # 运维盒的变更单契约是「一个分号一条变更」，
+        # 它把变更单按分号拆开逐条审。而这句限定语
+        # （「本次没有新改动，方案已落地，这份构建来自基线提交」）
+        # 跟在分号后面 → 被当成**第二条变更**，
+        # 而它没指名构建 → 运维盒判「验的不是要上线的东西」→
+        # 审批率 1/2 → 验收判红 → 履约层 failed → 链断在运维这一跳。
+        #
+        # 一次放行**就是一条变更**，限定语只是它的补充说明，
+        # 不能长得像另一条。用逗号，不用分号。
         return (
-            f"放行 {base_commit[:8]} 这份构建（{label}；"
+            f"放行 {base_commit[:8]} 这份构建（{label}，"
             "本次没有新改动，方案已落地，这份构建来自基线提交）"
         )
     return ""
+
+
+def _require_result(
+    box_id: str, run: dict[str, Any], store: Any,
+) -> dict[str, Any]:
+    """这次履约的产出——**没有就说清为什么没有**
+
+    **不许让「没有产出」变成 AttributeError**（2026-11-01 真链撞出来的）：
+    设计盒那跳模型返回了空串（`llm_parse`）→ 履约 failed → 没有产出 →
+    链脚本一句 `design["result"].get(...)` → AttributeError:
+    'NoneType' object has no attribute 'get'。
+
+    读者看到的是一句**不相干**的话，而真正的原因
+    （模型输出不是合法 JSON）被它盖住了——
+    「失败的原因不许被别的错误盖掉」。
+
+    同族：产出没了却继续跑，算出来的「0 条落差」是**假绿**。
+    """
+    payload = run.get("result")
+    if isinstance(payload, dict) and payload:
+        return payload
+    record = store.get_run(str(run.get("task_run_id") or "")) or {}
+    reason = str(record.get("error_reason") or "").strip()
+    if not reason:
+        errs = [
+            f"{t.get('op_id')}：{t.get('error')}"
+            for t in (run.get("op_trace") or [])
+            if t.get("error")
+        ]
+        reason = "；".join(errs) or "没记原因"
+    raise ChainError(
+        f"{box_id} 没有产出（status={run.get('status')!r}，"
+        f"验收={run.get('acceptance_status')!r}）——原因：{reason}"
+    )
 
 
 def _web_base_from(prod_url: str) -> str:
@@ -419,7 +471,7 @@ def main() -> int:
     # （subject_ref_from_result），而链身份由下面的 chain_ref/chains 补上。
     cap = trigger_task("wms_requirement_box", "capture_business_requirement",
                        {"narrative": narrative}, store)
-    pkg = cap["result"]
+    pkg = _require_result("需求盒", cap, store)
 
     # **这条链的身份**：需求集号 + 它的种类。
     # 链上的每一跳都归到它下面——**编排者才知道哪几跳是一条链**，
@@ -438,7 +490,7 @@ def main() -> int:
     design = trigger_task("wms_design_box", "handle_design_request", {}, store,
                           handoff={"requirement_set_ref": cap["task_run_id"]},
                           chain_ref=chain_ref, chain_kind=chain_kind)
-    expectations = design["result"].get("expectations", [])
+    expectations = _require_result("设计盒", design, store).get("expectations", [])
 
     # ---- 3) 开发盒（真腿：隔离工作区 → 改代码 → 编译 → 制品）----
     commit_range = ""
@@ -451,7 +503,7 @@ def main() -> int:
         "target_env": "verification",
     }, store, handoff={"design_package_ref": design["task_run_id"]},
         chain_ref=chain_ref, chain_kind=chain_kind)
-    dev_result = dev.get("result") or {}
+    dev_result = _require_result("开发盒", dev, store)
 
     # ---- 3.5) 把开发盒交付的那份构建部署到验证实例 ----
     #
@@ -489,7 +541,7 @@ def main() -> int:
         "verification_ref": test["task_run_id"],
         "artifact_ref": dev["task_run_id"],
     }, chain_ref=chain_ref, chain_kind=chain_kind)
-    ops_result = ops.get("result") or {}
+    ops_result = _require_result("运维盒", ops, store)
 
     # ---- 6) 分析盒（观测接力：运维盒合并后的那一份）----
     analysis = trigger_task("wms_analysis_box", "handle_effect_analysis_request", {
@@ -499,7 +551,7 @@ def main() -> int:
         "observed_window": "now",
     }, store, handoff={"observation_ref": ops["task_run_id"]},
         chain_ref=chain_ref, chain_kind=chain_kind)
-    ares = analysis.get("result") or {}
+    ares = _require_result("分析盒", analysis, store)
 
     payload = {
         "requirement_set": pkg.get("set_id"),
@@ -602,6 +654,17 @@ def _print_report(p: dict) -> None:
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except ChainError as exc:
+        # **链自己的错**：这句话已经说清了是哪一跳、为什么。
+        print(f"链路断了：{exc}", file=sys.stderr)
+        sys.exit(1)
     except Exception as exc:  # noqa: BLE001
+        import traceback
+
         print(f"链路断了：{type(exc).__name__}: {exc}", file=sys.stderr)
+        # **不相干的错不许盖住真正的原因**——
+        # 只打一行「链路断了：AttributeError: ...」的话，
+        # 读者不知道该去查链脚本还是去查盒子。栈打出来才知道。
+        traceback.print_exc()
+        sys.exit(1)
         sys.exit(2)
