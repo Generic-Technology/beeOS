@@ -3,7 +3,7 @@
 **为什么要有这条**：目录名曾经和盒子对不上——
 `boxes/modeling` 里住的是 `wms_design_box`，`boxes/requirement_capture` 里住的是
 `wms_requirement_box`。而 `boxes/modeling` 这个名字还**在骗人**：
-它不是通用建模盒，它的 `domain.py` 里是 31 处 WMS 专属词表，
+它不是通用设计盒，它的 `domain.py` 里是 31 处 WMS 专属词表，
 2 条判据也只对 WMS 有意义。
 
 **目录名是给人看的**——它得说清这只盒子是什么盒。

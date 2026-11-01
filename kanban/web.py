@@ -1567,8 +1567,8 @@ HTML_PAGE = f"""<!DOCTYPE html>
     border-radius: 6px; padding: 6px; overflow-x: auto; max-height: 180px;
   }}
 
-  /* DDD 战术设计视图（业务建模盒的产出物 = 业务模型） */
-  .ddd-model {{ margin-top: 8px; border-top: 1px dashed #e2e8f0; padding-top: 8px; }}
+  /* DDD 战术设计视图（业务设计盒的产出物 = 业务模型） */
+  .ddd-design {{ margin-top: 8px; border-top: 1px dashed #e2e8f0; padding-top: 8px; }}
   .ddd-goal {{ font-size: 11px; color: #475569; font-style: italic; margin-bottom: 8px; }}
   .ddd-group {{ margin-bottom: 8px; }}
   .ddd-pattern {{
@@ -1953,6 +1953,20 @@ function syncHeadHeight() {{
 // **轨迹来自落盘**（runtime/store.py 的 op_trace）。以前它只活在 trigger
 // 那一瞬间的 HTTP 响应里：请求一关就没了，刷新一下页面就再也问不出
 // 「这只盒子刚才跑了哪几步」。
+// ===== 旧 op id 别名表 =====
+//
+// op id 逐次落在 op_trace 里——那是**历史运行的事实**，不是可以随手改的显示文案。
+// 这只盒子的 op id 从「model」改成了「design」（建模 → 设计的统一改名），
+// 于是老记录里的 trace 还是旧名，声明链已经是新名。
+// 匹配时先认旧名：不然老记录会显示成「这次一跳都没跑到」——真相是它跑完了。
+//
+// 键 = 现在的 op id，值 = 改名前的 op id。
+// （beeline 的 7 个 op 里只有这 2 个改过名；其余 5 个本来就跟「建模」无关。）
+const LEGACY_OP_IDS = {{
+  generate_design_elements: 'generate_model_elements',
+  package_design: 'package_model',
+}};
+
 function renderRail(data) {{
   const trails = data.op_trails || [];
   let html = '<div class="rail-title">操作轨迹</div>';
@@ -1993,10 +2007,15 @@ function renderRail(data) {{
       for (const op of (t.ops || [])) ran[op.op_id] = op;
       const declared = (t.declared_ops && t.declared_ops.length)
         ? t.declared_ops : (t.ops || []).map(o => o.op_id);
-      const missing = declared.filter(id => !ran[id]);
+      // **旧 op id 别名表**：op id 逐次落在 op_trace 里——那是历史运行的事实。
+      // 改名之后，老记录的 trace 里仍是旧名，声明链里已是新名。
+      // 不认一下，老记录会显示成「这次一跳都没跑到」——真相是它跑完了。
+      const ranOp = (id) => ran[id]
+        || (LEGACY_OP_IDS[id] ? ran[LEGACY_OP_IDS[id]] : null);
+      const missing = declared.filter(id => !ranOp(id));
       html += '<div class="rail-ops">';
       for (const opId of declared) {{
-        const op = ran[opId];
+        const op = ranOp(opId);
         if (!op) {{
           html += '<div class="rail-op skip">'
             + '<span class="rail-op-status">○</span>'
@@ -2008,9 +2027,13 @@ function renderRail(data) {{
         const st = op.status || 'pending';
         const cls = st === 'completed' ? 'ok' : (st === 'failed' ? 'bad' : 'wait');
         const mark = st === 'completed' ? '✓' : (st === 'failed' ? '✕' : '·');
-        html += '<div class="rail-op ' + cls + '">'
+        // 认旧名跑的那一跳：正文用**当前**的 op 名，鼠标悬停能看到
+        // 那次运行里记的旧名。名字换了，但那次运行的事实一个字没改。
+        const legacy = (op.op_id !== opId)
+          ? ` title="这次运行里记的旧 op id：${{esc(op.op_id)}}"` : '';
+        html += '<div class="rail-op ' + cls + '"' + legacy + '>'
           + '<span class="rail-op-status">' + mark + '</span>'
-          + '<span class="rail-op-id">' + esc(op.op_id) + '</span>'
+          + '<span class="rail-op-id">' + esc(opId) + '</span>'
           + '</div>';
         if (op.error) {{
           html += '<div class="rail-op-err">' + esc(op.error) + '</div>';
@@ -2929,9 +2952,13 @@ function renderCard(label, value, cssClass) {{
   </div>`;
 }}
 
-// DDD 战术设计视图：result.model_elements 按战术模式分组渲染
-function renderDddModel(r) {{
-  const m = r && r.model_elements;
+// DDD 战术设计视图：result.design_elements 按战术模式分组渲染
+//
+// **旧名兜底**：产出字段改过名（model_elements → design_elements），
+// 改名前跑出来的产出还在落盘里。只认新名 = 那些产出在产出槽里是一片空白，
+// 看起来像「这个盒子从没产出过东西」——真相是它产出过，只是字段改了名。
+function renderDddDesign(r) {{
+  const m = r && (r.design_elements || r.model_elements);
   if (!m) return '';
   const PATTERNS = [
     ['entities', 'ENTITY', 'pat-entity'],
@@ -2940,7 +2967,7 @@ function renderDddModel(r) {{
     ['domain_events', 'DOMAIN EVENT', 'pat-domain_event'],
     ['domain_metrics', 'DOMAIN METRIC', 'pat-domain_metric'],
   ];
-  let h = `<div class="ddd-model"><div class="ddd-goal">目标：${{r.business_goal || ''}}</div>`;
+  let h = `<div class="ddd-design"><div class="ddd-goal">目标：${{r.business_goal || ''}}</div>`;
   for (const [key, label, cls] of PATTERNS) {{
     const els = m[key] || [];
     if (!els.length) continue;
@@ -3142,7 +3169,7 @@ function ruleAppliedNotice(r) {{
 // 绝不掉进某个不相关的专用视图。
 const ARTIFACT_VIEWS = {{
   flow_graph: renderRequirementSet,
-  ddd_model: renderDddModel,
+  ddd_design: renderDddDesign,
   receipt: renderReceipt,
 }};
 
@@ -3259,7 +3286,7 @@ let _shellBox = null;   // 当前 shell 属于哪个 box
 // rejected 归因 → 中文标签（runtime.models.RejectionClass）
 // 文案按「为什么被拒」写，不写「哪个盒子被拒」：同一个类在不同盒子里指的事一样
 const REJECT_LABEL = {{
-  empty_input: '投料里没有可建模的业务需求',
+  empty_input: '投料里没有可设计的业务需求',
   insufficient_coverage: '没覆盖住投料里的全部内容',
   conflict: '业务规则之间自相矛盾',
   structural: '结构 / 引用 / 指标不达标',
@@ -3571,7 +3598,7 @@ function relayTo(boxId) {{
     return;
   }}
   // 投料口径由下游盒子的 task_schema 决定：
-  // 下游只要 set_id / business_goal / requirements（建模盒的输入契约），
+  // 下游只要 set_id / business_goal / requirements（设计盒的输入契约），
   // 不把本盒的 evidence / extractor 之类内部字段塞过去
   const p = a.result || {{}};
   const payload = {{

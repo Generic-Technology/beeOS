@@ -92,7 +92,7 @@ WMS_TESTING_BOX = BeeBoxDefinition(
             ),
             # **阈值是 99，不是 0.99**。
             #
-            # `case_pass_rate` 是**百分数**（0-100），跟建模盒的
+            # `case_pass_rate` 是**百分数**（0-100），跟设计盒的
             # `requirement_coverage` 同一个量纲。写成 `gte 0.99` 的话，
             # **33.33% 也算通过**——判据在假设指标的形状，
             # 而实际跑出来「6 条里过了 2 条」被判成 passed。

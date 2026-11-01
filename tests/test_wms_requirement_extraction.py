@@ -122,7 +122,7 @@ class TestSingleSentenceRequirement:
 class TestCoverageDenominator:
     def test_goal_句没被覆盖时_coverage_掉下来(self, store):
         r = _run_capture(
-            store, "建模退款流程。订单是核心实体。",
+            store, "设计退款流程。订单是核心实体。",
             llm_result={"nodes": [
                 {"action": "订单是核心实体", "trace_to": "sent_2"},
             ]},
@@ -203,8 +203,8 @@ class TestEmptyVsModelFailure:
     def test_内容句存在但模型没产出节点_中止(self, store):
         """模型没干活 → 履约中止，不是一条好听的业务结论"""
         r = _run_capture(
-            store, "建模退款流程。",
-            llm_result={"goal": "建模退款流程", "nodes": [], "edges": []},
+            store, "设计退款流程。",
+            llm_result={"goal": "设计退款流程", "nodes": [], "edges": []},
         )
         assert r["status"] == "failed"
         assert r["result"] is None

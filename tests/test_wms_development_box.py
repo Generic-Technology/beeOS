@@ -1248,7 +1248,7 @@ class TestRunnerOrchestration:
                 "expectations": [
                     {"expectation_id": "e1", "wms_kind": "fefo", "statement": "s"},
                 ],
-                "model_elements": {"entities": [{"wms_kind": "lot"}]},
+                "design_elements": {"entities": [{"wms_kind": "lot"}]},
             },
             "commit_range": "abc123..HEAD",
         })
@@ -1263,7 +1263,7 @@ class TestRunnerOrchestration:
                 "package_id": "p1",
                 "set_id": "s1",
                 "expectations": [{"expectation_id": "e1", "wms_kind": "owner"}],
-                "model_elements": {},
+                "design_elements": {},
             },
         })
         assert plan["unmapped_concepts"] == ["owner"]

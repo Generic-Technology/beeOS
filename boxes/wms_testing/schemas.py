@@ -75,7 +75,7 @@ REQUIREMENT_SET_INPUT_SCHEMA = SchemaDef(
 # 测试盒要回答的是「**这条需求被满足了没有**」。要能回答这个，
 # 它得先知道每条需求**怎样才算被满足**——那就是预期。
 #
-# 预期由建模盒产出（只有它知道哪个需求绑到了哪个 WMS 概念，
+# 预期由设计盒产出（只有它知道哪个需求绑到了哪个 WMS 概念，
 # 而探针是按概念找的），测试盒**自己声明**它要的形状——
 # schema 归消费者所有。
 EXPECTATION_SET_INPUT_SCHEMA = SchemaDef(
@@ -104,7 +104,7 @@ TEST_TASK_INPUT_SCHEMA = SchemaDef(
         # **预期是必填的**：没有它，测试盒就不知道该验什么，
         # 跑出来的「全绿」等于「什么也没验」。
         #
-        # 它从**建模盒**接力过来（不是开发盒）——预期是建模盒产出的，
+        # 它从**设计盒**接力过来（不是开发盒）——预期是设计盒产出的，
         # 开发盒只是往下游递东西。让测试盒等开发盒转发，
         # 等于把「这条需求该怎样算被满足」的责任压给一个造制品的盒子。
         FieldDef(name="expectation_ref", type="ref:schema_expectation_set_input", required=True),

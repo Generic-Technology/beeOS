@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from boxes.wms_design import get_definition as get_modeling_definition
+from boxes.wms_design import get_definition as get_design_definition
 from boxes.wms_design.measure import COMPUTERS as MODEL_COMPUTERS
 from boxes.wms_requirement import get_definition as get_capture_definition
 from boxes.wms_requirement.measure import COMPUTERS as CAPTURE_COMPUTERS
@@ -73,14 +73,14 @@ def _capture_rec(i, *, hallucination=False, acc="accepted", status="completed", 
 class TestWiring:
     @pytest.mark.parametrize(
         "getter, computers",
-        [(get_capture_definition, CAPTURE_COMPUTERS), (get_modeling_definition, MODEL_COMPUTERS)],
+        [(get_capture_definition, CAPTURE_COMPUTERS), (get_design_definition, MODEL_COMPUTERS)],
     )
     def test_no_metric_is_declared_without_a_collector(self, getter, computers):
         assert m.unwired(getter(), computers) == []
 
     @pytest.mark.parametrize(
         "getter, computers",
-        [(get_capture_definition, CAPTURE_COMPUTERS), (get_modeling_definition, MODEL_COMPUTERS)],
+        [(get_capture_definition, CAPTURE_COMPUTERS), (get_design_definition, MODEL_COMPUTERS)],
     )
     def test_no_collector_is_missing_from_the_declaration(self, getter, computers):
         """反向：算法表里躺着的名字，definition 忘了写就永远上不了看板"""
@@ -94,15 +94,15 @@ class TestWiring:
     def test_abandoned_metrics_are_gone_from_the_declaration(self):
         """算不出数的指标不该还挂在 definition 上
 
-        manual_rewrite_rate 没有人工改写事件，model_reuse_rate / cost_per_modeling_request
+        manual_rewrite_rate 没有人工改写事件，design_reuse_rate / cost_per_design_request
         / human_escalation_rate 没有信号源。留着它们就是在看板上摆永远填不满的洞。
         """
         names = {x.name for x in m.declared(get_capture_definition())}
-        names |= {x.name for x in m.declared(get_modeling_definition())}
+        names |= {x.name for x in m.declared(get_design_definition())}
         assert names.isdisjoint({
             "manual_rewrite_rate",
-            "model_reuse_rate",
-            "cost_per_modeling_request",
+            "design_reuse_rate",
+            "cost_per_design_request",
             "human_escalation_rate",
         })
 
@@ -183,7 +183,7 @@ class TestAggregation:
             for i, sec in enumerate([10, 20, 30, 40, 50, 60, 70, 80, 90, 100], start=1)
         ]
         out = box_metrics_readings(MODELING, recs)
-        p95 = next(r for r in out if r["name"] == "p95_modeling_turnaround_time")
+        p95 = next(r for r in out if r["name"] == "p95_design_turnaround_time")
         assert p95["actual"] == pytest.approx(95.5, abs=0.5)
         assert p95["unit"] == "s"
 

@@ -7,7 +7,7 @@ runtime.runner - operation 分派机制
 handler 从哪来、干什么，是盒子的事，不由内核持有。
 
 以前这里叫 `mock_runner`，里面塞了三只盒子的全部业务实现
-（订单异常盒 8 个 op、建模盒 7 个 op + DDD 模式映射，
+（订单异常盒 8 个 op、设计盒 7 个 op + DDD 模式映射，
 还有从 `capture_runner` import 进来并表的捕获盒 5 个 op）。
 后果是内核比任何一只盒子都懂业务——加一只新盒子就得改内核，
 而盒子带不走自己的实现。

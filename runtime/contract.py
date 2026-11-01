@@ -95,6 +95,21 @@ def _resolve_ref(schema_id: str, schemas: Any) -> Optional[SchemaDef]:
     return None
 
 
+def _missing_field_error(path: str, field: FieldDef) -> str:
+    """缺必填字段的报错：带上字段自己声明的说明
+
+    光说「required field missing」是在**让投料方自己猜原因**：可能是忘了这个
+    字段，也可能是字段**改了名**（旧产出里还是旧名）。
+
+    字段的 description 就是这条契约想对投料方说的话——藏着不说，
+    等于把「你大概不知道字段改名了」这件事也一起藏了。
+    """
+    prefix = f"{path}." if path else ""
+    base = f"{prefix}{field.name}: required field missing"
+    desc = (field.description or "").strip()
+    return f"{base}（{desc}）" if desc else base
+
+
 def _check_field(
     field: FieldDef, value: Any, path: str, errors: list[str], schemas: Any = None
 ) -> None:
@@ -133,7 +148,7 @@ def _check_field(
         for sub in field.properties or []:
             if sub.name not in value:
                 if sub.required:
-                    errors.append(f"{path}.{sub.name}: required field missing")
+                    errors.append(_missing_field_error(path, sub))
                 continue
             _check_field(sub, value[sub.name], f"{path}.{sub.name}", errors, schemas)
         # 未声明的多余字段不报错（模型可扩展）
@@ -166,7 +181,7 @@ def _check_schema(
     for field in schema.fields:
         if field.name not in value:
             if field.required:
-                errors.append(f"{path}.{field.name}: required field missing")
+                errors.append(_missing_field_error(path, field))
             continue
         _check_field(field, value[field.name], f"{path}.{field.name}", errors, schemas)
 
@@ -198,7 +213,7 @@ def validate_payload(payload: Any, schema: SchemaDef, *, schemas: Any = None) ->
     for field in schema.fields:
         if field.name not in payload:
             if field.required:
-                errors.append(f"{field.name}: required field missing")
+                errors.append(_missing_field_error("", field))
             continue
         _check_field(field, payload[field.name], field.name, errors, schemas)
 

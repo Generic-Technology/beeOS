@@ -21,8 +21,8 @@ from core.models import FieldDef, SchemaDef
 # ---- 预期（开发盒自己声明的形状）----
 #
 # 开发盒要知道「这次改代码是为了满足什么」，就得拿得到预期。
-# 预期由建模盒产出（它是「可判定」的载体），开发盒是消费方，
-# 所以形状在这里**重新声明**而不是 ref 建模盒的 schema id——
+# 预期由设计盒产出（它是「可判定」的载体），开发盒是消费方，
+# 所以形状在这里**重新声明**而不是 ref 设计盒的 schema id——
 # ref 只能引用本 definition 内（见 docs/beebox-definition-schema.md §4）。
 #
 # 抄一份的代价是「上游改了这里会旧」，但那个代价是**响的**：
@@ -49,10 +49,17 @@ DESIGN_PACKAGE_INPUT_SCHEMA = SchemaDef(
         FieldDef(name="set_id", type="string", required=True),
         FieldDef(name="business_goal", type="string", required=False),
         FieldDef(name="requirement_count", type="integer", required=False),
-        # 模型元素本体：开发盒只当它是「要改哪些东西」的依据。
+        # 设计元素本体：开发盒只当它是「要改哪些东西」的依据。
         # 声明的是**分组结构 + 每个元素开发盒真会读的那几个键**——
-        # 多余字段不报错（模型可扩展），但少一个分组就是形状不对。
-        FieldDef(name="model_elements", type="object", required=True, properties=[
+        # 多余字段不报错（设计可扩展），但少一个分组就是形状不对。
+        #
+        # **旧名是 model_elements**（2026-11-01 改名）。拿改名前的产出接力时
+        # 得把这个字段名改过来——报错里会写明，免得只丢一句
+        # 「required field missing」让人以为是漏填。
+        FieldDef(
+            name="design_elements", type="object", required=True,
+            description="设计元素本体（旧产出里这个字段叫 model_elements）",
+            properties=[
             FieldDef(name="entities", type="array", required=False, items=FieldDef(
                 name="entity", type="object", properties=[
                     FieldDef(name="entity_id", type="string", required=False),

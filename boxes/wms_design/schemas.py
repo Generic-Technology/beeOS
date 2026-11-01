@@ -1,5 +1,5 @@
 """
-boxes.wms_design.schemas - 业务建模盒子的业务 schemas
+boxes.wms_design.schemas - 业务设计盒子的业务 schemas
 
 定义 6 个业务 schema：
 
@@ -10,14 +10,14 @@ boxes.wms_design.schemas - 业务建模盒子的业务 schemas
 处理层：
   - schema_parsed_requirements —— 解析后的需求（parse_requirements 输出）
   - schema_classified_requirements —— 分类后的需求（classify_requirements 输出）
-  - schema_model_elements —— 生成的模型元素（generate_model_elements 输出）
+  - schema_design_elements —— 生成的设计元素（generate_design_elements 输出）
 
 输出层：
-  - schema_business_model_package —— 业务模型包（最终结果 + 证据）
+  - schema_business_design_package —— 业务设计包（最终结果 + 证据）
 
 设计要点：
 - 输入结构化（需求带 id / type / 优先级）→ 验收可机械化
-- 输出带 traceability（每个 model 元素记录 trace_to requirement_id）→ 覆盖率可验
+- 输出带 traceability（每个 design 元素记录 trace_to requirement_id）→ 覆盖率可验
 - acceptance 字段全部机械可验（覆盖率 / 一致性 / 引用 / 结构 / 指标）
 """
 
@@ -59,7 +59,7 @@ WMS_ALL_KINDS: tuple[str, ...] = (
 REQUIREMENT_TYPES = ("object", "rule", "process", "metric", "goal", "event")
 REQUIREMENT_PRIORITIES = ("must_have", "should_have", "could_have")
 
-# DDD 模型元素的五种 pattern
+# DDD 设计元素的五种 pattern
 MODEL_PATTERNS = ("entity", "specification", "domain_service", "domain_event", "domain_metric")
 
 
@@ -174,10 +174,10 @@ CLASSIFIED_REQUIREMENTS = SchemaDef(
         FieldDef(name="requirement_count", type="integer"),
         FieldDef(name="valid_ids", type="array", items=FieldDef(name="id", type="string")),
         FieldDef(
-            name="modelable_ids",
+            name="designable_ids",
             type="array",
             items=FieldDef(name="id", type="string"),
-        ),  # 可建模 5 类需求 id（覆盖率分母；goal 不计入）
+        ),  # 可设计 5 类需求 id（覆盖率分母；goal 不计入）
         FieldDef(
             name="by_type",
             type="object",
@@ -197,15 +197,15 @@ CLASSIFIED_REQUIREMENTS = SchemaDef(
 
 
 # ============================================================
-# 模型元素的形状（**一份定义，两处引用**）
+# 设计元素的形状（**一份定义，两处引用**）
 # ============================================================
 #
-# 以前 `schema_model_elements`（op 产出）和模型包内嵌的 `model_elements`
+# 以前 `schema_design_elements`（op 产出）和设计包内嵌的 `design_elements`
 # 是两个不同的形状，**而包声明的是前者、装的是后者**——
 # 产出的包不满足它自己声明的 result schema，12 条契约错没人看见
 # （`ref:` 以前不做深校验，所以谁都没发现）。
 #
-# 现在：元素 item 只定义一次，op 产出和模型包共用；包用 DDD 五组的名字
+# 现在：元素 item 只定义一次，op 产出和设计包共用；包用 DDD 五组的名字
 # （specifications / domain_services…），op 用流程图的名字（rules / processes…），
 # **但 item 的形状是同一份**。
 
@@ -232,8 +232,8 @@ ENTITY_ITEM = FieldDef(
         FieldDef(name="entity_id", type="string"),
         FieldDef(name="name", type="string"),
         FieldDef(name="pattern", type="enum", values=list(MODEL_PATTERNS)),  # entity
-        # **这个盒子是 WMS 建模盒**：元素必须说得出自己是 WMS 的
-        # 哪个概念。说不出（null）就不算 WMS 模型的一分子。
+        # **这个盒子是 WMS 设计盒**：元素必须说得出自己是 WMS 的
+        # 哪个概念。说不出（null）就不算 WMS 设计的一分子。
         FieldDef(
             name="wms_kind",
             type="enum",
@@ -333,15 +333,15 @@ METRIC_ITEM = FieldDef(
 
 
 MODEL_ELEMENTS = SchemaDef(
-    id="schema_model_elements",
-    description="生成的模型元素（op 产出：流程图视角的实体 / 规则 / 流程 / 指标 / 事件）",
+    id="schema_design_elements",
+    description="生成的设计元素（op 产出：流程图视角的实体 / 规则 / 流程 / 指标 / 事件）",
     fields=[
         FieldDef(name="set_id", type="string"),
         FieldDef(name="business_goal", type="string"),
         FieldDef(name="requirement_count", type="integer"),
         FieldDef(name="valid_ids", type="array", items=FieldDef(name="id", type="string")),
         FieldDef(
-            name="modelable_ids",
+            name="designable_ids",
             type="array",
             items=FieldDef(name="id", type="string"),
         ),
@@ -368,10 +368,10 @@ MODEL_ELEMENTS = SchemaDef(
 )
 
 
-# 模型包内嵌的模型元素：**同一份 item 定义**，DDD 五组的名字
+# 设计包内嵌的设计元素：**同一份 item 定义**，DDD 五组的名字
 MODEL_PACKAGE_ELEMENTS = SchemaDef(
-    id="schema_model_package_elements",
-    description="模型包内嵌的模型元素（DDD 战术设计的五组：实体 / 规格 / 领域服务 / 领域事件 / 领域指标）",
+    id="schema_design_package_elements",
+    description="设计包内嵌的设计元素（DDD 战术设计的五组：实体 / 规格 / 领域服务 / 领域事件 / 领域指标）",
     fields=[
         FieldDef(name="entities", type="array", items=ENTITY_ITEM),
         FieldDef(name="specifications", type="array", items=RULE_ITEM),
@@ -397,9 +397,9 @@ MODEL_PACKAGE_ELEMENTS = SchemaDef(
 #   statement      —— 该概念的正式表述（**机械取自词表**，不编）
 #   evidence       —— 业务原话里的逐字片段（**机械取自绑定**）
 #
-# 为什么由建模盒产出（而不是需求盒）：
+# 为什么由设计盒产出（而不是需求盒）：
 # 「可判定」要求预期挂在一个 WMS 概念上——测试盒的探针是按概念找的。
-# 只有建模盒知道哪个需求绑到了哪个概念；需求盒那边只有业务原话，
+# 只有设计盒知道哪个需求绑到了哪个概念；需求盒那边只有业务原话，
 # 做不出可判定的预期，只能做出一句复述。
 
 MODEL_EXPECTATION = FieldDef(
@@ -425,12 +425,12 @@ MODEL_EXPECTATIONS = SchemaDef(
 
 
 # ============================================================
-# 输出层：业务模型包（含证据）
+# 输出层：业务设计包（含证据）
 # ============================================================
 
 
 MODEL_EVIDENCE = SchemaDef(
-    id="schema_model_evidence",
+    id="schema_design_evidence",
     description="模型验证证据（机械可验 5 项）",
     fields=[
         FieldDef(name="set_id", type="string"),
@@ -493,19 +493,19 @@ MODEL_EVIDENCE = SchemaDef(
 
 
 BUSINESS_MODEL_PACKAGE = SchemaDef(
-    id="schema_business_model_package",
-    description="业务模型包（最终交付物）",
+    id="schema_business_design_package",
+    description="业务设计包（最终交付物）",
     fields=[
         FieldDef(name="package_id", type="string"),
         FieldDef(name="set_id", type="string"),
         FieldDef(name="business_goal", type="string"),
         FieldDef(
-            name="model_elements",
-            type="ref:schema_model_package_elements",
+            name="design_elements",
+            type="ref:schema_design_package_elements",
         ),
         FieldDef(
             name="evidence",
-            type="ref:schema_model_evidence",
+            type="ref:schema_design_evidence",
         ),
         # ---- 5 项 acceptance 判据（全部机械可验）----
         # 这五个字段以前没声明，但 beeline 真的产出它们，acceptance 也真的读它们。
@@ -535,14 +535,14 @@ BUSINESS_MODEL_PACKAGE = SchemaDef(
         # 需求超过 1000 条不 escalate、业务方没指定不 no_deliver、
         # 有需求绑不上 WMS 概念也不报。规则写着，护不住任何东西。
         FieldDef(name="requirement_count", type="integer",
-                 description="本次建模覆盖的需求条数（异常阈值读它）"),
+                 description="本次设计覆盖的需求条数（异常阈值读它）"),
         FieldDef(name="business_owner_assigned", type="boolean",
                  description="需求集是否指定了业务负责人"),
         FieldDef(name="requirements_without_wms_binding", type="integer",
-                 description="可建模需求里没能绑上 WMS 实体的条数（应为 0）"),
+                 description="可设计需求里没能绑上 WMS 实体的条数（应为 0）"),
         # ---- WMS 域专属的 2 条判据 ----
-        # 前 5 条验的是「模型自洽」——需求覆盖率、引用完整性、结构齐不齐。
-        # 这两条验的是「**这是不是一个 WMS 模型**」：需求有没有落到 WMS
+        # 前 5 条验的是「设计自洽」——需求覆盖率、引用完整性、结构齐不齐。
+        # 这两条验的是「**这是不是一个 WMS 设计**」：需求有没有落到 WMS
         # 概念上，规则有没有约束 WMS 业务。少了这两条，一个纯通用的
         # 「当库存 > 0 时……」模型照样全绿，而盒子挂着 WMS 的招牌。
         FieldDef(name="wms_binding", type="boolean"),
@@ -644,9 +644,9 @@ BUSINESS_MODEL_PACKAGE = SchemaDef(
                     description="绑到至少一个 WMS 概念的需求数",
                 ),
                 FieldDef(
-                    name="modelable_requirement_count",
+                    name="designable_requirement_count",
                     type="integer",
-                    description="可建模需求总数（分母）",
+                    description="可设计需求总数（分母）",
                 ),
             ],
         ),
@@ -655,17 +655,17 @@ BUSINESS_MODEL_PACKAGE = SchemaDef(
 
 
 # ============================================================
-# 输入层：建模任务的投料（**走 ref: 通道**）
+# 输入层：设计任务的投料（**走 ref: 通道**）
 # ============================================================
 #
-# 以前建模盒的投料就是 `schema_business_requirement_set` 本身
+# 以前设计盒的投料就是 `schema_business_requirement_set` 本身
 # ——**内联**吃需求集。结果是：上游需求盒的产出接不进来，
 # 每次都得人手工把 set_id / business_goal / requirements 拷过去，
 # 拷漏一个字段下游照样收。
 #
 # 现在：需求集是**上游盒子的产出**，通过 `ref:` 通道接过来。
 #
-# **形状由建模盒自己声明**（schema 归消费者所有）：
+# **形状由设计盒自己声明**（schema 归消费者所有）：
 # 交接时 runtime/handoff.py 按这份声明校验上游产出——
 # 上游改了字段，这里旧了，交接**当场失败**（响的），
 # 而不是悬空引用那样永远没人发现（哑的）。
@@ -674,9 +674,9 @@ BUSINESS_MODEL_PACKAGE = SchemaDef(
 # 所以这份形状必须住在本盒的 schemas 里，不能指向需求盒的 schema id。
 REQUIREMENT_SET_INPUT_SCHEMA = SchemaDef(
     id="schema_requirement_set_input",
-    description="建模盒要消费的需求集（形状由建模盒自己声明）",
+    description="设计盒要消费的需求集（形状由设计盒自己声明）",
     fields=[
-        # set_id 是「这批需求是哪一批」——建模盒的 subject_ref 从这儿取
+        # set_id 是「这批需求是哪一批」——设计盒的 subject_ref 从这儿取
         FieldDef(name="set_id", type="string", required=True),
         FieldDef(name="business_goal", type="string", required=False),
         FieldDef(name="context", type="string", required=False),
@@ -714,8 +714,8 @@ REQUIREMENT_SET_INPUT_SCHEMA = SchemaDef(
 )
 
 MODEL_TASK_INPUT_SCHEMA = SchemaDef(
-    id="schema_model_task_input",
-    description="建模任务（需求集）（一次建模任务的投料）",
+    id="schema_design_task_input",
+    description="设计任务（需求集）（一次设计任务的投料）",
     fields=[
         # **只有这一个字段**：需求集整个从上游接过来。
         # 留一份内联的 set_id / requirements 在旁边 = 一个字段两个来源，

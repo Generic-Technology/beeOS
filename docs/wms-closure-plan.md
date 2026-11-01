@@ -162,12 +162,12 @@ LLM 调用点，也不引入新的幻觉面。
 > 那是判一个我们自己造的字段，不是判业务价值。
 >
 > **为什么判据不在产出预期的那一跳里算**：
-> 载体在 `generate_model_elements` 产出，判据在 `check_consistency` 核，
+> 载体在 `generate_design_elements` 产出，判据在 `check_consistency` 核，
 > **隔了两跳**。同一跳里既产出又核 = 自己判自己，永远绿。
 > 两边各自算：绑定集合现场重算，预期集合从上一跳传下来——
 > 少一条就是中间某一跳把载体吃了（「吃了不传」的第四例）。
 
-**载体**：`schema_business_model_package` 加 `expectations` 字段
+**载体**：`schema_business_design_package` 加 `expectations` 字段
 （下游两只盒各自声明它要消费的形状，见 3.4 / 3.5）。
 
 ### 3.2 design —— 从「套模板」改成「落到 WMS 代码位置」
@@ -302,11 +302,11 @@ ops 的 `subject_ref_field="ops_task_id"` 是运维事件号，不是需求号�
 
 **补法**（最小可行 → 再全自动）：
 1. `ResultDef` 加 `produces` 声明：产出里哪块对应哪个 schema
-   （例：`{"schema_business_model_package": "model_package"}`）
+   （例：`{"schema_business_design_package": "model_package"}`）
 2. 组装函数：目标盒 task_schema 里的 `ref:` 字段，从上游产出的 `produces` 里取
 3. 触发端点支持 `from_run_id` → 自动组装投料
 4. **同时实现 `ref:` 深校验**：投料里 `ref:` 字段必须真的符合目标 schema 的形状
-   —— 这同时修掉已知的 3 处悬空 `ref:`（dev→`schema_business_model_package`、
+   —— 这同时修掉已知的 3 处悬空 `ref:`（dev→`schema_business_design_package`、
    testing→`schema_requirement_set_package` / `schema_build_artifact`，
    目标都在**别的盒子**里，违反「ref 只引用本 definition 内」）
 
@@ -412,7 +412,7 @@ curl -X POST localhost:8765/api/trigger -d '{
    链路是迭代的：「完成交付」= testing 绿的那一次。
 
 5. **AI 参与面被压到最小**
-   只有两处需要语义：需求抽取（抄原文）、模型元素命名（抄需求描述）。
+   只有两处需要语义：需求抽取（抄原文）、设计元素命名（抄需求描述）。
    全部校验机械做。**没有第二个 LLM 调用点。**
 
 6. **一次只推一条需求**

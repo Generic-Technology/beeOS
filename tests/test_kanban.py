@@ -26,7 +26,7 @@ from runtime import (
 from tests.fixtures.sample_box import get_definition as get_sample_def
 from tests.fixtures.sample_box.beeline import get_beeline as get_sample_beeline
 from tests.fixtures.sample_box.runner import RUNNER as SAMPLE_RUNNER
-from boxes.wms_design.runner import RUNNER as MODELING_RUNNER
+from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
 from boxes.wms_design import get_definition as get_mod_def
 from boxes.wms_design.beeline import get_beeline as get_mod_beeline
 from kanban.cli import render_dashboard
@@ -99,7 +99,7 @@ class TestTaskRunStore:
     def test_rule_applied_note_is_persisted(self, store: TaskRunStore):
         """「有环节没走模型」必须事后可查。
 
-        建模盒会在 business_goal、id 编号上走机械规则——这些环节
+        设计盒会在 business_goal、id 编号上走机械规则——这些环节
         影响了产出内容，却只活在 result 里。result 不落盘（含 nodes/edges），
         所以这一条 note 得单独带出去，否则「这个业务目标是谁写的」
         事后无从回答。这里盯的就是别再退回"只在 raw JSON 里"的状态。
@@ -167,7 +167,7 @@ class TestTaskRunStore:
             "pm", "i", mod_def.result.result_schema, f"{mod_def.id}@v{mod_def.version}",
             mod_beeline.id, mod_beeline.version, "rt", "in",
         )
-        BeelineExecutor(MODELING_RUNNER).execute(tr, mod_beeline, {
+        BeelineExecutor(DESIGN_RUNNER).execute(tr, mod_beeline, {
             "set_id": "s1", "business_goal": "x",
             "requirements": [{"requirement_id": "r1", "description": "x", "requirement_type": "object", "priority": "must_have"}],
         })
@@ -220,7 +220,7 @@ class TestTaskRunStore:
 
         for box, beeline, intent in [
             (inv_def, inv_beeline, "handle_sample_request"),
-            (mod_def, mod_beeline, "handle_modeling_request"),
+            (mod_def, mod_beeline, "handle_design_request"),
         ]:
             input_data = (
                 {"sample_id": "s_001"} if intent == "handle_sample_request"
@@ -230,7 +230,7 @@ class TestTaskRunStore:
                 "o", intent, box.result.result_schema, f"{box.id}@v{box.version}",
                 beeline.id, beeline.version, "rt", "in",
             )
-            BeelineExecutor(MODELING_RUNNER).execute(tr, beeline, input_data)
+            BeelineExecutor(DESIGN_RUNNER).execute(tr, beeline, input_data)
             store.append(tr, box_id=box.id)
 
         assert set(store.list_boxes()) == {inv_def.id, mod_def.id}
@@ -253,7 +253,7 @@ class TestTaskRunStore:
             "pm", "i", mod_def.result.result_schema, f"{mod_def.id}@v{mod_def.version}",
             mod_beeline.id, mod_beeline.version, "rt", "in",
         )
-        BeelineExecutor(MODELING_RUNNER).execute(tr, mod_beeline, {
+        BeelineExecutor(DESIGN_RUNNER).execute(tr, mod_beeline, {
             "set_id": "s1", "business_goal": "x",
             "requirements": [{"requirement_id": "r1", "description": "x", "requirement_type": "object", "priority": "must_have"}],
         })

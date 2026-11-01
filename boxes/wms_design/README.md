@@ -1,6 +1,6 @@
-# WMS 仓储建模履约盒（wms_design_box）
+# WMS 仓储设计履约盒（wms_design_box）
 
-> 按结构化仓储需求产出可机械验证的 WMS 模型包——实体、约束、指标，外加可判定的预期。
+> 按结构化仓储需求产出可机械验证的 WMS 设计包——实体、约束、指标，外加可判定的预期。
 
 ## 业务定位
 
@@ -8,7 +8,7 @@
 
 产出分三块：
 
-- **模型元素**——WMS 实体（SKU / 货主 / 库位 / 库存 / 批次 / 波次 / 盘点）、
+- **设计元素**——WMS 实体（SKU / 货主 / 库位 / 库存 / 批次 / 波次 / 盘点）、
   WMS 约束（库位占用唯一 / 先进先出 / 安全库存 / 波次合并…）、WMS 运营指标
 - **可判定的预期**（`expectations`）——每条需求落到哪个 WMS 概念上，
   概念的标准表述是什么，业务原话的逐字证据在哪
@@ -23,12 +23,12 @@
 
 | # | 判据 | 口径 | op | value |
 |---|---|---|---|---|
-| 1 | `requirement_coverage` | 每条需求都被模型元素认领 | gte | 100 |
+| 1 | `requirement_coverage` | 每条需求都被设计元素认领 | gte | 100 |
 | 2 | `rule_consistency` | 规则无矛盾（WMS 约束互斥表）| eq | true |
 | 3 | `reference_integrity` | 引用全部解析成功 | eq | true |
-| 4 | `structural_compliance` | 结构符合建模标准 | eq | true |
+| 4 | `structural_compliance` | 结构符合设计标准 | eq | true |
 | 5 | `metrics_defined` | 每个指标有 target 值 | eq | true |
-| 6 | `wms_binding` | 认得出这是 WMS 模型 | eq | true |
+| 6 | `wms_binding` | 认得出这是 WMS 设计 | eq | true |
 | 7 | `wms_rule_binding` | 约束也认得出是 WMS 的 | eq | true |
 | 8 | `expectation_completeness` | 认出的每个 WMS 概念都变成一条预期 | eq | true |
 
@@ -50,11 +50,11 @@ WMS 绑定是**关键词机械匹配**，认不出同义改写（「拣货」/�
 ## beeline 7 ops
 
 ```
-parse_requirements → classify_requirements → generate_model_elements →
-verify_coverage → check_consistency → generate_evidence → package_model
+parse_requirements → classify_requirements → generate_design_elements →
+verify_coverage → check_consistency → generate_evidence → package_design
 ```
 
-全部 ops 用 `idempotency.mode=required, key=set_id`，重复建模产出同模型。
+全部 ops 用 `idempotency.mode=required, key=set_id`，重复设计产出同一个设计。
 
 ## 数据形状
 
@@ -68,12 +68,12 @@ flowchart TB
     Def --> Metrics[metrics]
 
     Schemas --> S1[requirement_set 输入]
-    Schemas --> S2[model_elements]
+    Schemas --> S2[design_elements]
     Schemas --> S3[model_expectations]
     Schemas --> S4[model_evidence]
     Schemas --> S5[business_model_package 输出]
 
-    Task --> T1[handle_modeling_request]
+    Task --> T1[handle_design_request]
     T1 --> BL[beeline_wms_design_v1]
 
     Result --> R1[8 acceptance rules]
@@ -102,7 +102,7 @@ beeline = get_beeline()
 
 input_data = {
     "set_id": "req_set_001",
-    "business_goal": "建模订单退款流程",
+    "business_goal": "设计订单退款流程",
     "requirements": [
         {"requirement_id": "req_obj_1", "description": "订单实体", "requirement_type": "object", "priority": "must_have"},
     ],

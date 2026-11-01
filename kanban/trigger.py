@@ -6,7 +6,7 @@
   POST payload → 校验 box + task_type → create_task_run
   → BeelineExecutor.execute → evaluate_acceptance → store.append
 
-PoC 取舍：同步执行（建模盒 7 op 毫秒级，POST 直接返回终态）。
+PoC 取舍：同步执行（设计盒 7 op 毫秒级，POST 直接返回终态）。
 真实 worker 接入后应异步化（POST 只落盘 triggered 状态）。
 """
 
@@ -21,7 +21,7 @@ from uuid import uuid4
 # 它引用的 schema id 全部来自本盒的 schemas.py，每个 op 的 handler 都在
 # 本盒的 runner.py 里。顶层一个 beelines/ 目录会让人以为存在一种可复用的
 # 跨盒路线，实际上一条都没有。
-from boxes.wms_design.beeline import get_beeline as get_modeling_beeline
+from boxes.wms_design.beeline import get_beeline as get_design_beeline
 from boxes.wms_analysis.beeline import get_beeline as get_wms_analysis_beeline
 from boxes.wms_development.beeline import get_beeline as get_wms_development_beeline
 from boxes.wms_ops.beeline import get_beeline as get_wms_ops_beeline
@@ -39,9 +39,9 @@ from boxes.wms_system.measure import COMPUTERS as WMS_SYS_COMPUTERS
 from boxes.wms_system.runner import RUNNER as WMS_SYS_RUNNER
 from boxes.wms_testing.measure import COMPUTERS as WMS_TEST_COMPUTERS
 from boxes.wms_testing.runner import RUNNER as WMS_TEST_RUNNER
-from boxes.wms_design import get_definition as get_mod_definition
-from boxes.wms_design.measure import COMPUTERS as MODELING_COMPUTERS
-from boxes.wms_design.runner import RUNNER as MODELING_RUNNER
+from boxes.wms_design import get_definition as get_design_definition
+from boxes.wms_design.measure import COMPUTERS as DESIGN_COMPUTERS
+from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
 from boxes.wms_analysis import get_definition as get_wms_analysis_definition
 from boxes.wms_development import get_definition as get_wms_development_definition
 from boxes.wms_ops import get_definition as get_wms_ops_definition
@@ -73,7 +73,7 @@ from runtime.store import TaskRunStore
 
 
 # box_id → (definition 加载器, {beeline_id: beeline 加载器})
-# 当前聚焦业务建模履约盒子；运营线盒子代码保留在仓库，但未注册 =
+# 当前聚焦业务设计履约盒子；运营线盒子代码保留在仓库，但未注册 =
 # 看板不显示、trigger 不接收（恢复时加回注册表即可）
 BOX_REGISTRY: dict[
     str,
@@ -84,8 +84,8 @@ BOX_REGISTRY: dict[
         {"beeline_wms_requirement_v1": get_requirement_capture_beeline},
     ),
     "wms_design_box": (
-        get_mod_definition,
-        {"beeline_wms_design_v1": get_modeling_beeline},
+        get_design_definition,
+        {"beeline_wms_design_v1": get_design_beeline},
     ),
     "wms_system_box": (
         get_wms_system_definition,
@@ -118,7 +118,7 @@ BOX_REGISTRY: dict[
 # 否则 definition.metrics 里声明的指标在看板上是拿不到的数字。
 METRIC_COMPUTERS: dict[str, dict[str, core_metrics.Computer]] = {
     "wms_requirement_box": CAPTURE_COMPUTERS,
-    "wms_design_box": MODELING_COMPUTERS,
+    "wms_design_box": DESIGN_COMPUTERS,
     "receipt_capture_box": RECEIPT_COMPUTERS,
     "wms_system_box": WMS_SYS_COMPUTERS,
     "wms_development_box": WMS_DEV_COMPUTERS,
@@ -133,7 +133,7 @@ METRIC_COMPUTERS: dict[str, dict[str, core_metrics.Computer]] = {
 # 内核（runtime/executor.py）只认分派协议，不认识任何一只盒子的 op。
 RUNNER_REGISTRY: dict[str, HandlerRunner] = {
     "wms_requirement_box": CAPTURE_RUNNER,
-    "wms_design_box": MODELING_RUNNER,
+    "wms_design_box": DESIGN_RUNNER,
     "receipt_capture_box": RECEIPT_RUNNER,
     "wms_system_box": WMS_SYS_RUNNER,
     "wms_development_box": WMS_DEV_RUNNER,
@@ -444,13 +444,13 @@ def _resolve_schema(schema_id: str, schemas: Any) -> Any:
 
 # 手写示例（演示效果优于 schema 骨架）；缺省回退到 schema 生成
 _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
-    ("wms_design_box", "handle_modeling_request"): {
-        # **需求集整个装在 ref: 字段里**——建模盒的投料走接力通道，
-        # 形状由建模盒自己声明（schema_model_task_input）。
+    ("wms_design_box", "handle_design_request"): {
+        # **需求集整个装在 ref: 字段里**——设计盒的投料走接力通道，
+        # 形状由设计盒自己声明（schema_design_task_input）。
         # 看板的示例投料也得按这个形状给，否则示例一投就被契约拒。
         "requirement_set_ref": {
             "set_id": "req_set_demo",
-            "business_goal": "建模订单退款流程",
+            "business_goal": "设计订单退款流程",
             "requirements": [
                 {"requirement_id": "req_obj_order", "description": "订单实体", "requirement_type": "object", "priority": "must_have"},
                 {"requirement_id": "req_rule_7days", "description": "退款必须在 7 天内", "requirement_type": "rule", "priority": "must_have"},
@@ -462,7 +462,7 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("wms_requirement_box", "capture_business_requirement"): {
         "narrative": (
-            "建模订单退款流程。\n"
+            "设计订单退款流程。\n"
             "订单是核心实体。\n"
             "退款必须在 7 天内完成。\n"
             "退款申请走主管审批流程。\n"
@@ -749,8 +749,8 @@ def box_context(
 
     **为什么叫 box_context 而不是 domain_context**：`domain` 在这个项目里
     已经有明确含义了——`core` 的分层守卫把 `domain_service` / `domain_event` /
-    `domain_metric` 列成业务词表（`tests/test_layering.py`），建模盒那边还有
-    一个 `renderDddModel`。叫 domain context 会跟 DDD 的 bounded context 撞车，
+    `domain_metric` 列成业务词表（`tests/test_layering.py`），设计盒那边还有
+    一个 `renderDddDesign`。叫 domain context 会跟 DDD 的 bounded context 撞车，
     而这里根本不是领域模型：它就是这只盒子自己的声明。
     邻居也全是 `box_*`（box_manifest / box_meta / box_metrics_readings），
     夹个 domain 在中间像个混血。

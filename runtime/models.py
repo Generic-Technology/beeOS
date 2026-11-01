@@ -133,11 +133,11 @@ class RejectionClass(str, Enum):
 
     为什么需要：rejected 只说明"没过"，不说明"为什么没"。
     业务方看到 rejected 无法判断该补投料、该改需求、还是该找模型 bug。
-    归因分四类，边界在"投料之前 / 建模之中 / 规则之间"：
+    归因分四类，边界在"投料之前 / 设计之中 / 规则之间"：
 
-    - EMPTY_INPUT：投料里没有可建模的业务需求，无从建模
+    - EMPTY_INPUT：投料里没有可设计的业务需求，无从设计
       （注意：结构上合法的空集能过第一道闸，在这里被拦）
-    - INSUFFICIENT_COVERAGE：有需求，但模型元素没覆盖全
+    - INSUFFICIENT_COVERAGE：有需求，但设计元素没覆盖全
     - CONFLICT：规则之间自相矛盾
     - STRUCTURAL：引用 / 结构 / 指标等其余结构性判据不达标
     """

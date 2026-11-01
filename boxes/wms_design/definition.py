@@ -1,5 +1,5 @@
 """
-boxes.wms_design.definition - 业务建模履约盒 Definition 数据
+boxes.wms_design.definition - 业务设计履约盒 Definition 数据
 
 Software Line 第一只盒子定义。
 
@@ -39,12 +39,12 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
     id="wms_design_box",
     version=2,
     description=(
-        "WMS 仓储建模履约盒——按结构化仓储需求产出可机械验证的 WMS 模型包："
+        "WMS 仓储设计履约盒——按结构化仓储需求产出可机械验证的 WMS 设计包："
         "WMS 领域实体（SKU / 货主 / 库位 / 库存 / 批次 / 波次 / 盘点）、"
         "WMS 业务约束（库位占用唯一 / 先进先出 / 安全库存 / 波次合并…）、"
         "WMS 运营指标，以及 7 项验证证据。\n\n"
         "**7 条判据里有 2 条是 WMS 专属的**（wms_binding / wms_rule_binding）："
-        "前 5 条验「模型自洽」，这两条验「**这是不是一个 WMS 模型**」。"
+        "前 5 条验「设计自洽」，这两条验「**这是不是一个 WMS 设计**」。"
         "少了它们，一个纯通用的「当库存 > 0 时…」照样五分之五全绿，"
         "而盒子挂着 WMS 的招牌。\n\n"
         "**已知盲区（如实声明）**：WMS 绑定是关键词机械匹配，认不出同义改写"
@@ -67,13 +67,13 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
 
     task=[
         TaskDef(
-            type="handle_modeling_request",
+            type="handle_design_request",
             # **投料走 ref: 通道**：需求集是上游（需求盒）的产出，
             # 整个接过来，不在投料里内联一份。
             # 以前这里是 schema_business_requirement_set（内联），
             # 于是需求盒→设计盒这条通道**根本不存在**——
             # 看板拓扑上画着那条边，链子上却没有，每次都靠人手工拷。
-            task_schema="schema_model_task_input",
+            task_schema="schema_design_task_input",
             beeline_id="beeline_wms_design_v1",
             beeline_version=1,
             # 本次履约处理的业务对象标识（归档按它分组）
@@ -86,17 +86,17 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
             subject_kind="requirement",
             trigger=(
                 "仓储主管提交结构化 WMS 需求集（上架 / 拣货 / 盘点 / 波次合并）\n"
-                "OR 货主要求重新出 WMS 模型\n"
-                "OR 已有 WMS 模型要扩展新需求\n"
+                "OR 货主要求重新出 WMS 设计\n"
+                "OR 已有 WMS 设计要扩展新需求\n"
                 "OR 仓库换库位策略要重算模型"
             ),
         ),
     ],
 
     result=ResultDef(
-        type="business_model_produced",
-        result_schema="schema_business_model_package",
-        view="ddd_model",
+        type="business_design_produced",
+        result_schema="schema_business_design_package",
+        view="ddd_design",
         acceptance=[
             AcceptanceRule(
                 metric="requirement_coverage",
@@ -128,8 +128,8 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
             ),
             # ---- WMS 域专属 ----
             #
-            # 这两条验的不是「模型自洽」，是「**这是不是一个 WMS 模型**」。
-            # 口径：分母是可建模需求，**要求 100% 落到 WMS 概念上**。
+            # 这两条验的不是「设计自洽」，是「**这是不是一个 WMS 设计**」。
+            # 口径：分母是可设计需求，**要求 100% 落到 WMS 概念上**。
             #
             # 为什么卡 100 而不是「≥80% 算过」：这个盒子只服务 WMS 域，
             # 混进来的非 WMS 需求说明**投料错了**，不是「质量差一点」。
@@ -150,7 +150,7 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
             # 「模型认出来的每个 WMS 概念，都要变成一条可判定的预期」。
             #
             # 这条不是重复 `wms_binding`：wms_binding 问的是
-            # 「每条可建模需求都绑上了吗」，这条问的是
+            # 「每条可设计需求都绑上了吗」，这条问的是
             # 「绑定有没有被带成预期」——中间隔了两跳，
             # 载体在中间被吃掉的话，wms_binding 照样绿，
             # 而下游（测试盒 / 分析盒）拿到的是**空的预期集**，
@@ -192,8 +192,8 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
                 condition="business_owner_assigned == false",
                 action="no_deliver",
             ),
-            # 投料里有非 WMS 需求：不是「建模失败」，是**投料错了**。
-            # 送回去让业务方重新给需求，别拿通用需求硬凑一个 WMS 模型。
+            # 投料里有非 WMS 需求：不是「设计失败」，是**投料错了**。
+            # 送回去让业务方重新给需求，别拿通用需求硬凑一个 WMS 设计。
             ExceptionRule(
                 condition="requirements_without_wms_binding > 0",
                 # action 只有 escalate / rollback / no_deliver 三个值，
@@ -212,9 +212,9 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
         rules=QueenRules(
             task_routing={
                 "complexity_thresholds": {
-                    "small": 50,    # < 50 需求直接建模
+                    "small": 50,    # < 50 需求直接设计
                     "medium": 200,  # 50-200 启用模板
-                    "large": 1000,  # 200-1000 启用协作建模
+                    "large": 1000,  # 200-1000 启用协作设计
                     # > 1000 触发 escalate
                 },
             },
@@ -231,8 +231,8 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
                 "monitor_metrics": [
                     "first_pass_acceptance_rate",
                     "requirement_coverage_quality",
-                    "model_reuse_rate",
-                    "modeling_turnaround_time",
+                    "design_reuse_rate",
+                    "design_turnaround_time",
                 ],
             },
         ),
@@ -242,7 +242,7 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
         quality=[
             MetricDef(
                 name="first_pass_acceptance_rate",
-                definition="首次建模即通过 acceptance 的比例",
+                definition="首次设计即通过 acceptance 的比例",
                 target=90.0,
                 unit="pct",
             ),
@@ -255,19 +255,19 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
         ],
         latency=[
             MetricDef(
-                name="modeling_turnaround_time",
+                name="design_turnaround_time",
                 # 如实标注：这个盒子的 beeline 目前走 runtime/mock_runner，
-                # 测到的是 mock 执行耗时，不是真实建模耗时。
-                # 不这么写，看板上会显示一个 0.0s 的「建模时长」，读起来像建模极快。
-                definition="从需求提交到模型包产出时长（当前建模腿走 mock runner，"
-                           "此值是 mock 执行耗时，不等于真实建模耗时）",
+                # 测到的是 mock 执行耗时，不是真实设计耗时。
+                # 不这么写，看板上会显示一个 0.0s 的「设计时长」，读起来像设计极快。
+                definition="从需求提交到设计包产出时长（当前设计腿走 mock runner，"
+                           "此值是 mock 执行耗时，不等于真实设计耗时）",
                 target=3600.0,  # 1 hour
                 unit="s",
                 direction="lower_is_better",
             ),
             MetricDef(
-                name="p95_modeling_turnaround_time",
-                definition="95 分位建模时长（同上，mock 执行耗时）",
+                name="p95_design_turnaround_time",
+                definition="95 分位设计时长（同上，mock 执行耗时）",
                 target=7200.0,  # 2 hour
                 unit="s",
                 direction="lower_is_better",
@@ -280,5 +280,5 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
 
 
 def get_definition() -> BeeBoxDefinition:
-    """返回业务建模履约盒 Definition"""
+    """返回业务设计履约盒 Definition"""
     return WMS_DESIGN_BOX

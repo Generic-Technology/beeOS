@@ -61,7 +61,7 @@ def _expectations_of(input_data: dict[str, Any]) -> list[dict[str, Any]]:
     """取出预期列表
 
     预期有两种可能的来法：
-    - `expectation_ref` 是 ref:（接力来的建模盒产出）→ 里面是 expectations[]
+    - `expectation_ref` 是 ref:（接力来的设计盒产出）→ 里面是 expectations[]
     - 直接投的 `expectations`（手工投料时用）
     """
     ref = input_data.get("expectation_ref")

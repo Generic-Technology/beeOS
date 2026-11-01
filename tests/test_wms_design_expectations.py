@@ -23,8 +23,8 @@ from boxes.wms_design.domain import statement_for_kind
 from boxes.wms_design.runner import (
     _simulate_check_consistency,
     _simulate_generate_evidence,
-    _simulate_generate_model_elements,
-    _simulate_package_model,
+    _simulate_generate_design_elements,
+    _simulate_package_design,
     _simulate_verify_coverage,
 )
 from runtime import llm
@@ -41,7 +41,7 @@ ELEMENT_INPUT = {
     "set_id": "s1",
     "requirements": REQS,
     "valid_ids": ["r_obj", "r_rule"],
-    "modelable_ids": ["r_obj", "r_rule"],
+    "designable_ids": ["r_obj", "r_rule"],
     "by_type": {"object": ["r_obj"], "rule": ["r_rule"]},
 }
 
@@ -69,11 +69,11 @@ def _chain(monkeypatch, bindings: list):
     「少跑一跳」和「吃掉一传」长得很像：都是拿到默认值而不报错。
     """
     monkeypatch.setattr(llm, "complete_json", _stub({"bindings": bindings}))
-    elements = _simulate_generate_model_elements(dict(ELEMENT_INPUT))
+    elements = _simulate_generate_design_elements(dict(ELEMENT_INPUT))
     covered = _simulate_verify_coverage(elements)
     consistent = _simulate_check_consistency(covered)
     evidence = _simulate_generate_evidence(consistent)
-    return elements, consistent, _simulate_package_model(evidence)
+    return elements, consistent, _simulate_package_design(evidence)
 
 
 # ============================================================
@@ -211,7 +211,7 @@ class TestTheCompletenessCriterionCanActuallyFail:
     def test_a_dropped_carrier_turns_the_criterion_red(self, monkeypatch):
         """中间那一跳把载体吃了 → 判据必须红
 
-        载体在 `generate_model_elements` 产出，在 `check_consistency` 核。
+        载体在 `generate_design_elements` 产出，在 `check_consistency` 核。
         **隔了两跳**——所以这一条验的是「跨跳的传输没坏」。
 
         隔离：这条**直接构造**「载体被吃掉」的输入，
@@ -221,7 +221,7 @@ class TestTheCompletenessCriterionCanActuallyFail:
             {"requirement_id": "r_rule", "kinds": [
                 {"kind": "fefo", "evidence": "效期升序"}]},
         ]}))
-        elements = _simulate_generate_model_elements(dict(ELEMENT_INPUT))
+        elements = _simulate_generate_design_elements(dict(ELEMENT_INPUT))
         assert elements["expectations"], "载体没产出——这条守卫的前提不成立"
 
         # 模拟中间跳吃掉载体
@@ -232,7 +232,7 @@ class TestTheCompletenessCriterionCanActuallyFail:
         # 少跑一跳的话 package 读到的是默认值 False——
         # 那样这条守卫会**因为错误的原因**变红（假红）。
         evidence = _simulate_generate_evidence(consistent)
-        package = _simulate_package_model(evidence)
+        package = _simulate_package_design(evidence)
 
         assert package["expectation_completeness"] is False, (
             "载体被吃掉了，判据还是绿的——那这条判据不承重"
@@ -291,7 +291,7 @@ class TestTheDownstreamBoxesDeclareWhatTheyConsume:
         for needed in ("expectation_id", "requirement_id", "wms_kind",
                        "statement", "evidence"):
             assert needed in item_props, (
-                f"测试盒声明的预期形状少了 {needed}——它接不上建模盒的产出"
+                f"测试盒声明的预期形状少了 {needed}——它接不上设计盒的产出"
             )
 
     def test_the_testing_box_requires_the_expectation_ref(self):
@@ -338,7 +338,7 @@ class TestTheDownstreamBoxesDeclareWhatTheyConsume:
             )
 
     def test_the_analysis_shape_accepts_the_modeling_box_output(self, monkeypatch):
-        """建模盒产出的预期，**能装进**分析盒声明的形状
+        """设计盒产出的预期，**能装进**分析盒声明的形状
 
         两边各写一份形状，改一边另一边就旧了——而旧了的表现是
         「交接失败」，不是「字段名对不上」。
@@ -365,4 +365,4 @@ class TestTheDownstreamBoxesDeclareWhatTheyConsume:
         }
         errors = validate_payload(payload, ANALYSIS_INPUT_SCHEMA,
                                   schemas=ANALYSIS_SCHEMAS)
-        assert not errors, f"建模盒的预期装不进分析盒声明的形状：{errors}"
+        assert not errors, f"设计盒的预期装不进分析盒声明的形状：{errors}"

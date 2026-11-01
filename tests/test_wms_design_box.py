@@ -1,4 +1,4 @@
-"""tests.test_wms_design_box - 业务建模盒 Definition + Beeline + 端到端
+"""tests.test_wms_design_box - 业务设计盒 Definition + Beeline + 端到端
 
 覆盖范围：
 - boxes.wms_design definition 加载 + 5 机械 acceptance + 3 exception
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from boxes.wms_design import WMS_DESIGN_BOX, get_definition
-from boxes.wms_design.runner import RUNNER as MODELING_RUNNER
+from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
 from boxes.wms_design.measure import COMPUTERS as MODEL_COMPUTERS
 from boxes.wms_design.schemas import REQUIREMENT_TYPES
 from boxes.wms_design.beeline import WMS_DESIGN_BEELINE, get_beeline
@@ -29,7 +29,7 @@ from runtime import (
 )
 from runtime.contract import validate_payload
 
-# 建模盒的 WMS 绑定走 LLM → 这组测试要桩（分流桩：抽取腿 / 绑定腿都认）
+# 设计盒的 WMS 绑定走 LLM → 这组测试要桩（分流桩：抽取腿 / 绑定腿都认）
 pytestmark = pytest.mark.usefixtures("stub_llm")
 
 
@@ -42,7 +42,7 @@ def _sample_requirement_set() -> dict:
     """示例 WMS 需求集
 
     原来是**退款域**的需求（「订单实体 / 退款必须在 7 天内」）。
-    盒子变成 WMS 建模盒之后，那套语料就该被 wms_binding 打回——
+    盒子变成 WMS 设计盒之后，那套语料就该被 wms_binding 打回——
     「退款必须在 7 天内」跟仓储一点关系都没有，拿它当「应该通过」的样本
     等于教这个盒子在不属于自己的域里说通过。
 
@@ -69,8 +69,8 @@ def _sample_requirement_set() -> dict:
 def _off_domain_requirement_set() -> dict:
     """**故意非 WMS** 的需求集——用来证明 wms_binding 会打回投料错误
 
-    「用户登录要用密码」这种需求混进 WMS 建模盒，说明**投料错了**，
-    不是「建模质量差一点」。该打回，而且要能点名是哪几条。
+    「用户登录要用密码」这种需求混进 WMS 设计盒，说明**投料错了**，
+    不是「设计质量差一点」。该打回，而且要能点名是哪几条。
     """
     base = _sample_requirement_set()
     base = json.loads(json.dumps(base))
@@ -94,7 +94,7 @@ class TestModelingBoxDefinition:
         d = get_definition()
         assert d.id == "wms_design_box"
         # version 2 = 从 business_modeling_box 迁到 wms_design_box 那一刀。
-        # 契约变了（多两条 WMS 判据、模型元素多两个 WMS 字段），版本得跟着涨——
+        # 契约变了（多两条 WMS 判据、设计元素多两个 WMS 字段），版本得跟着涨——
         # 版本号不涨的话，调用方没法区分「同一个盒子的新版本」和「另一个盒子」。
         assert d.version == 2
 
@@ -107,15 +107,15 @@ class TestModelingBoxDefinition:
             "schema_business_requirement_set",
             "schema_parsed_requirements",
             "schema_classified_requirements",
-            "schema_model_elements",
-            "schema_model_evidence",
-            "schema_business_model_package",
+            "schema_design_elements",
+            "schema_design_evidence",
+            "schema_business_design_package",
         ):
             assert sid in ids, f"missing schema {sid}"
 
     def test_task_references_real_schema(self):
         d = get_definition()
-        t = d.get_task("handle_modeling_request")
+        t = d.get_task("handle_design_request")
         assert t is not None
         # task_schema 必须真实存在
         assert d.get_schema(t.task_schema) is not None
@@ -126,8 +126,8 @@ class TestModelingBoxDefinition:
     def test_acceptance_all_machine_verifiable(self):
         """8 条 acceptance 必须是机器可验字段（无主观项）
 
-        **第 6、7 条是 WMS 专属的**：前 5 条验「模型自洽」，它们验
-        「**这是不是一个 WMS 模型**」——盒子挂着 WMS 的招牌，
+        **第 6、7 条是 WMS 专属的**：前 5 条验「设计自洽」，它们验
+        「**这是不是一个 WMS 设计**」——盒子挂着 WMS 的招牌，
         就不能只验自洽性。
 
         **第 8 条验「预期载体有没有被带出来」**：
@@ -190,11 +190,11 @@ class TestModelingBeeline:
         assert op_ids == [
             "parse_requirements",
             "classify_requirements",
-            "generate_model_elements",
+            "generate_design_elements",
             "verify_coverage",
             "check_consistency",
             "generate_evidence",
-            "package_model",
+            "package_design",
         ]
 
     def test_entry_point(self):
@@ -203,9 +203,9 @@ class TestModelingBeeline:
         assert len(starts) == 1
         assert starts[0].op_id == "parse_requirements"
 
-    def test_terminal_at_package_model(self):
+    def test_terminal_at_package_design(self):
         b = get_beeline()
-        pkg = b.get_operation("package_model")
+        pkg = b.get_operation("package_design")
         assert pkg is not None
         assert pkg.next == []
 
@@ -215,23 +215,23 @@ class TestModelingBeeline:
         以前这里断言「每个 op 都声明 required + key=set_id」——
         那是**一箱一个常量套到底**，不是逐 op 的真话：
         LLM 有采样（同一份 prompt 再问一次是另一个产出），
-        所以「重复执行产生同结果」对建模盒的 op 并不成立。
+        所以「重复执行产生同结果」对设计盒的 op 并不成立。
 
         **为什么现在要紧**：runtime 开始拿这个声明**决定要不要整跳重试**
         （`forbidden` 的 op 不许重试）。声明不准 = 重试会重放有副作用的 op。
 
         现在守的是**新不变量**：
         - 每个 op 都**声明了**幂等档位（不许留空——空 = 没表态）
-        - 建模盒的 op 全是「无副作用」那一档（optional）——
+        - 设计盒的 op 全是「无副作用」那一档（optional）——
           它只读上游产出、只调 LLM，不动真实世界
-        - 声明 forbidden 的 op **不许出现在建模盒**（它没有副作用）
+        - 声明 forbidden 的 op **不许出现在设计盒**（它没有副作用）
         """
         b = get_beeline()
         for op in b.operations:
             assert op.idempotency is not None, f"{op.op_id} 没声明幂等档位"
             assert op.idempotency.mode in ("required", "optional"), (
                 f"{op.op_id} 声明了 {op.idempotency.mode}——"
-                "建模盒的 op 没有副作用，不该 forbidden"
+                "设计盒的 op 没有副作用，不该 forbidden"
             )
             assert op.idempotency.mode == "optional", (
                 f"{op.op_id} 声明了 required——"
@@ -242,7 +242,7 @@ class TestModelingBeeline:
         """beeline id + version 必须与 definition.task.beeline_id + beeline_version 一致"""
         box = get_definition()
         beeline = get_beeline()
-        t = box.get_task("handle_modeling_request")
+        t = box.get_task("handle_design_request")
         assert t.beeline_id == beeline.id
         assert t.beeline_version == beeline.version
 
@@ -262,7 +262,7 @@ class TestModelingEndToEnd:
 
         task_run = create_task_run(
             originator="pm.api",
-            intent="handle_modeling_request",
+            intent="handle_design_request",
             contract_ref=box.result.result_schema,
             release_id=f"{box.id}@v{box.version}",
             beeline_id=beeline.id,
@@ -272,7 +272,7 @@ class TestModelingEndToEnd:
         )
 
         # 执行 beeline
-        task_run = BeelineExecutor(MODELING_RUNNER).execute(task_run, beeline, input_data)
+        task_run = BeelineExecutor(DESIGN_RUNNER).execute(task_run, beeline, input_data)
 
         # 验证：task run COMPLETED
         assert task_run.status == TaskRunStatus.COMPLETED
@@ -280,11 +280,11 @@ class TestModelingEndToEnd:
         assert set(task_run.operations.keys()) == {
             "parse_requirements",
             "classify_requirements",
-            "generate_model_elements",
+            "generate_design_elements",
             "verify_coverage",
             "check_consistency",
             "generate_evidence",
-            "package_model",
+            "package_design",
         }
         for rec in task_run.operations.values():
             assert rec.status == "completed"
@@ -317,11 +317,11 @@ class TestModelingEndToEnd:
         beeline = get_beeline()
 
         task_run = create_task_run(
-            "pm.api", "handle_modeling_request", box.result.result_schema,
+            "pm.api", "handle_design_request", box.result.result_schema,
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        BeelineExecutor(MODELING_RUNNER).execute(task_run, beeline, _sample_requirement_set())
+        BeelineExecutor(DESIGN_RUNNER).execute(task_run, beeline, _sample_requirement_set())
 
         events = [e.event for e in task_run.event_log.entries]
         # 必须包含 status_change + op_start + op_finish
@@ -349,7 +349,7 @@ class TestModelingEndToEnd:
         req_metrics = {a.metric for a in req_def.result.acceptance}
         mod_metrics = {a.metric for a in mod_def.result.acceptance}
         assert "source_coverage" in req_metrics   # 需求盒特征
-        assert "requirement_coverage" in mod_metrics   # 建模盒特征
+        assert "requirement_coverage" in mod_metrics   # 设计盒特征
         # 不能混入
         assert "source_coverage" not in mod_metrics
         assert "requirement_coverage" not in req_metrics
@@ -366,11 +366,11 @@ class TestModelingEndToEnd:
         box = get_definition()
         beeline = get_beeline()
         task_run = create_task_run(
-            "pm", "handle_modeling_request", box.result.result_schema,
+            "pm", "handle_design_request", box.result.result_schema,
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        task_run = BeelineExecutor(MODELING_RUNNER).execute(task_run, beeline, minimal)
+        task_run = BeelineExecutor(DESIGN_RUNNER).execute(task_run, beeline, minimal)
         assert task_run.status == TaskRunStatus.COMPLETED
         assert task_run.result["requirement_coverage"] == 100.0
 
@@ -385,22 +385,22 @@ class TestModelingMockSemantics:
         box = get_definition()
         beeline = get_beeline()
         task_run = create_task_run(
-            "pm", "handle_modeling_request", box.result.result_schema,
+            "pm", "handle_design_request", box.result.result_schema,
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        return BeelineExecutor(MODELING_RUNNER).execute(
+        return BeelineExecutor(DESIGN_RUNNER).execute(
             task_run, beeline,
             {"set_id": set_id, "business_goal": "g", "requirements": requirements},
         )
 
     def test_the_produced_package_satisfies_its_own_result_schema(self):
-        """产出的模型包必须满足 result schema 声明的形状
+        """产出的设计包必须满足 result schema 声明的形状
 
         以前**不满足**（12 条契约错）：
         - `evidence` 是手挑的 8 个字段，把 `set_id` / `business_goal` /
           `requirement_count` 漏在外面，而 schema 声明它们必填
-        - `model_elements` 装的是 DDD 五组，schema 声明的是 op 产出的形状
+        - `design_elements` 装的是 DDD 五组，schema 声明的是 op 产出的形状
 
         而没人看见——`ref:` 以前不做深校验，产出从来不被自己的契约检查过。
         「挑几个字段」= 挑的时候就会漏；整份搬过来就不会。
@@ -409,7 +409,7 @@ class TestModelingMockSemantics:
         schema = box.get_schema(box.result.result_schema)
         task_run = self._run(_sample_requirement_set()["requirements"])
         errors = validate_payload(task_run.result, schema, schemas=box.schemas)
-        assert errors == [], f"产出的模型包不满足自己的 result schema：{errors}"
+        assert errors == [], f"产出的设计包不满足自己的 result schema：{errors}"
 
     def test_classify_by_declared_type_not_id_suffix(self):
         """分类按声明的 requirement_type，id 尾号不影响分类"""
@@ -524,11 +524,11 @@ class TestModelingMockSemantics:
         box = get_definition()
         beeline = get_beeline()
         task_run = create_task_run(
-            "pm", "handle_modeling_request", box.result.result_schema,
+            "pm", "handle_design_request", box.result.result_schema,
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        run = BeelineExecutor(MODELING_RUNNER).execute(
+        run = BeelineExecutor(DESIGN_RUNNER).execute(
             task_run, beeline,
             {
                 "set_id": "req_ctx",
@@ -562,11 +562,11 @@ class TestModelingMockSemantics:
         box = get_definition()
         beeline = get_beeline()
         task_run = create_task_run(
-            "pm", "handle_modeling_request", box.result.result_schema,
+            "pm", "handle_design_request", box.result.result_schema,
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        run = BeelineExecutor(MODELING_RUNNER).execute(
+        run = BeelineExecutor(DESIGN_RUNNER).execute(
             task_run, beeline,
             {
                 "set_id": "req_noctx",
@@ -601,7 +601,7 @@ class TestModelingMockSemantics:
         from boxes.wms_design.runner import RUNNER
         out = RUNNER.run("coverage_verifier", {
             "set_id": "s",
-            "modelable_ids": ["r1", "r2", "r3"],
+            "designable_ids": ["r1", "r2", "r3"],
             "entities": [{"entity_id": "e1", "name": "E", "trace_to": "r1"}],
             "rules": [{"rule_id": "ru2", "condition": "c", "action": "a", "trace_to": "r2"}],
             "processes": [],
@@ -639,7 +639,7 @@ class TestModelingMockSemantics:
             {"requirement_id": "r_evt", "description": "上架已完成", "requirement_type": "event", "priority": "must_have"},
             {"requirement_id": "r_met", "description": "拣货准确率", "requirement_type": "metric", "priority": "must_have"},
         ])
-        events = task_run.operations["generate_model_elements"].output["events"]
+        events = task_run.operations["generate_design_elements"].output["events"]
         # wms_kind 一并断言：它跟 pattern 是两回事——pattern 说「这是领域
         # 事件」，wms_kind 说「这是仓储哪个概念的变动」。少了后者，
         # 事件可以随便叫，盒子就退回通用建模了。
@@ -652,7 +652,7 @@ class TestModelingMockSemantics:
              "trace_to": "r_evt"}
         ]
         assert task_run.result["requirement_coverage"] == 100.0
-        model = task_run.result["model_elements"]
+        model = task_run.result["design_elements"]
         assert model["domain_events"][0]["pattern"] == "domain_event"
         # 聚合根是一致性边界，没有不变量分析就不指派
         assert "aggregate_roots" not in model
@@ -672,10 +672,10 @@ class TestWmsDomainIsRealNotJustTheName:
         box = get_definition()
         beeline = get_beeline()
         task_run = create_task_run(
-            "pm", "handle_modeling_request", box.result.result_schema,
+            "pm", "handle_design_request", box.result.result_schema,
             f"{box.id}@v{box.version}", beeline.id, beeline.version, "rt", "in",
         )
-        return BeelineExecutor(MODELING_RUNNER).execute(
+        return BeelineExecutor(DESIGN_RUNNER).execute(
             task_run, beeline,
             {"set_id": set_id, "business_goal": "g", "requirements": requirements},
         )
@@ -700,7 +700,7 @@ class TestWmsDomainIsRealNotJustTheName:
         assert not offenders, f"core 里引用了 WMS 词表：{offenders}"
 
     def test_every_model_element_type_can_declare_a_wms_kind(self):
-        """**每一类**模型元素都得有 wms_kind——漏一类就有一类需求绑不上
+        """**每一类**设计元素都得有 wms_kind——漏一类就有一类需求绑不上
 
         这个坑踩了五次：先漏了 metric（「拣货准确率 99.5%」绑不上），
         再漏了 process（「收货后按库位策略上架」绑不上）。每次都是
@@ -709,7 +709,7 @@ class TestWmsDomainIsRealNotJustTheName:
         守卫盯的是**不变量**（每类都有 wms_kind），不是某一个实例——
         再加一类需求类型时漏了字段，这里立刻转红。
         """
-        schema = get_definition().get_schema("schema_model_elements")
+        schema = get_definition().get_schema("schema_design_elements")
         by_name = {f.name: f for f in schema.fields}
         # 规则用的是 wms_constraint 而不是 wms_kind：一条规则约束的是
         # **业务约束**（先进先出 / 库位占用唯一），不是某个实体概念。
@@ -722,7 +722,7 @@ class TestWmsDomainIsRealNotJustTheName:
             "events": "wms_kind",
         }
         for arr, field in expected.items():
-            assert arr in by_name, f"model_elements 少了 {arr}"
+            assert arr in by_name, f"design_elements 少了 {arr}"
             props = {p.name for p in by_name[arr].items.properties}
             assert field in props, (
                 f"{arr} 没有 {field} —— 这一类需求的 WMS 归属绑不上，"
@@ -738,7 +738,7 @@ class TestWmsDomainIsRealNotJustTheName:
     def test_an_off_domain_requirement_gets_rejected_and_named(self):
         """投料错了要打回，而且要**点名是哪几条**
 
-        「用户登录要用密码」混进 WMS 建模盒，说明投料错了，不是质量差一点。
+        「用户登录要用密码」混进 WMS 设计盒，说明投料错了，不是质量差一点。
         只给一个布尔值的话，读者知道红了但不知道该踢哪条出去。
         """
         box = get_definition()
@@ -774,7 +774,7 @@ class TestWmsDomainIsRealNotJustTheName:
         task_run = self._run(_sample_requirement_set()["requirements"])
         w = task_run.result["wms_domain"]
         assert w["domain"] == "WMS"
-        assert w["bound_requirement_count"] == w["modelable_requirement_count"]
+        assert w["bound_requirement_count"] == w["designable_requirement_count"]
         assert {e["kind"] for e in w["entities"]} >= {"sku", "lot"}
         assert {c["kind"] for c in w["constraints"]} >= {"unique_slot"}
         # 每条都得带中文标签：读者看的是「库位占用唯一」，不是 unique_slot

@@ -5,7 +5,7 @@
 内核不该懂任何一只具体盒子的业务。
 
 以前 `runtime/mock_runner.py` 里塞了三只盒子的全部 op 实现，
-包括建模盒的 DDD 战术模式映射（object→entity / rule→specification…）。
+包括设计盒的 DDD 战术模式映射（object→entity / rule→specification…）。
 结果是内核比任何一只盒子都懂业务，而且盒子带不走自己的实现——
 它只是个声明，不是可独立交付的单元。
 
@@ -112,7 +112,7 @@ BUSINESS_WORDS = (
     "requirement_type",
     "source_coverage",
     "no_hallucination",
-    "model_elements",
+    "design_elements",
     "resolution_type",
     "customer_notified",
     "inventory_shortage",
@@ -123,10 +123,10 @@ BUSINESS_WORDS = (
 
 # 跨盒 import 的登记簿。每条都要写清为什么可以豁免、怎么还。
 #
-# 捕获盒 → 建模盒：捕获盒的产出必须满足建模盒的输入契约，而
-# schema 归消费者所有，所以它得去读建模盒声明的 schema，
-# 不能自己另立一套同形状的定义。这是「捕获盒换 LLM 建模盒零改动」的根据。
-# 代价：删掉建模盒，捕获盒 import 不动。要消除得把契约引用声明化
+# 捕获盒 → 设计盒：捕获盒的产出必须满足设计盒的输入契约，而
+# schema 归消费者所有，所以它得去读设计盒声明的 schema，
+# 不能自己另立一套同形状的定义。这是「捕获盒换 LLM 设计盒零改动」的根据。
+# 代价：删掉设计盒，捕获盒 import 不动。要消除得把契约引用声明化
 #（捕获盒 definition 里写下游 box_id，由解析层查），本轮记债。
 KNOWN_CROSS_BOX_IMPORTS = {
     "boxes/wms_requirement/runner.py → boxes.wms_design",
@@ -208,11 +208,11 @@ class TestBoxIsSelfContained:
     def test_known_cross_box_imports_are_still_owed(self):
         """已登记的例外不许悄悄扩大，也不许悄悄消失
 
-        捕获盒 import 建模盒有正当理由：schema 归消费者所有，
-        捕获盒的产出必须满足建模盒的输入契约，不自己另立一套——
-        这是「捕获盒换 LLM 建模盒零改动」的根据。
+        捕获盒 import 设计盒有正当理由：schema 归消费者所有，
+        捕获盒的产出必须满足设计盒的输入契约，不自己另立一套——
+        这是「捕获盒换 LLM 设计盒零改动」的根据。
 
-        但它确实是跨盒代码依赖：删掉建模盒，捕获盒就 import 不了。
+        但它确实是跨盒代码依赖：删掉设计盒，捕获盒就 import 不了。
         正解是把契约引用声明化（捕获盒 definition 里写下游 box_id，
         由解析层去查），代价是要动契约解析。本轮先记债不动手，
         但债不许越欠越多——集合对不上就红。
@@ -290,4 +290,4 @@ class TestRegistry:
         from boxes.wms_requirement.runner import RUNNER as CAP
 
         assert not MOD.supports("requirement_extractor")
-        assert not CAP.supports("model_generator")
+        assert not CAP.supports("design_generator")

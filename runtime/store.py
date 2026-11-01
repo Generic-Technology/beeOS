@@ -63,7 +63,7 @@ def task_run_to_record(
     # 规则介入记录：哪些环节没走模型必须事后可查。
     # 原字段叫 degradation —— 降级删掉后它已经不指降级了，改名免得误导。
     # 现在的两种情况：捕获盒恒为 None（只有 LLM 一条腿）；
-    # 建模盒可能带 note（business_goal 取规则版、id 重编号）。
+    # 设计盒可能带 note（business_goal 取规则版、id 重编号）。
     rule_applied = None
     if task_run.result:
         note = task_run.result.get("_extractor_note") or ""

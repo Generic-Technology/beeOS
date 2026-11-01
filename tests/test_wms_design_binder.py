@@ -8,7 +8,7 @@
 3. `evidence` 必须**逐字**出现在需求描述里（改写过的不算）
 4. 认不出就是认不出（空列表 → 不绑，**不是**报错）
 5. LLM 不可用 / 返回不是 JSON → **中止**，不降级
-6. 绑不上也要产出模型元素——「没覆盖」和「不是 WMS 概念」是两件事
+6. 绑不上也要产出设计元素——「没覆盖」和「不是 WMS 概念」是两件事
 7. 报表概念（库存看板）要真的通到产物里，不只是词表里有个名字
 
 **为什么第 6 条要单独钉**：
@@ -276,17 +276,17 @@ class TestTheRunnerKeepsCoverageAndBindingApart:
         混成一件的话，一条绑不上的需求会把覆盖率也拖下水，
         而覆盖率那个数从此不再表示覆盖率。
         """
-        from boxes.wms_design.runner import _simulate_generate_model_elements
+        from boxes.wms_design.runner import _simulate_generate_design_elements
 
         monkeypatch.setattr(llm, "complete_json", _stub({"bindings": [
             {"requirement_id": "r_obj", "kinds": [{"kind": "sku", "evidence": "SKU"}]},
             {"requirement_id": "r_rule", "kinds": []},
         ]}))
-        out = _simulate_generate_model_elements({
+        out = _simulate_generate_design_elements({
             "set_id": "s1",
             "requirements": REQS,
             "valid_ids": ["r_obj", "r_rule"],
-            "modelable_ids": ["r_obj", "r_rule"],
+            "designable_ids": ["r_obj", "r_rule"],
             "by_type": {"object": ["r_obj"], "rule": ["r_rule"]},
         })
         assert len(out["entities"]) == 1
@@ -306,7 +306,7 @@ class TestTheRunnerKeepsCoverageAndBindingApart:
             _simulate_check_consistency,
             _simulate_classify_requirements,
             _simulate_generate_evidence,
-            _simulate_generate_model_elements,
+            _simulate_generate_design_elements,
             _simulate_parse_requirements,
             _simulate_verify_coverage,
         )
@@ -319,7 +319,7 @@ class TestTheRunnerKeepsCoverageAndBindingApart:
             "set_id": "s1", "requirements": REQS,
         })
         classified = _simulate_classify_requirements(parsed)
-        elements = _simulate_generate_model_elements(classified)
+        elements = _simulate_generate_design_elements(classified)
         assert elements["binding_errors"], "作废的绑定没有记下来"
 
         covered = _simulate_verify_coverage(elements)
@@ -338,17 +338,17 @@ class TestTheRunnerKeepsCoverageAndBindingApart:
         关键词匹配**永远不会**给出这个结果（那是 sku）。
         模型说是 location 就是 location——**词表只是候选集，不是判据**。
         """
-        from boxes.wms_design.runner import _simulate_generate_model_elements
+        from boxes.wms_design.runner import _simulate_generate_design_elements
 
         monkeypatch.setattr(llm, "complete_json", _stub({"bindings": [
             {"requirement_id": "r_obj",
              "kinds": [{"kind": "location", "evidence": "库位"}]},
         ]}))
-        out = _simulate_generate_model_elements({
+        out = _simulate_generate_design_elements({
             "set_id": "s1",
             "requirements": REQS,
             "valid_ids": ["r_obj", "r_rule"],
-            "modelable_ids": ["r_obj", "r_rule"],
+            "designable_ids": ["r_obj", "r_rule"],
             "by_type": {"object": ["r_obj"], "rule": ["r_rule"]},
         })
         assert out["entities"][0]["wms_kind"] == "location"
@@ -445,7 +445,7 @@ class TestTheReportConceptIsWiredEndToEnd:
     def test_every_concept_in_the_catalog_is_in_the_wms_kind_enum(self):
         """四类概念**全部**在 `wms_kind` 枚举里
 
-        枚举是 schema 层的约束：枚举外的值投不进模型元素。
+        枚举是 schema 层的约束：枚举外的值投不进设计元素。
         词表里加了一类概念却忘了开枚举 → 那类需求照样绑不上，
         而且失败点离原因很远（看起来像「模型没认出来」）。
 
@@ -496,7 +496,7 @@ class TestTheReportConceptIsWiredEndToEnd:
         """绑上了**也要看得见**——`wms_domain` 里得有 reports 这一组
 
         「绑了却看不见」是「算了却看不见」的同族病：
-        读者在模型包里找不到这条报表绑定，只能以为需求没被覆盖。
+        读者在设计包里找不到这条报表绑定，只能以为需求没被覆盖。
 
         隔离：这条走 runner 链路，但**不**经过 binder 的机械层
         （LLM 直接给出合法绑定），所以它转红的原因只有一个——
@@ -504,8 +504,8 @@ class TestTheReportConceptIsWiredEndToEnd:
         """
         from boxes.wms_design.runner import (
             _simulate_check_consistency,
-            _simulate_generate_model_elements,
-            _simulate_package_model,
+            _simulate_generate_design_elements,
+            _simulate_package_design,
             _simulate_verify_coverage,
         )
 
@@ -514,16 +514,16 @@ class TestTheReportConceptIsWiredEndToEnd:
                 {"kind": "inventory_dashboard", "evidence": "库存看板"},
             ]},
         ]}))
-        elements = _simulate_generate_model_elements({
+        elements = _simulate_generate_design_elements({
             "set_id": "s1",
             "requirements": [self.REPORT_REQ],
             "valid_ids": ["r_rep"],
-            "modelable_ids": ["r_rep"],
+            "designable_ids": ["r_rep"],
             "by_type": {"metric": ["r_rep"]},
         })
         covered = _simulate_verify_coverage(elements)
         consistent = _simulate_check_consistency(covered)
-        package = _simulate_package_model(consistent)
+        package = _simulate_package_design(consistent)
 
         reports = package["wms_domain"].get("reports") or []
         assert reports, "报表绑定没有出现在 wms_domain 里——绑了却看不见"

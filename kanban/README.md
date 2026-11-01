@@ -33,7 +33,7 @@ runtime/
 # CLI 看板（默认读 logs/task_runs.jsonl）
 .venv/bin/python -m kanban.cli
 
-# 只看业务建模盒
+# 只看业务设计盒
 .venv/bin/python -m kanban.cli --box wms_design_box
 
 # 自定义 store + recent 数量
@@ -141,7 +141,7 @@ store.append(tr, box_id=box.id, acceptance_status=eval_result.status.value)
 ## 限制
 
 - store 由调用方 append——`trigger.py` 的 `trigger_task` 会落盘，但 executor 本身不自动落盘
-- 触发是**同步执行**（建模盒 7 op 毫秒级，POST 直接返回终态）；
+- 触发是**同步执行**（设计盒 7 op 毫秒级，POST 直接返回终态）；
   真实 worker 接入后应异步化（POST 只落盘 triggered 状态）
 - 没有 instance / runtime 视图（设计稿有，还没做）
 - Web 看板无认证（线上部署也是裸的——这是个已知缺口，不是设计选择）|

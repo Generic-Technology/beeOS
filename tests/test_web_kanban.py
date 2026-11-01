@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from tests.fixtures.sample_box.runner import RUNNER as SAMPLE_RUNNER
-from boxes.wms_design.runner import RUNNER as MODELING_RUNNER
+from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
 from kanban.trigger import box_manifest
 from kanban.web import (
     HTML_PAGE,
@@ -87,7 +87,7 @@ def server_url(tmp_path: Path):
         "pm", "i", mod_def.result.result_schema, f"{mod_def.id}@v{mod_def.version}",
         mod_beeline.id, mod_beeline.version, "rt", "in",
     )
-    BeelineExecutor(MODELING_RUNNER).execute(tr, mod_beeline, {
+    BeelineExecutor(DESIGN_RUNNER).execute(tr, mod_beeline, {
         "set_id": "s1", "business_goal": "x",
         "requirements": [{"requirement_id": "r1", "description": "x", "requirement_type": "object", "priority": "must_have"}],
     })
@@ -204,7 +204,7 @@ class TestDashboardData:
                 "pm", "i", mod_def.result.result_schema, f"{mod_def.id}@v{mod_def.version}",
                 mod_beeline.id, mod_beeline.version, "rt", "in",
             )
-            BeelineExecutor(MODELING_RUNNER).execute(tr, mod_beeline, {
+            BeelineExecutor(DESIGN_RUNNER).execute(tr, mod_beeline, {
                 "set_id": "s1", "business_goal": "x",
                 "requirements": [{"requirement_id": "r1", "description": "x", "requirement_type": "object", "priority": "must_have"}],
             })
@@ -246,7 +246,7 @@ class TestDashboardData:
             "pm", "i", mod_def.result.result_schema, f"{mod_def.id}@v{mod_def.version}",
             mod_beeline.id, mod_beeline.version, "rt", "in",
         )
-        BeelineExecutor(MODELING_RUNNER).execute(tr, mod_beeline, {
+        BeelineExecutor(DESIGN_RUNNER).execute(tr, mod_beeline, {
             "set_id": "s1", "business_goal": "x",
             "requirements": [{"requirement_id": "r1", "description": "x", "requirement_type": "object", "priority": "must_have"}],
         })
@@ -551,9 +551,9 @@ class TestKanbanServer:
             "wms_development_box",
             "wms_system_box",
         ]
-        assert ctx["consumes"][0]["task_type"] == "handle_modeling_request"
-        assert ctx["produces"]["type"] == "business_model_produced"
-        assert "model_elements" in ctx["produces"]["fields"]
+        assert ctx["consumes"][0]["task_type"] == "handle_design_request"
+        assert ctx["produces"]["type"] == "business_design_produced"
+        assert "design_elements" in ctx["produces"]["fields"]
         # 判据不进上下文：声明值和实测值都归 ACCEPTANCE 栏
         assert "acceptance" not in ctx
 
@@ -578,16 +578,16 @@ class TestTriggerApi:
 
     def test_trigger_modeling_box_accepted(self, server_url: tuple[str, TaskRunStore],
                                            stub_llm):
-        """有效触发：建模盒走完整履约链 → completed + accepted，并落盘"""
+        """有效触发：设计盒走完整履约链 → completed + accepted，并落盘"""
         url, store = server_url
         before = len(store._cache)
         status, data = self._post(url, {
             "box_id": "wms_design_box",
-            "task_type": "handle_modeling_request",
+            "task_type": "handle_design_request",
             "payload": {"requirement_set_ref": {
                 "set_id": "req_api_1",
                 "business_goal": "把入库上架和拣货出库管清楚",
-                # description 是真 WMS 需求。以前这里是 "x" 和「建模退款流程」——
+                # description 是真 WMS 需求。以前这里是 "x" 和「设计退款流程」——
                 # 现在盒子只服务 WMS 域，喂非 WMS 需求被 wms_binding 打回是对的，
                 # 而这条测试要验的是「有效触发 → accepted」，所以得给真需求。
                 "requirements": [
@@ -606,11 +606,11 @@ class TestTriggerApi:
         assert [s["op_id"] for s in data["op_trace"]] == [
             "parse_requirements",
             "classify_requirements",
-            "generate_model_elements",
+            "generate_design_elements",
             "verify_coverage",
             "check_consistency",
             "generate_evidence",
-            "package_model",
+            "package_design",
         ]
         assert all(s["status"] == "completed" for s in data["op_trace"])
         # 已追加到 store
@@ -630,7 +630,7 @@ class TestTriggerApi:
         url, _ = server_url
         status, data = self._post(url, {
             "box_id": "wms_design_box",
-            "task_type": "handle_modeling_request",
+            "task_type": "handle_design_request",
             "payload": {"requirement_set_ref": {
                 "set_id": "req_api_2",
                 "business_goal": "x",
@@ -701,7 +701,7 @@ class TestTriggerApi:
         stats = dashboard_data(store, box_filter=mod_def.id)["box_stats"]
         entries = stats[0]["task_entries"]
         assert len(entries) == 1
-        assert entries[0]["task_type"] == "handle_modeling_request"
+        assert entries[0]["task_type"] == "handle_design_request"
         # 示例 payload 符合 task_schema 顶层字段
         # （设计盒的需求集走 ref: 通道 → 顶层只有 requirement_set_ref）
         assert set(entries[0]["sample_payload"]) >= {"requirement_set_ref"}
@@ -710,11 +710,11 @@ class TestTriggerApi:
         assert entries[0]["beeline_ops"] == [
             "parse_requirements",
             "classify_requirements",
-            "generate_model_elements",
+            "generate_design_elements",
             "verify_coverage",
             "check_consistency",
             "generate_evidence",
-            "package_model",
+            "package_design",
         ]
 
 # ============================================================
@@ -902,7 +902,7 @@ class TestStructureApi:
         )
         url, _ = server_url
         status, data = self._post(url, {
-            "text": "建模订单退款流程。退款必须在 7 天内完成。退款申请走主管审批流程。",
+            "text": "设计订单退款流程。退款必须在 7 天内完成。退款申请走主管审批流程。",
         })
         assert status == 200
         assert data["status"] == "failed"
@@ -926,7 +926,7 @@ class TestStructureApi:
         LLM 路径被 stub 掉——web 层只测编排，LLM 行为在 test_llm_structurer 覆盖。
         这里 stub 的是**一份合规输出**：降级删掉之后捕获盒没有"LLM 挂了
         也能出东西"这条路了，编排要验就得喂一份真能过判据的产出。
-        建模盒同样没有降级——它没参与就是履约中止，不会产出粗糙模型。
+        设计盒同样没有降级——它没参与就是履约中止，不会产出粗糙模型。
         """
         from runtime import llm
         # **用 monkeypatch 装桩**（直接赋值会漏到下一个测试文件）
@@ -937,12 +937,12 @@ class TestStructureApi:
                 "sent_1": "goal", "sent_2": "fact", "sent_3": "fact",
                 "sent_4": "fact", "sent_5": "fact",
             },
-            "goal": "建模订单退款流程",
+            "goal": "设计订单退款流程",
             "nodes": [
                 # **首句也是内容句**：它本身就是那句需求，必须有节点指向它。
                 # （旧契约把首句当「不计入覆盖率分母」的目标，
                 #   于是「需求写在第一句」整条需求都不见了。）
-                {"action": "建模订单退款流程", "writes": [],
+                {"action": "设计订单退款流程", "writes": [],
                  "reads": [], "measures": [], "trace_to": "sent_1"},
                 {"action": "退款申请走审批流程", "writes": ["退款单"],
                  "reads": [], "measures": [], "trace_to": "sent_3"},
@@ -956,7 +956,7 @@ class TestStructureApi:
         })
         url, _ = server_url
         _, structured = self._post(url, {
-            "text": "建模订单退款流程。退款必须在 7 天内完成。退款申请走审批流程。"
+            "text": "设计订单退款流程。退款必须在 7 天内完成。退款申请走审批流程。"
                     "通知财务。退款处理时长要可度量。",
         })
         assert structured["status"] == "completed"
@@ -966,7 +966,7 @@ class TestStructureApi:
             "POST", "/api/trigger",
             body=json.dumps({
                 "box_id": "wms_design_box",
-                "task_type": "handle_modeling_request",
+                "task_type": "handle_design_request",
                 # **走接力通道**：需求集整个从需求盒的产出接过来。
                 # 以前这里是手工把产出的字段摊进 payload——
                 # 需求集改一次形状，抄的地方就漏一次。
@@ -979,7 +979,7 @@ class TestStructureApi:
         data = json.loads(resp.read())
         conn.close()
         assert resp.status == 200
-        # 建模盒的 LLM 也被 stub 了，但没有降级路径可走：
+        # 设计盒的 LLM 也被 stub 了，但没有降级路径可走：
         # 要么按这份产出履约完成，要么直接中止——不能"假装成功"
         if data["status"] == "failed":
             bad = [s for s in data["op_trace"] if s["status"] == "failed"]
@@ -1740,6 +1740,62 @@ class TestTheBoxContextIsACatalogCard:
         render = _extract_js_function("render")
         assert "data.task_filter" in render, "前端没按服务端口径校准选中态"
         assert "_task = ''" in render, "失效的选中态没被清掉"
+
+
+def _legacy_op_ids() -> dict[str, str]:
+    """从页面里抠出 LEGACY_OP_IDS 这张「旧 op id → 新 op id」别名表"""
+    start = HTML_PAGE.index("const LEGACY_OP_IDS = {")
+    end = HTML_PAGE.index("};", start)
+    return dict(re.findall(r"(\w+):\s*'(\w+)'", HTML_PAGE[start:end]))
+
+
+class TestTheRenameKeepsHistoryReadable:
+    """改名（建模 → 设计）不许把历史变成一片空白
+
+    **产出字段和 op id 都落在盘上**：老记录的产出里是 `model_elements`，
+    老记录的 op_trace 里是 `generate_model_elements`。改完名之后，
+    读它们的地方必须**两个名字都认**——不然服务器上那批历史运行会显示成
+    「这个盒子从没产出过东西」「这次一跳都没跑到」。
+    """
+
+    def test_the_old_artifact_field_is_still_readable(self):
+        """旧产出（model_elements）还得读得出来"""
+        dev_runner = Path(__file__).resolve().parent.parent / (
+            "boxes/wms_development/runner.py"
+        )
+        src = dev_runner.read_text(encoding="utf-8")
+        assert '"model_elements"' in src, (
+            "开发盒读不到旧产出的 model_elements——旧设计包接不进开发盒"
+        )
+        assert '"design_elements"' in src
+        # 产出槽的 DDD 视图
+        assert "r.model_elements" in HTML_PAGE and "r.design_elements" in HTML_PAGE, (
+            "产出槽认不出旧产出的 model_elements——老运行会显示成一片空白"
+        )
+
+    def test_every_renamed_op_id_is_in_the_legacy_alias_table(self):
+        """改过名的 op id 必须在旧名别名表里，否则老记录显示成「一跳都没跑到」"""
+        from boxes.wms_design.beeline import get_beeline as get_design_beeline
+
+        ops = {op.op_id for op in get_design_beeline().operations}
+        assert not any("model" in op for op in ops), (
+            f"op id 里还留着「建模」：{sorted(o for o in ops if 'model' in o)}"
+        )
+        legacy = _legacy_op_ids()
+        assert set(legacy) <= ops, (
+            f"别名表的键必须都是当前的 op id：{sorted(set(legacy) - ops)}"
+        )
+        assert not (set(legacy.values()) & ops), (
+            "别名表的值（旧名）不该再是当前的 op id——那是历史，不是现在"
+        )
+
+    def test_the_design_package_no_longer_speaks_of_models(self):
+        """产出契约里不许再有「model」字样的字段"""
+        from boxes.wms_design.schemas import ALL_SCHEMAS
+
+        pkg = next(s for s in ALL_SCHEMAS if s.id == "schema_business_design_package")
+        offenders = [f.name for f in pkg.fields if "model" in f.name]
+        assert not offenders, f"产出契约里还留着「建模」的字段：{offenders}"
 
 
 def _run_back_link(scope_layouts: dict, view: str, domain: str, is_single: bool, task: str = "") -> dict:

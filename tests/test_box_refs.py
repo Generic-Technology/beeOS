@@ -6,7 +6,7 @@
 「schema 内 `ref:` 引用必须指向本 definition schemas 块内真实存在的 schema id」。
 
 实测**有 3 处悬空**：
-- `wms_development` 的 `design_package_ref` → `schema_business_model_package`（在建模盒里）
+- `wms_development` 的 `design_package_ref` → `schema_business_design_package`（在设计盒里）
 - `wms_testing` 的 `artifact_ref` → `schema_build_artifact`（在开发盒里）
 - `wms_testing` 的 `requirement_ref` → `schema_requirement_set_package`（在需求盒里）
 
@@ -136,7 +136,7 @@ class TestDeepValidation:
             "design_package_ref": {
                 "package_id": 123,          # ← 形状不对
                 "set_id": "REQ-1",
-                "model_elements": {},
+                "design_elements": {},
             },
             "commit_range": "a..b",
             "target_env": "dev",
@@ -152,7 +152,7 @@ class TestDeepValidation:
         schema = definition.get_schema("schema_dev_task_input")
         bad = {
             "dev_task_id": "d1",
-            "design_package_ref": {"package_id": "p1"},  # ← 缺 set_id / model_elements
+            "design_package_ref": {"package_id": "p1"},  # ← 缺 set_id / design_elements
             "commit_range": "a..b",
             "target_env": "dev",
         }
@@ -168,7 +168,7 @@ class TestDeepValidation:
             "design_package_ref": {
                 "package_id": "p1",
                 "set_id": "REQ-1",
-                "model_elements": {
+                "design_elements": {
                     "entities": [{"entity_id": "e1", "name": "SKU", "trace_to": "r1"}],
                     "specifications": [],
                     "domain_services": [],
@@ -204,11 +204,11 @@ class TestDeepValidation:
         现在会当场被拒——除非引用被改成**本盒自己声明的形状**。
         """
         dev_definition = BOX_REGISTRY["wms_development_box"][0]()
-        modeling_definition = BOX_REGISTRY["wms_design_box"][0]()
+        design_definition = BOX_REGISTRY["wms_design_box"][0]()
         schema = SchemaDef(
             id="schema_probe",
             fields=[
-                FieldDef(name="thing", type="ref:schema_business_model_package",
+                FieldDef(name="thing", type="ref:schema_business_design_package",
                          required=True)
             ],
         )
@@ -223,10 +223,10 @@ class TestDeepValidation:
         ok = validate_payload(
             {"thing": {"package_id": "p"}},
             schema,
-            schemas=modeling_definition.schemas,
+            schemas=design_definition.schemas,
         )
         assert not any("无法解析" in e for e in ok), (
-            f"在建模盒的 schemas 里 ref 应该解析得到：{ok}"
+            f"在设计盒的 schemas 里 ref 应该解析得到：{ok}"
         )
 
 
@@ -244,7 +244,7 @@ class TestHandoff:
         artifact = {
             "package_id": "p1",
             "set_id": "REQ-1",
-            "model_elements": {
+            "design_elements": {
                 "entities": [], "specifications": [], "domain_services": [],
                 "domain_events": [], "domain_metrics": [],
             },
@@ -353,7 +353,7 @@ class TestHandoff:
                     "commit_range": "a..b",
                     "target_env": "dev",
                     "design_package_ref": {
-                        "package_id": "p1", "set_id": "s", "model_elements": {},
+                        "package_id": "p1", "set_id": "s", "design_elements": {},
                     },
                 },
                 {"design_package_ref": "run-1"},
@@ -362,7 +362,7 @@ class TestHandoff:
                 get_run=lambda rid: {
                     "status": "completed",
                     "artifact": {
-                        "package_id": "p2", "set_id": "t", "model_elements": {},
+                        "package_id": "p2", "set_id": "t", "design_elements": {},
                     },
                 },
             )
@@ -386,10 +386,10 @@ class TestTheDesignBoxHasARealRefEntry:
     """
 
     def test_the_task_input_is_a_ref_shape(self):
-        from boxes.wms_design import get_definition as get_mod_definition
+        from boxes.wms_design import get_definition as get_design_definition
 
-        definition = get_mod_definition()
-        task = definition.get_task("handle_modeling_request")
+        definition = get_design_definition()
+        task = definition.get_task("handle_design_request")
         schema = definition.get_schema(task.task_schema)
         fields = {f.name: f for f in schema.fields}
         assert "requirement_set_ref" in fields, (
@@ -403,10 +403,10 @@ class TestTheDesignBoxHasARealRefEntry:
 
     def test_the_ref_target_is_declared_inside_this_box(self):
         """ref 只能引用本 definition 内的 schema（悬空 = 没人校验）"""
-        from boxes.wms_design import get_definition as get_mod_definition
+        from boxes.wms_design import get_definition as get_design_definition
 
-        definition = get_mod_definition()
-        task = definition.get_task("handle_modeling_request")
+        definition = get_design_definition()
+        task = definition.get_task("handle_design_request")
         schema = definition.get_schema(task.task_schema)
         ref = next(f for f in schema.fields if f.name == "requirement_set_ref")
         target_id = ref.type[len("ref:"):]
@@ -422,10 +422,10 @@ class TestTheDesignBoxHasARealRefEntry:
         静默接上一份不像需求集的东西，就是「声明了却拿不到」的镜像病。
         """
         from runtime.handoff import HandoffError, assemble_handoff
-        from boxes.wms_design import get_definition as get_mod_definition
+        from boxes.wms_design import get_definition as get_design_definition
 
-        definition = get_mod_definition()
-        schema = definition.get_schema("schema_model_task_input")
+        definition = get_design_definition()
+        schema = definition.get_schema("schema_design_task_input")
         with pytest.raises(HandoffError) as exc:
             assemble_handoff(
                 {},
@@ -448,10 +448,10 @@ class TestTheDesignBoxHasARealRefEntry:
         不声明 subfield，运行时只能把整份对象当标识，
         归档里就会出现 `{'set_id': ...}` 这种东西。
         """
-        from boxes.wms_design import get_definition as get_mod_definition
+        from boxes.wms_design import get_definition as get_design_definition
 
-        definition = get_mod_definition()
-        task = definition.get_task("handle_modeling_request")
+        definition = get_design_definition()
+        task = definition.get_task("handle_design_request")
         assert task.subject_ref_field == "requirement_set_ref"
         assert task.subject_ref_subfield == "set_id", (
             f"subject_ref_subfield 是 {task.subject_ref_subfield!r}，"
@@ -504,7 +504,7 @@ class TestOneRequirementWalksTheChain:
 
         # 2) 设计盒：需求集**靠 handoff 接进来**（走 ref: 通道）
         design = trigger_task(
-            "wms_design_box", "handle_modeling_request", {}, store,
+            "wms_design_box", "handle_design_request", {}, store,
             handoff={"requirement_set_ref": req["task_run_id"]},
         )
         design_run = store.get_run(design["task_run_id"])
@@ -548,7 +548,7 @@ class TestOneRequirementWalksTheChain:
         """
         store = TaskRunStore(Path(tmp_path) / "runs.jsonl")
         design = trigger_task(
-            "wms_design_box", "handle_modeling_request",
+            "wms_design_box", "handle_design_request",
             {
                 "requirement_set_ref": {
                     "set_id": "REQ-CHAIN",

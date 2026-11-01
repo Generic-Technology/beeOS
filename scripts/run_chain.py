@@ -19,7 +19,7 @@ scripts/run_chain.py —— 跑一条真需求走完 WMS 链
 
 | 段 | 通道 | 为什么 |
 |---|---|---|
-| 需求盒 → 设计盒 | 接力 ✓ | `requirement_set_ref`（建模盒声明的形状，需求集的产出整个接过来） |
+| 需求盒 → 设计盒 | 接力 ✓ | `requirement_set_ref`（设计盒声明的形状，需求集的产出整个接过来） |
 | 设计盒 → 开发盒 | 接力 ✓ | `design_package_ref` |
 | 开发盒 → 测试盒 | 接力 ✓ | `artifact_ref`（**不再是手工常量**） |
 | 需求盒/设计盒 → 测试盒 | 接力 ✓ | `requirement_ref` / `expectation_ref` |
@@ -435,7 +435,7 @@ def main() -> int:
     chain_kind = cap.get("subject_kind") or "requirement"
 
     # ---- 2) 设计盒（需求集**接力**过来）----
-    design = trigger_task("wms_design_box", "handle_modeling_request", {}, store,
+    design = trigger_task("wms_design_box", "handle_design_request", {}, store,
                           handoff={"requirement_set_ref": cap["task_run_id"]},
                           chain_ref=chain_ref, chain_kind=chain_kind)
     expectations = design["result"].get("expectations", [])

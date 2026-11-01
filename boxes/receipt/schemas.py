@@ -7,7 +7,7 @@ boxes.receipt.schemas - 小票识别盒的数据契约
 
 **为什么判据值写进产出 schema**：acceptance 要读的每个 metric 都得是
 产出契约的一部分。不写进来的话，判据永远读不到值——要么恒判通过
-（假绿灯），要么恒判失败。捕获盒和建模盒都是这么做的。
+（假绿灯），要么恒判失败。捕获盒和设计盒都是这么做的。
 """
 
 from __future__ import annotations

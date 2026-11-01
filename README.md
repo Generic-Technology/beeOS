@@ -163,14 +163,14 @@ WMS 域的盒子已串成一条可运行的链：
 # 加载一只盒子
 .venv/bin/python -c "from boxes.wms_design import get_definition; d = get_definition(); print(d.id, d.version)"
 
-# 端到端冒烟（建模盒）
+# 端到端冒烟（设计盒）
 .venv/bin/python -c "
 from boxes.wms_design import get_definition, get_beeline
 from boxes.wms_design.runner import RUNNER
 from runtime import create_task_run, BeelineExecutor, evaluate_acceptance
 box = get_definition(); beeline = get_beeline()
 input_data = {'set_id': 'r1', 'business_goal': 'test', 'requirements': [{'requirement_id': 'req_obj_1', 'description': 'x', 'requirement_type': 'object', 'priority': 'must_have'}]}
-tr = create_task_run('pm', 'handle_modeling_request', box.result.result_schema, f'{box.id}@v{box.version}', beeline.id, beeline.version, 'rt', 'in')
+tr = create_task_run('pm', 'handle_design_request', box.result.result_schema, f'{box.id}@v{box.version}', beeline.id, beeline.version, 'rt', 'in')
 tr = BeelineExecutor(RUNNER).execute(tr, beeline, input_data)
 print('wms_design:', tr.status.value, tr.result)
 "

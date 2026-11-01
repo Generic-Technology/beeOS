@@ -154,7 +154,7 @@ class TestTheDocumentAddsNoFacts:
     def test_entities_do_not_become_items_on_their_own(self, doc):
         """实体不许单独成条
 
-        「出库单」单独成一条，是平铺投影的碎片（它给建模盒按类型分组用）。
+        「出库单」单独成一条，是平铺投影的碎片（它给设计盒按类型分组用）。
         文档里它是流程步骤的属性（产出/读取），不是一条需求。
         """
         descriptions = [i["description"] for i in doc["items"]]
@@ -246,7 +246,7 @@ class TestTheDocumentIsHonest:
     def test_acceptance_criteria_are_a_placeholder_only(self, doc):
         """需求盒不定「怎么算满足」
 
-        在这里编一条验收标准 = 编。那是建模盒的可判定预期的事。
+        在这里编一条验收标准 = 编。那是设计盒的可判定预期的事。
         """
         for item in doc["items"]:
             assert item["acceptance_criteria"] == [ACCEPTANCE_PLACEHOLDER]

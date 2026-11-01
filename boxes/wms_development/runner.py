@@ -127,8 +127,8 @@ def _base_ref(commit_range: Any) -> str:
 def _concepts_of(design: dict[str, Any], expectations: list[dict[str, Any]]) -> list[str]:
     """这次要落地的 WMS 概念（去重、保序）
 
-    从两头取：预期挂着的概念 + 模型元素绑着的概念。
-    只取一头会漏——有的需求只出现在模型元素里，有的只出现在预期里。
+    从两头取：预期挂着的概念 + 设计元素绑着的概念。
+    只取一头会漏——有的需求只出现在设计元素里，有的只出现在预期里。
     """
     out: list[str] = []
 
@@ -138,7 +138,10 @@ def _concepts_of(design: dict[str, Any], expectations: list[dict[str, Any]]) -> 
 
     for exp in expectations:
         add(exp.get("wms_kind"))
-    elements = design.get("model_elements") or {}
+    # **旧名兜底**：产出字段从 model_elements 改名成 design_elements 之前
+    # 跑出来的产出还在落盘里（服务器上就有一批）。读不到旧名 = 那些产出
+    # 到开发盒这儿就成了一团空——历史不是没有，是名字换了。
+    elements = design.get("design_elements") or design.get("model_elements") or {}
     if isinstance(elements, dict):
         for group in elements.values():
             if not isinstance(group, list):
@@ -252,7 +255,7 @@ def dev_code_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     # `collect_all_sources`，这里也用 `collect_all_sources`。
     # 同一份事实只能有一个答案。
     all_sources = collect_all_sources(ws)
-    # **只算预期挂着的概念**：模型元素里的实体（sku/lot…）不是这次要验的东西，
+    # **只算预期挂着的概念**：设计元素里的实体（sku/lot…）不是这次要验的东西，
     # 它们没有实现证据也不该拖垮这次交付的判定。
     expectation_concepts = [
         c for c in dict.fromkeys(

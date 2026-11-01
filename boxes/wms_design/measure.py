@@ -1,14 +1,14 @@
 """
-boxes.wms_design.measure - 业务建模盒的实测指标采集
+boxes.wms_design.measure - 业务设计盒的实测指标采集
 
 和捕获盒一样：definition.metrics 里的 target 是承诺，
 这一层负责把 actual 从履约历史里算出来。
 
 **已删除的指标**（声明过，但当前没有信号源能算）：
-- model_reuse_rate「新需求复用已有 model 元素的比例」
-  —— 复用比例要逐个 model 元素比对，产出整份不落盘，事后算不出来。
+- design_reuse_rate「新需求复用已有 design 元素的比例」
+  —— 复用比例要逐个 design 元素比对，产出整份不落盘，事后算不出来。
     真要测就得先落「本次复用了哪些元素 id」，那是另一件事。
-- cost_per_modeling_request「单次建模请求成本」
+- cost_per_design_request「单次设计请求成本」
   —— 没有成本记账。runtime 不记 token，盒子里也没接。
     要真做得先在 runtime 侧把 token 用量落进 observed，那是基础设施改动，
     不是画一个指标名就能拿到的数字。
@@ -31,7 +31,7 @@ def _observed(records: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
 
 
 def _first_pass_acceptance_rate(records: list[dict[str, Any]]) -> Measurement:
-    """首次建模即通过 acceptance 的比例"""
+    """首次设计即通过 acceptance 的比例"""
     judged = [r for r in records if r.get("acceptance_status")]
     return core_metrics.ratio_pct(judged, lambda r: r["acceptance_status"] == "accepted")
 
@@ -47,19 +47,19 @@ def _durations(records: list[dict[str, Any]]) -> list[float]:
     return [r["duration_ms"] / 1000.0 for r in done]
 
 
-def _modeling_turnaround_time(records: list[dict[str, Any]]) -> Measurement:
+def _design_turnaround_time(records: list[dict[str, Any]]) -> Measurement:
     """从投料到产出模型的时长（秒，均值）"""
     return core_metrics.mean(_durations(records))
 
 
-def _p95_modeling_turnaround_time(records: list[dict[str, Any]]) -> Measurement:
-    """95 分位建模时长（秒）"""
+def _p95_design_turnaround_time(records: list[dict[str, Any]]) -> Measurement:
+    """95 分位设计时长（秒）"""
     return core_metrics.percentile(_durations(records), 0.95)
 
 
 COMPUTERS: dict[str, Computer] = {
     "first_pass_acceptance_rate": _first_pass_acceptance_rate,
     "requirement_coverage_quality": _requirement_coverage_quality,
-    "modeling_turnaround_time": _modeling_turnaround_time,
-    "p95_modeling_turnaround_time": _p95_modeling_turnaround_time,
+    "design_turnaround_time": _design_turnaround_time,
+    "p95_design_turnaround_time": _p95_design_turnaround_time,
 }

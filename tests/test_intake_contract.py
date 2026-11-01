@@ -65,8 +65,8 @@ class TestIntakeSegmentation:
 
     def test_plain_multi_sentence_unchanged(self):
         """无顿号的普通多句：首句=目标，其余=需求（原行为不变）"""
-        r = structure_business_text("建模订单退款流程。退款必须在 7 天内完成。")
-        assert r["business_goal"] == "建模订单退款流程"
+        r = structure_business_text("设计订单退款流程。退款必须在 7 天内完成。")
+        assert r["business_goal"] == "设计订单退款流程"
         assert r["requirements"][0]["description"] == "退款必须在 7 天内完成"
         assert r["requirements"][0]["requirement_type"] == "rule"
 
@@ -179,20 +179,20 @@ class TestIntakeRejectsBeforeFulfillment:
     def test_bad_payload_raises_and_creates_nothing(self, store: TaskRunStore):
         with pytest.raises(TriggerError, match="violates task_schema"):
             trigger_task(
-                "wms_design_box", "handle_modeling_request",
+                "wms_design_box", "handle_design_request",
                 {"set_id": "s1", "requirements": []}, store,
             )
         assert store.list_recent() == []
 
     def test_unknown_box_raises(self, store: TaskRunStore):
         with pytest.raises(TriggerError, match="unknown box_id"):
-            trigger_task("no_such_box", "handle_modeling_request", {}, store)
+            trigger_task("no_such_box", "handle_design_request", {}, store)
         assert store.list_recent() == []
 
     def test_empty_requirements_passes_gate_then_rejected(self, store: TaskRunStore):
         """空需求集结构上合法（0 条违规）→ 放行 → acceptance 按业务判据拦下"""
         r = trigger_task(
-            "wms_design_box", "handle_modeling_request",
+            "wms_design_box", "handle_design_request",
             {"requirement_set_ref": {
                 "set_id": "s1", "business_goal": "wms", "requirements": []}},
             store,
@@ -266,7 +266,7 @@ class TestRejectionClassification:
 class TestAcceptanceOutcomeCarriesReason:
     def test_accepted_has_no_rejection_class(self, store: TaskRunStore):
         r = trigger_task(
-            "wms_design_box", "handle_modeling_request",
+            "wms_design_box", "handle_design_request",
             {"requirement_set_ref": {
                 "set_id": "s1",
                 "business_goal": "wms 的流程",
@@ -274,7 +274,7 @@ class TestAcceptanceOutcomeCarriesReason:
                     {"requirement_id": "req_proc_1", "description": "收货后按库位策略上架",
                      "requirement_type": "process", "priority": "must_have"},
                     # 原来写的是「处理时长」——那不是任何一条 WMS 指标。
-                    # 盒子变 WMS 建模盒之后，它就该被 wms_binding 打回：
+                    # 盒子变 WMS 设计盒之后，它就该被 wms_binding 打回：
                     # 这条测试问的是「通过了还有没有 rejection_class」，
                     # 前提是**真的能通过**，所以给一条认得出的 WMS 指标。
                     {"requirement_id": "req_met_1", "description": "拣货准确率要达到 99.5%",
@@ -287,7 +287,7 @@ class TestAcceptanceOutcomeCarriesReason:
 
     def test_rejection_class_persisted_to_store(self, store: TaskRunStore):
         trigger_task(
-            "wms_design_box", "handle_modeling_request",
+            "wms_design_box", "handle_design_request",
             {"requirement_set_ref": {
                 "set_id": "s1", "business_goal": "wms", "requirements": []}},
             store,

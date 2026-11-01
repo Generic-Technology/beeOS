@@ -187,7 +187,7 @@ class TestTheRefIsRecordedAndFindable:
         store = TaskRunStore(tmp_path / "runs.jsonl")
         result = trigger_task(
             "wms_design_box",
-            "handle_modeling_request",
+            "handle_design_request",
             _design_payload("REQ-2026-003"),
             store,
         )
@@ -206,13 +206,13 @@ class TestTheRefIsRecordedAndFindable:
         for i in range(3):
             trigger_task(
                 "wms_design_box",
-                "handle_modeling_request",
+                "handle_design_request",
                 _design_payload("REQ-2026-003"),
                 store,
             )
         trigger_task(
             "wms_design_box",
-            "handle_modeling_request",
+            "handle_design_request",
             _design_payload("REQ-2026-999"),
             store,
         )
@@ -236,7 +236,7 @@ class TestTheRefIsRecordedAndFindable:
         """
         store = TaskRunStore(tmp_path / "runs.jsonl")
         trigger_task(
-            "wms_design_box", "handle_modeling_request",
+            "wms_design_box", "handle_design_request",
             _design_payload("REQ-X"), store,
         )
 
@@ -363,7 +363,7 @@ class TestTheRefCanLiveInsideAnObject:
         payload["design_package_ref"] = {
             "package_id": "p1",
             "set_id": "REQ-2026-007",
-            "model_elements": {},
+            "design_elements": {},
         }
         result = trigger_task(
             "wms_development_box", "handle_development_request", payload, store,
@@ -410,9 +410,9 @@ class TestTheKindIsDeclared:
 
     def test_the_kind_lands_in_the_record(self, tmp_path):
         store = TaskRunStore(tmp_path / "runs.jsonl")
-        schema = _schema_of("wms_design_box", "handle_modeling_request")
+        schema = _schema_of("wms_design_box", "handle_design_request")
         result = trigger_task(
-            "wms_design_box", "handle_modeling_request",
+            "wms_design_box", "handle_design_request",
             _minimal_payload(schema, _schemas_of("wms_design_box")) | {"set_id": "REQ-1"}, store,
         )
         run = store.get_run(result["task_run_id"])
@@ -435,7 +435,7 @@ class TestTheKindIsDeclared:
     def test_same_ref_different_kinds_can_be_told_apart(self, tmp_path):
         store = TaskRunStore(tmp_path / "runs.jsonl")
         trigger_task(
-            "wms_design_box", "handle_modeling_request",
+            "wms_design_box", "handle_design_request",
             _design_payload("OPS-1"), store,
         )
         assert len(store.list_by_subject("OPS-1")) == 1
@@ -506,7 +506,7 @@ def _design_payload(set_id: str) -> dict:
     **需求集整个装在 `requirement_set_ref` 里**（ref: 通道），
     set_id 是这个对象的键——所以标识也藏在里面。
     """
-    schema = _schema_of("wms_design_box", "handle_modeling_request")
+    schema = _schema_of("wms_design_box", "handle_design_request")
     payload = _minimal_payload(schema, _schemas_of("wms_design_box"))
     payload["requirement_set_ref"]["set_id"] = set_id
     return payload

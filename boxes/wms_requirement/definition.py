@@ -12,7 +12,7 @@ boxes.wms_requirement.definition - 需求捕获履约盒 Definition 数据
 为什么这 4 条 acceptance 能做到 0 主观：
 1. contract_compliance —— 复用 runtime.contract.validate_payload，形状校验是纯机械的
 2. source_coverage     —— 原文切句后，每句**内容句**（goal / fact）都要被至少一条需求覆盖
-                            （集合运算）。[title] 句是「这次要建模的东西的名字」，
+                            （集合运算）。[title] 句是「这次要设计的东西的名字」，
                             不是需求，不进分母——进分母就是逼模型编碎片。
 3. trace_integrity     —— 每条需求的 trace_to 必须指向真实存在的 sentence_id
 4. no_hallucination    —— 每条需求的 description 必须在原文里找得到（子串匹配）
@@ -45,7 +45,7 @@ WMS_REQUIREMENT_BOX = BeeBoxDefinition(
     version=1,
     description=(
         "需求捕获履约盒——把自然语言业务表述抽成可机械验证的结构化业务需求集，"
-        "每条需求带原文溯源，并交出 4 项抽取证据供建模盒投料"
+        "每条需求带原文溯源，并交出 4 项抽取证据供设计盒投料"
     ),
 
     schemas=ALL_SCHEMAS,

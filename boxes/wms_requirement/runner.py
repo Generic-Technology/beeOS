@@ -108,7 +108,7 @@ _REQUIRE_MARKERS = (
 # 于是这个 WMS 概念从头到尾没进过链——测试盒的探针也就无从谈起。
 #
 # 四种角色：
-#   title   —— 这次要建模的东西的**名字**（"库存管理"）。只是名字，不是需求。
+#   title   —— 这次要设计的东西的**名字**（"库存管理"）。只是名字，不是需求。
 #   goal    —— 业务目标句，**它本身就是那句要满足的要求**，要抽节点。
 #   fact    —— 业务事实句，抽节点。
 #   context —— **铺垫句**：场景 / 时间状语 / 语气说明，**本身不含任何独立的要求**。
@@ -164,7 +164,7 @@ def _content_sentences(sentences: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _goal_text(sentences: list[dict[str, Any]]) -> str:
-    """业务目标：优先 [goal] 句，没有就取 [title] 句（它就是这次要建模的东西的名字）"""
+    """业务目标：优先 [goal] 句，没有就取 [title] 句（它就是这次要设计的东西的名字）"""
     for role in ("goal", "title"):
         for s in sentences:
             if s.get("role") == role and (s.get("text") or "").strip():
@@ -275,7 +275,7 @@ _EXTRACT_PROMPT = """从下面这份中文业务表述里抽出一张**流程图
 不要把它摊平成一串需求——摊平会把"哪个约束挂在哪个动作上"这个信息弄丢。
 
 原文已按句子切分，每句有 sentence_id 和**机械初判**的角色：
-- [title] 是这次要建模的东西的**名字**（例如"库存管理"）。它只是标题，**不要**为它抽节点。
+- [title] 是这次要设计的东西的**名字**（例如"库存管理"）。它只是标题，**不要**为它抽节点。
 - [goal] 是业务目标。**它本身就是这次要满足的要求**——必须至少抽一个节点指向它。
 - [fact] 是业务事实。每个动作 / 约束各自成节点。
 
@@ -284,7 +284,7 @@ _EXTRACT_PROMPT = """从下面这份中文业务表述里抽出一张**流程图
 - "fact"：这句是业务事实（实体、动作、约束、指标）
 - "context"：**这句只是铺垫**——场景、时间状语、语气说明、背景交代，
   它**本身不含任何独立的要求**。例：「仓库出库的时候」「简单来说」「目前的情况是」
-- "title"：**这句只是这次要建模的东西的名字**，没有任何要求。例：「库存管理」
+- "title"：**这句只是这次要设计的东西的名字**，没有任何要求。例：「库存管理」
 
 ⚠️ 只有真的**没有任何要求**的句子才能标 context 或 title。
 ⚠️ 带着要求的句子（哪怕写成陈述句）都要标 goal 或 fact。
@@ -544,16 +544,16 @@ def _clean_graph(
 
 
 def _graph_to_requirements(graph: dict[str, Any]) -> list[dict[str, Any]]:
-    """流程图 → 建模盒要的平铺列表（兼容投影，零业务判断）
+    """流程图 → 设计盒要的平铺列表（兼容投影，零业务判断）
 
-    这一步纯粹是把图摊平给还没升级的建模盒——它按 requirement_type 分组。
+    这一步纯粹是把图摊平给还没升级的设计盒——它按 requirement_type 分组。
     摊平后的 type 是**由位置推出来的**，不是模型猜的：
       node          → process
       node.writes   → object
       node.measures → metric
       edge.guard    → rule
       edge.trigger  → event
-    建模盒升级成直接吃图之后，这个函数就退休。
+    设计盒升级成直接吃图之后，这个函数就退休。
     """
     out: list[dict[str, Any]] = []
     for n in graph.get("nodes", []):
@@ -656,7 +656,7 @@ def _simulate_requirement_extractor(input_data: dict[str, Any]) -> dict[str, Any
     graph = _clean_graph(raw, final_sentences, content_ids)
     goal = _goal_text(final_sentences)
 
-    # 图 → 兼容平铺列表，编号按 type 分别计数（建模盒按 type 分组）
+    # 图 → 兼容平铺列表，编号按 type 分别计数（设计盒按 type 分组）
     requirements = _graph_to_requirements(graph)
     counters: Counter[str] = Counter()
     for r in requirements:
@@ -726,15 +726,15 @@ def _simulate_graph_fidelity_verifier(input_data: dict[str, Any]) -> dict[str, A
     result = dict(input_data)
     details: dict[str, Any] = {}
 
-    # ① 契约：拿**建模盒的输入 schema** 校验
-    #    schema 归消费者（建模盒）所有——捕获盒负责满足它，不自己另立一套。
-    #    这正是"捕获盒换 LLM 建模盒零改动"的根据。
-    from boxes.wms_design import get_definition as get_modeling_definition
-    contract_schema = get_modeling_definition().get_schema(
+    # ① 契约：拿**设计盒的输入 schema** 校验
+    #    schema 归消费者（设计盒）所有——捕获盒负责满足它，不自己另立一套。
+    #    这正是"捕获盒换 LLM 设计盒零改动"的根据。
+    from boxes.wms_design import get_definition as get_design_definition
+    contract_schema = get_design_definition().get_schema(
         "schema_business_requirement_set"
     )
 
-    # ① 契约：产出的需求集是否符合建模盒的输入契约
+    # ① 契约：产出的需求集是否符合设计盒的输入契约
     candidate = {
         "set_id": input_data.get("set_id", ""),
         "business_goal": input_data.get("business_goal", ""),
@@ -809,10 +809,10 @@ def _simulate_graph_fidelity_verifier(input_data: dict[str, Any]) -> dict[str, A
 
 
 def _simulate_requirement_set_packager(input_data: dict[str, Any]) -> dict[str, Any]:
-    """产出建模盒可直接消费的 RequirementSetPackage
+    """产出设计盒可直接消费的 RequirementSetPackage
 
     **外加一份人读的需求文档**（机械投影，见 document.py）：
-    需求集包是给建模盒吃的形状，文档是给业务方看的形状——
+    需求集包是给设计盒吃的形状，文档是给业务方看的形状——
     两者是同一份事实的两种投影，不是两份事实。
     """
     result = {

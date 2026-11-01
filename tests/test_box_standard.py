@@ -19,7 +19,7 @@ import re
 
 import pytest
 
-from boxes.wms_design import get_definition as get_modeling_definition
+from boxes.wms_design import get_definition as get_design_definition
 from boxes.wms_requirement import get_definition as get_capture_definition
 from kanban.trigger import (
     BOX_REGISTRY,
@@ -56,7 +56,7 @@ ALL_BOXES = sorted(BOX_REGISTRY)
 class TestArtifactView:
     @pytest.mark.parametrize(
         "box_id, expected",
-        [(CAPTURE, "flow_graph"), (MODELING, "ddd_model")],
+        [(CAPTURE, "flow_graph"), (MODELING, "ddd_design")],
     )
     def test_every_box_declares_its_artifact_view(self, box_id, expected):
         assert BOX_REGISTRY[box_id][0]().result.view == expected
@@ -137,8 +137,8 @@ class TestTextIntakeResolution:
         assert task_type == "capture_business_requirement"
 
     def test_explicit_box_and_task_win(self):
-        assert resolve_text_intake(MODELING, "handle_modeling_request") == (
-            MODELING, "handle_modeling_request"
+        assert resolve_text_intake(MODELING, "handle_design_request") == (
+            MODELING, "handle_design_request"
         )
 
     def test_box_without_text_intake_is_refused_with_a_reason(self):

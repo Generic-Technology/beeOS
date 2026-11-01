@@ -34,9 +34,9 @@ class TestTheStubDoesNotEscape:
         original = llm.complete_json
         store = TaskRunStore(Path(tempfile.mktemp(suffix=".jsonl")))
         _run_capture(
-            store, "建模退款流程。",
+            store, "设计退款流程。",
             llm_result={"nodes": [
-                {"action": "建模退款流程", "trace_to": "sent_1"},
+                {"action": "设计退款流程", "trace_to": "sent_1"},
             ]},
         )
         assert llm.complete_json is original

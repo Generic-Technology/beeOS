@@ -42,7 +42,7 @@ def stub_compliant_llm(prompt: str, **kw) -> dict:
         if role == "goal":
             goal = text
         elif role == "title":
-            # [title] 是「这次要建模的东西的名字」，不是需求，不抽节点
+            # [title] 是「这次要设计的东西的名字」，不是需求，不抽节点
             title = text
             continue
         nodes.append({

@@ -4,7 +4,7 @@
 - definition：4 条 acceptance + 两盒判据零重叠（分盒判据本身要可测）
 - beeline：5 op 顺序链 + DAG 校验通过
 - 5 个 op：切句 / 抽取 / 组装 / 4 项机械验收 / 打包
-- 端到端：捕获盒产出直接投建模盒（schema 归消费者，捕获盒零改动）
+- 端到端：捕获盒产出直接投设计盒（schema 归消费者，捕获盒零改动）
 - 降级：LLM 挂掉 / 编造 / 漏句子 / 出错类型，各该 fail 还是该降级
 
 不真调 LLM：LLM 行为在 test_llm_structurer 覆盖，这里测机械部分。
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from boxes.wms_requirement import get_definition as get_capture_definition
-from boxes.wms_design import get_definition as get_modeling_definition
+from boxes.wms_design import get_definition as get_design_definition
 from boxes.wms_requirement.beeline import get_beeline as get_requirement_capture_beeline
 from kanban.trigger import (
     TriggerError,
@@ -40,8 +40,8 @@ def store() -> TaskRunStore:
 def no_llm(monkeypatch):
     """默认禁掉**抽取腿**的 LLM——除非用例显式 stub 成某个返回值
 
-    WMS 概念绑定腿（建模盒）不在此列：它有独立的桩，
-    而且有几条用例会连着把产出投给建模盒（见 test_产出可直接投建模盒）。
+    WMS 概念绑定腿（设计盒）不在此列：它有独立的桩，
+    而且有几条用例会连着把产出投给设计盒（见 test_产出可直接投设计盒）。
     """
     from runtime import llm
     from tests.conftest import stub_wms_binder
@@ -83,11 +83,11 @@ class TestDefinition:
     def test_acceptance_metrics_are_zero_overlap_with_modeling_box(self):
         """分盒判据：判据不同才值得独立成盒。这条本身要能测。"""
         capture = {r.metric for r in get_capture_definition().result.acceptance}
-        modeling = {r.metric for r in get_modeling_definition().result.acceptance}
+        modeling = {r.metric for r in get_design_definition().result.acceptance}
         assert capture & modeling == set(), f"判据重叠了：{capture & modeling}"
 
     def test_capture_output_satisfies_modeling_input_contract(self):
-        """产出 schema 归消费者所有——捕获盒必须满足建模盒的输入契约"""
+        """产出 schema 归消费者所有——捕获盒必须满足设计盒的输入契约"""
         d = get_capture_definition()
         out = d.get_schema(d.result.result_schema)
         assert out is not None
@@ -305,7 +305,7 @@ class TestBoxFlowOrder:
     """看板盒子的先后由 feeds_into 声明决定
 
     字母序会把 wms_design_box 排在 wms_requirement_box 前面，
-    跟实际流程（先捕获需求再建模）正好反，必须按流向排。
+    跟实际流程（先捕获需求再设计）正好反，必须按流向排。
     """
 
     def test_capture_comes_before_modeling(self):
@@ -384,7 +384,7 @@ class TestSentenceSplitting:
     def test_enum_sentence(self):
         """存在性枚举 → 名字部分 = title，枚举项 = fact
 
-        为什么名字是 title 而不是 goal：「wms的流程」是这次要建模的东西的
+        为什么名字是 title 而不是 goal：「wms的流程」是这次要设计的东西的
         **名字**，不是一条需求。把它当需求抽一遍，抽出来的就是碎片
         （「库存看板」单独成条就是这种碎片的来源）。
         """
@@ -481,11 +481,11 @@ class TestCaptureEndToEnd:
         for q in res["requirements"]:
             assert q["trace_to"] in sent_ids
 
-    def test_产出可直接投建模盒(self, store: TaskRunStore):
-        """schema 归建模盒所有——捕获盒换实现，建模盒零改动
+    def test_产出可直接投设计盒(self, store: TaskRunStore):
+        """schema 归设计盒所有——捕获盒换实现，设计盒零改动
 
         **而且是走接力通道投的**：需求集整个从需求盒的产出接过来，
-        按建模盒自己声明的形状校验一遍。
+        按设计盒自己声明的形状校验一遍。
         以前这里是手工拷 set_id / requirements——每次拷的形状可能不一样，
         拷漏一个字段下游照样收。
         """
@@ -494,7 +494,7 @@ class TestCaptureEndToEnd:
             {"narrative": self.TEXT}, store,
         )
         mod = trigger_task(
-            "wms_design_box", "handle_modeling_request", {}, store,
+            "wms_design_box", "handle_design_request", {}, store,
             handoff={"requirement_set_ref": cap["task_run_id"]},
         )
         assert mod["status"] == "completed"
@@ -736,7 +736,7 @@ class TestMechanicalGates:
         这件事既不算覆盖也不算漏——那条需求整个消失了。
         """
         r = _run_capture(
-            store, "建模退款流程。订单是核心实体。退款必须在 7 天内完成。",
+            store, "设计退款流程。订单是核心实体。退款必须在 7 天内完成。",
             llm_result={"nodes": [
                 {"action": "订单是核心实体", "trace_to": "sent_2"},
             ]},
@@ -758,9 +758,9 @@ class TestMechanicalGates:
         抽到了 → coverage 100，需求集非空。
         """
         r = _run_capture(
-            store, "建模退款流程。",
+            store, "设计退款流程。",
             llm_result={"nodes": [
-                {"action": "建模退款流程", "trace_to": "sent_1"},
+                {"action": "设计退款流程", "trace_to": "sent_1"},
             ]},
         )
         res = r["result"]
@@ -798,8 +798,8 @@ class TestMechanicalGates:
         那是把系统的问题说成业务的问题。
         """
         r = _run_capture(
-            store, "建模退款流程。",
-            llm_result={"goal": "建模退款流程", "nodes": [], "edges": []},
+            store, "设计退款流程。",
+            llm_result={"goal": "设计退款流程", "nodes": [], "edges": []},
         )
         assert r["status"] == "failed"
         assert r["result"] is None
@@ -844,7 +844,7 @@ class TestAcceptanceGate:
 
     def test_detail_covers_every_declared_rule(self, store):
         """每条声明的判据都要有一行，带上判据 / 实测 / 三态结论"""
-        r = self._run(store, "建模退款流程。退款必须在 7 天内完成。退款申请走审批流程。")
+        r = self._run(store, "设计退款流程。退款必须在 7 天内完成。退款申请走审批流程。")
         declared = {rule.metric for rule in get_capture_definition().result.acceptance}
         detail = r["acceptance_detail"]
         assert {d["metric"] for d in detail} == declared
@@ -862,7 +862,7 @@ class TestAcceptanceGate:
     def test_rejected_points_at_the_failing_rule(self, store):
         """拒时要能说出是哪条判据没过 + 期望多少 + 实际多少"""
         r = _run_capture(
-            store, "建模退款流程。订单是核心实体。退款必须在 7 天内完成。",
+            store, "设计退款流程。订单是核心实体。退款必须在 7 天内完成。",
             llm_result={"nodes": [
                 {"action": "订单是核心实体", "trace_to": "sent_2"},
             ]},
@@ -876,7 +876,7 @@ class TestAcceptanceGate:
         assert cov["actual"] < 100.0
 
     def test_passed_rules_match_detail(self, store):
-        r = self._run(store, "建模退款流程。退款必须在 7 天内完成。退款申请走审批流程。")
+        r = self._run(store, "设计退款流程。退款必须在 7 天内完成。退款申请走审批流程。")
         assert r["acceptance_status"] == "accepted"
         assert set(r["acceptance_passed"]) == {
             d["metric"] for d in r["acceptance_detail"] if d["passed"]
@@ -889,7 +889,7 @@ class TestAcceptanceGate:
         acceptance_status 是拿着这些数跟判据比出来的结论。
         """
         r = _run_capture(
-            store, "建模退款流程。订单是核心实体。退款必须在 7 天内完成。",
+            store, "设计退款流程。订单是核心实体。退款必须在 7 天内完成。",
             llm_result={"nodes": [
                 {"action": "订单是核心实体", "trace_to": "sent_2"},
             ]},
@@ -921,7 +921,7 @@ def test_extractor_disables_thinking():
 
 
 def test_modeling_structurer_keeps_thinking():
-    """建模盒那条腿不关 think：它要判 requirement_type，是真语义判断。
+    """设计盒那条腿不关 think：它要判 requirement_type，是真语义判断。
 
     抽取腿关 think 是因为它只做结构化搬运；这条腿要分"哪句是规则、
     哪句是指标、哪句是流程"，一刀切关掉会牺牲分类质量。

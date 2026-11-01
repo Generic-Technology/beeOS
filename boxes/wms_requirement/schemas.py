@@ -2,10 +2,10 @@
 boxes.wms_requirement.schemas - 需求捕获盒的业务 schemas
 
 为什么有这只盒子：
-- 建模盒的 task in 是**已结构化**的 BusinessRequirementSet，它不做自然语言理解
+- 设计盒的 task in 是**已结构化**的 BusinessRequirementSet，它不做自然语言理解
 - 自然语言 → 结构化这一步原先是 kanban/trigger.py 里的一个影子函数：
   没有 task_run、没有落盘、失败是静默的
-- 它的验收判据跟建模盒**零重叠**（判据不同 = 值得独立成盒）
+- 它的验收判据跟设计盒**零重叠**（判据不同 = 值得独立成盒）
 
 定义 3 个业务 schema：
   - schema_business_narrative —— 自然语言业务表述（任务输入）
@@ -74,7 +74,7 @@ _SOURCE_SENTENCE = FieldDef(
         FieldDef(name="sentence_id", type="string"),
         FieldDef(name="text", type="string"),
         # 四种角色——**角色是句子的性质，不是它的位置**：
-        #   title   这次要建模的东西的名字（"库存管理"）——只是名字，不抽节点
+        #   title   这次要设计的东西的名字（"库存管理"）——只是名字，不抽节点
         #   goal    业务目标句——**它本身就是那句要满足的要求**，要抽节点
         #   fact    业务事实句——抽节点
         #   context 铺垫句（场景 / 时间状语 / 语气说明）——**本身不含要求**，
@@ -174,7 +174,7 @@ EXTRACTED_FACTS = SchemaDef(
         # ---- 流程图（主结构）----
         FieldDef(name="nodes", type="array", items=_FLOW_NODE),
         FieldDef(name="edges", type="array", items=_FLOW_EDGE),
-        # ---- 兼容层：给还没升级的建模盒（它仍按 requirement_type 分组）----
+        # ---- 兼容层：给还没升级的设计盒（它仍按 requirement_type 分组）----
         FieldDef(name="requirements", type="array", items=_EXTRACTED_REQUIREMENT),
         FieldDef(name="requirement_count", type="integer"),
     ],
@@ -187,11 +187,11 @@ EXTRACTED_FACTS = SchemaDef(
 
 # **人读的需求文档**（机械投影，见 boxes/wms_requirement/document.py）
 #
-# 需求集包是给建模盒吃的：流程图 + 可判定的结构化字段。
+# 需求集包是给设计盒吃的：流程图 + 可判定的结构化字段。
 # 这一份是给**人**看的：背景、目标、一条条编号的需求、每条出自哪句原文。
 #
 # **它不新增任何事实**：条目来自流程图，每条带原文出处和流程位置；
-# 验收标准是占位（怎么算满足由建模盒的可判定预期回答）。
+# 验收标准是占位（怎么算满足由设计盒的可判定预期回答）。
 REQUIREMENT_DOCUMENT = SchemaDef(
     id="schema_requirement_document",
     description="人读的需求文档（机械投影：只重组已有事实，不新增）",
@@ -237,7 +237,7 @@ REQUIREMENT_DOCUMENT = SchemaDef(
 
 REQUIREMENT_SET_PACKAGE = SchemaDef(
     id="schema_requirement_set_package",
-    description="需求集包（建模盒的输入 + 4 项抽取验证证据）",
+    description="需求集包（设计盒的输入 + 4 项抽取验证证据）",
     fields=[
         FieldDef(name="set_id", type="string"),
         FieldDef(name="business_goal", type="string"),

@@ -187,7 +187,7 @@ def _classify_failure(
 
     判据（按优先级，先看是否根本没东西可建）：
     1. 所有失败判据的 actual 都是 None——评测器一个值都没取到，
-       说明上游没产出这些量（典型：0 条需求 → 没有任何模型元素 → 没有覆盖率）
+       说明上游没产出这些量（典型：0 条需求 → 没有任何设计元素 → 没有覆盖率）
     2. requirement_count == 0——明确没需求
     3. rule_consistency 判定为 false——规则自相矛盾（优先级高于覆盖率，
        因为规则矛盾时先修规则，补覆盖率没有意义）
@@ -208,7 +208,7 @@ def _classify_failure(
         return RejectionClass.CONFLICT
 
     # 4：覆盖率有值但不够。
-    #    按名字找 coverage 判据，不写死某一个：建模盒叫 requirement_coverage，
+    #    按名字找 coverage 判据，不写死某一个：设计盒叫 requirement_coverage，
     #    捕获盒叫 source_coverage。写死一个名字 = 别的盒子全部落进 STRUCTURAL，
     #    归因错了比不归因更坏——人会被引去改错的东西。
     for metric in sorted(metrics_failed):
