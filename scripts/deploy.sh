@@ -51,11 +51,12 @@ echo "→ 传输 $(du -h "$TARBALL" | cut -f1)"
 scp -q -o BatchMode=yes "$TARBALL" "$HOST:/tmp/beeos-release.tar.gz"
 
 echo "→ 同步（更新 + 删除 git 里已无的文件）"
-ssh -o BatchMode=yes "$HOST" "bash -s" -- "$REMOTE_DIR" "$SERVICE" <<'REMOTE_SCRIPT'
+ssh -o BatchMode=yes "$HOST" "bash -s" -- "$REMOTE_DIR" "$SERVICE" "$COMMIT" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 REMOTE_DIR="$1"
 SERVICE="$2"
+COMMIT="$3"
 
 STAGE="$(mktemp -d /tmp/beeos-stage-XXXXXX)"
 trap 'rm -rf "$STAGE" /tmp/beeos-release.tar.gz' EXIT
@@ -75,6 +76,12 @@ find "$REMOTE_DIR" -name '*.pyc' -type f -delete 2>/dev/null || true
 
 "$PY_BIN" "$STAGE/scripts/_sync_release.py" "$STAGE" "$REMOTE_DIR"
 
+# 服务器上**没有 git**（靠手工同步），所以「线上跑的是哪个 commit」
+# 平时无从查问。同步成功之后把这个 commit 记在目录**旁边**——
+# 不放进目录里：目录里的东西按 git 内容为准，多一个 git 没有的文件
+# 就是「两份真相」，下一次同步还会把它当成过期文件删掉。
+printf '%s\n' "$COMMIT" > "${REMOTE_DIR}.deployed-commit"
+
 chown -R deploy:deploy "$REMOTE_DIR"
 
 systemctl restart "$SERVICE"
@@ -85,4 +92,4 @@ REMOTE_SCRIPT
 echo "✓ 已部署 $COMMIT"
 echo
 echo "线上自检："
-ssh -o BatchMode=yes "$HOST" "curl -s -o /dev/null -w '  看板 http=%{http_code}\n' http://127.0.0.1:8765/api/data" 2>/dev/null || true
+ssh -o BatchMode=yes "$HOST" "curl -s -o /dev/null -w '  看板 http=%{http_code}\n' http://127.0.0.1:8765/api/data; printf '  服务器记的 commit: '; cat ${REMOTE_DIR}.deployed-commit" 2>/dev/null || true

@@ -12,6 +12,27 @@
 
 所以部署必须做减法：目标目录里凡是 git 里没有的，一律删掉
 （运行时数据目录除外：.venv / logs / data）。
+
+## 为什么同步完还要再校验一遍
+
+同步前那句「更新 N 个文件，删除 M 个过期文件」**分不清两件事**：
+- 「服务器上已经和 git 一致，这次无事可做」
+- 「同步没成功，什么都没更新」
+
+2026-11-01 实测差点误判：部署一批新盒子，计数打印「更新 0 个文件」，
+看着像假绿（明明新增了 28 个文件）。查下来是**并行会话在一小时前
+已经部署过同一个 commit**——服务器目录本来就和 git 逐字节一致，
+所以 0 是老实的。但当时没人能一眼看出来，因为那句话**没说自己凭什么**。
+
+所以现在同步完做一次**逐字节复核**：stage 里的每个文件，
+在 target 里必须存在且内容完全相同。对不上就**非零退出**，
+让 `deploy.sh` 的 `set -e` 在重启服务**之前**中止——
+带着坏掉的目录重启，等于把「没部署成功」变成「跑起来了但跑的是旧的」。
+
+## 计数为什么分三类
+
+「更新 N 个文件」把「新增」和「改了」混在一起：新盒子的目录是凭空长出来的，
+和「已有文件被覆盖」是两回事，排查时要分得开。
 """
 
 import filecmp
@@ -29,9 +50,11 @@ def should_skip(path, target):
     return bool(PRESERVE_DIRS & set(rel.parts))
 
 
-def main():
-    stage, target = Path(sys.argv[1]), Path(sys.argv[2])
+def sync(stage: Path, target: Path):
+    """把 stage 的内容同步到 target，返回 (统计, 过期文件列表)。
 
+    统计分三类：新增 / 更新 / 未变。过期文件**当场删掉**。
+    """
     # 目标里多出来的文件 = git 里已经没有的
     stale = []
     for path in target.rglob("*"):
@@ -57,18 +80,64 @@ def main():
                 print(f"  删空目录: {path.relative_to(target)}")
 
     # 覆盖写入
-    changed = 0
+    added = updated = unchanged = 0
     for src in stage.rglob("*"):
         if not src.is_file():
             continue
         rel = src.relative_to(stage)
         dst = target / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if dst.exists() and filecmp.cmp(src, dst, shallow=False):
-            continue
+        if dst.exists():
+            if filecmp.cmp(src, dst, shallow=False):
+                unchanged += 1
+                continue
+            updated += 1
+        else:
+            added += 1
         shutil.copy2(src, dst)
-        changed += 1
-    print(f"  更新 {changed} 个文件，删除 {len(stale)} 个过期文件")
+
+    return {"added": added, "updated": updated, "unchanged": unchanged}, stale
+
+
+def verify(stage: Path, target: Path):
+    """逐字节复核：stage 里的每个文件在 target 里都必须存在且内容相同。
+
+    返回不一致的相对路径列表（空 = 一致）。
+    """
+    mismatched = []
+    for src in stage.rglob("*"):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(stage)
+        dst = target / rel
+        if not dst.exists():
+            mismatched.append(rel)
+        elif not filecmp.cmp(src, dst, shallow=False):
+            mismatched.append(rel)
+    return mismatched
+
+
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    stage, target = Path(args[0]), Path(args[1])
+
+    stats, stale = sync(stage, target)
+    print(
+        f"  新增 {stats['added']} 个，更新 {stats['updated']} 个，"
+        f"未变 {stats['unchanged']} 个，删除 {len(stale)} 个过期文件"
+    )
+
+    mismatched = verify(stage, target)
+    if mismatched:
+        print(f"✗ 同步后复核不通过：{len(mismatched)} 个文件与 git 不一致")
+        for rel in mismatched[:20]:
+            print(f"    不一致: {rel}")
+        if len(mismatched) > 20:
+            print(f"    ……还有 {len(mismatched) - 20} 个")
+        print("  目标目录没有和 git 一致——不要重启服务，先查原因。")
+        return 1
+
+    print(f"✓ 复核通过：目标目录与 git 逐字节一致（{stats['added'] + stats['updated'] + stats['unchanged']} 个文件）")
     return 0
 
 
