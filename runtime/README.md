@@ -39,23 +39,56 @@ flowchart TB
     Accept --> AllPass{全 pass?}
     AllPass -->|yes| AcceptOK[ACCEPTED]
     AllPass -->|no + rollback| Compensate[COMPENSATING_ACCEPTANCE]
-    AllPass -->|no + escalate| Queen[Queen 决策 → REJECTED]
-    AllPass -->|no + no_deliver| Reject[REJECTED]
+    AllPass -->|no + escalate| Queen[Queen 决策]
+    Queen -->|human_review| Wait[WAITING_EXTERNAL<br/>等人给判定]
+    Queen -->|其它决策| Reject[REJECTED]
+    AllPass -->|no + no_deliver| Reject
+    AllPass -->|no + 没匹配到例外| Fail[FAILED]
 ```
 
 ## TaskRun 9 状态机
 
-| 状态 | PoC 2 | 含义 |
+| 状态 | 实现 | 含义 |
 |---|---|---|
 | `triggered` | ✅ | task run 创建，等待进入执行 |
 | `running` | ✅ | 正在按 beeline 执行 operation |
-| `RETRYING` | ⏳ 下一轮 | op 失败重试中 |
-| `PARTIALLY_COMPLETED` | ⏳ 下一轮 | 部分 op 完成 |
-| `WAITING_EXTERNAL` | ⏳ 下一轮 | 等待外部响应 |
-| `COMPENSATING` | ⏳ 下一轮 | 触发补偿 |
-| `REJECTED` | ⏳ 下一轮 | 显式拒绝 |
-| `COMPLETED` | ✅ | 正常完成（beeline 跑完） |
-| `FAILED` | ✅ | 失败（验收不通过 / op 失败） |
+| `retrying` | ✅ | 这一跳传输类失败，正在重试（只有 LLM 调用会重试；op 声明 `idempotency.mode=forbidden` 就不许重试；上限 3 次，每次都落盘）|
+| `partially_completed` | ✅ | 链没走完，但**已经有 op 声明留下了产物/副作用**——东西留在现场，读者得知道「有残留」（终态）|
+| `waiting_external` | ✅ | 等外部给个说法（人的判定）。`pending_external` 里记着**等谁、等什么、哪条判据没过** |
+| `compensating` | ⏳ 未实现 | 触发补偿（等反向 op 的设计定下来，见 `docs/beebox-design.md` §3.4.4）|
+| `rejected` | ✅ | 合同例外触发，**明确不交付**（终态）|
+| `completed` | ✅ | beeline 走完 **且** 验收通过 = **交付了** |
+| `failed` | ✅ | 没成，**且没人接**（判据没过又没有匹配的合同例外 / 重试耗尽 / op 失败且没有残留）|
+
+### 状态之间谁能走到谁
+
+转移白名单在 `runtime/models.py::ALLOWED_TRANSITIONS`，越界会抛错——不是静默改状态。
+
+| 从 | 可以走到 |
+|---|---|
+| `triggered` | `running` / `failed` |
+| `running` | `completed` / `failed` / `retrying` / `waiting_external` / `partially_completed` / `rejected` |
+| `retrying` | `running`（重试同一跳）/ `failed` / `partially_completed` |
+| `waiting_external` | `running` / `completed` / `rejected` / `failed` |
+| `completed` | `failed` / `rejected` / `waiting_external`（**验收后的调整**：走完了 ≠ 交付了）|
+| `partially_completed` / `rejected` | —（终态）|
+
+### 履约层的终态 = 交付了没有
+
+2026-11-01 定的口径（线上那条 `status=completed` + `acceptance=rejected` 的记录逼出来的）：
+**判据在验收层，交付在履约层，履约层的终态就得说「交付了没有」**。
+
+| 验收结果 | 履约层落到 | 为什么 |
+|---|---|---|
+| 通过 | `completed` | 交付了 |
+| 不通过 + 例外 `no_deliver` | `rejected` | 合同说「不交付」——**明确的不交付**，不是「跑挂了」|
+| 不通过 + 例外 `escalate` + queen 判 `human_review` | `waiting_external` | 要**等人给个说法** |
+| 不通过 + 例外 `escalate` + 其它决策 | `rejected` | queen 接管了，但这次不交付 |
+| 不通过 + 例外 `rollback` | 不动（保持 `completed`）| 补偿还没做（反向 op 设计未定）|
+| 不通过 + **没匹配到例外** | `failed` | 没成，**没人接** |
+
+「明确不交付」和「没人管」是两回事：前者有人做了决定，后者是没人接。
+判据没过又没有合同例外说怎么办 → 就是 `failed`，别写成 `rejected`。
 
 ## Acceptance 4 状态机（独立阶段）
 

@@ -209,12 +209,34 @@ class TestModelingBeeline:
         assert pkg is not None
         assert pkg.next == []
 
-    def test_all_ops_idempotent_required(self):
+    def test_all_ops_declare_their_idempotency_truthfully(self):
+        """**逐 op 说真话**（2026-11-01 改了这条守卫的意图）
+
+        以前这里断言「每个 op 都声明 required + key=set_id」——
+        那是**一箱一个常量套到底**，不是逐 op 的真话：
+        LLM 有采样（同一份 prompt 再问一次是另一个产出），
+        所以「重复执行产生同结果」对建模盒的 op 并不成立。
+
+        **为什么现在要紧**：runtime 开始拿这个声明**决定要不要整跳重试**
+        （`forbidden` 的 op 不许重试）。声明不准 = 重试会重放有副作用的 op。
+
+        现在守的是**新不变量**：
+        - 每个 op 都**声明了**幂等档位（不许留空——空 = 没表态）
+        - 建模盒的 op 全是「无副作用」那一档（optional）——
+          它只读上游产出、只调 LLM，不动真实世界
+        - 声明 forbidden 的 op **不许出现在建模盒**（它没有副作用）
+        """
         b = get_beeline()
         for op in b.operations:
-            assert op.idempotency is not None
-            assert op.idempotency.mode == "required"
-            assert op.idempotency.key == "set_id"
+            assert op.idempotency is not None, f"{op.op_id} 没声明幂等档位"
+            assert op.idempotency.mode in ("required", "optional"), (
+                f"{op.op_id} 声明了 {op.idempotency.mode}——"
+                "建模盒的 op 没有副作用，不该 forbidden"
+            )
+            assert op.idempotency.mode == "optional", (
+                f"{op.op_id} 声明了 required——"
+                "跨履约的去重台账还没做，这个声明现在是空的承诺"
+            )
 
     def test_beeline_id_matches_definition_reference(self):
         """beeline id + version 必须与 definition.task.beeline_id + beeline_version 一致"""

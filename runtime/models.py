@@ -35,19 +35,32 @@ from pydantic import BaseModel, Field
 class TaskRunStatus(str, Enum):
     """Task Run 9 状态（履约层）
 
-    PoC 2 实现：
-    - triggered / running / COMPLETED / FAILED
-    下一轮：
-    - RETRYING / PARTIALLY_COMPLETED / WAITING_EXTERNAL / COMPENSATING / REJECTED
+    全部 9 个都是**真状态**（COMPENSATING 除外——它的前置是反向 op，
+    那套设计还没定，见 `docs/beebox-design.md` §3.4.4）：
+
+    - triggered / running / COMPLETED / FAILED：一跳走完或走挂
+    - RETRYING：这一跳传输类失败，正在重试（有限次，有记录）
+    - PARTIALLY_COMPLETED：链没走完，但**已经有 op 成功产出了东西**
+      （东西留在现场——读者要知道「有残留」，不能只看到一个 failed）
+    - WAITING_EXTERNAL：等外部给个说法（人的判定、外部系统的回调）
+    - REJECTED：合同例外触发，决定不交付
+    - COMPENSATING：触发补偿动作（**尚未实现**，等反向 op 的设计定下来）
+
+    **为什么履约层要区分「失败」和「拒绝」**（2026-11-01 实测）：
+    线上那条被判红的开发盒，记录里是 `status=completed` +
+    `acceptance_status=rejected`——一次**没交付**的履约，
+    履约层却写着「跑完了」。判据在验收层，交付却在履约层，
+    两层各说各话 → 读者只能自己去猜「跑完了到底是成了还是没成」。
+    现在履约层的终态跟验收结果对齐。
     """
 
     TRIGGERED = "triggered"
     RUNNING = "running"
-    RETRYING = "retrying"  # placeholder，本 PoC 不实现转移
-    PARTIALLY_COMPLETED = "partially_completed"  # placeholder
-    WAITING_EXTERNAL = "waiting_external"  # placeholder
-    COMPENSATING = "compensating"  # placeholder
-    REJECTED = "rejected"  # placeholder
+    RETRYING = "retrying"
+    PARTIALLY_COMPLETED = "partially_completed"
+    WAITING_EXTERNAL = "waiting_external"
+    COMPENSATING = "compensating"  # 等反向 op 的设计定下来（见 docs）
+    REJECTED = "rejected"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -60,12 +73,43 @@ ALLOWED_TRANSITIONS: dict[TaskRunStatus, set[TaskRunStatus]] = {
         TaskRunStatus.FAILED,
         TaskRunStatus.RETRYING,
         TaskRunStatus.WAITING_EXTERNAL,
+        TaskRunStatus.PARTIALLY_COMPLETED,
+        TaskRunStatus.REJECTED,
     },
-    TaskRunStatus.RETRYING: {TaskRunStatus.RUNNING, TaskRunStatus.FAILED},
-    TaskRunStatus.WAITING_EXTERNAL: {TaskRunStatus.RUNNING, TaskRunStatus.FAILED},
-    TaskRunStatus.COMPLETED: set(),  # 终态
+    # 重试：回到 running 重跑同一跳；次数耗尽 → failed（或部分完成）
+    TaskRunStatus.RETRYING: {
+        TaskRunStatus.RUNNING,
+        TaskRunStatus.FAILED,
+        TaskRunStatus.PARTIALLY_COMPLETED,
+    },
+    # 等外部：外部给了说法 → 继续跑（running）/ 判通过（completed）/ 判拒绝（rejected）
+    TaskRunStatus.WAITING_EXTERNAL: {
+        TaskRunStatus.RUNNING,
+        TaskRunStatus.COMPLETED,
+        TaskRunStatus.REJECTED,
+        TaskRunStatus.FAILED,
+    },
+    TaskRunStatus.PARTIALLY_COMPLETED: set(),  # 终态
+    TaskRunStatus.REJECTED: set(),  # 终态
+    # COMPLETED → {FAILED, REJECTED}：**验收后的调整**。
+    # COMPLETED 是「beeline 走完了」，不是「交付了」——
+    # 交付由验收决定。验收判红且无补偿 → 履约层改成 failed；
+    # 合同例外 no_deliver → rejected。
+    TaskRunStatus.COMPLETED: {
+        TaskRunStatus.FAILED,
+        TaskRunStatus.REJECTED,
+        TaskRunStatus.WAITING_EXTERNAL,
+    },
     TaskRunStatus.FAILED: set(),  # 终态
 }
+
+#: 终态集合（履约层不再前进）
+TERMINAL_STATUSES: frozenset[TaskRunStatus] = frozenset({
+    TaskRunStatus.COMPLETED,
+    TaskRunStatus.FAILED,
+    TaskRunStatus.REJECTED,
+    TaskRunStatus.PARTIALLY_COMPLETED,
+})
 
 
 class AcceptanceStatus(str, Enum):
@@ -153,6 +197,12 @@ class OperationRecord(BaseModel):
     # 盒子要统计自己的 llm_call_failure_rate 就靠它——没有它只能去匹配错误字符串，
     # 而字符串匹配是假信号的一种。取值由 runtime 分类，不含业务语义。
     error_kind: Optional[str] = None
+    # 第几次尝试（1 = 一次过；>1 = 重试过）。
+    #
+    # **为什么要有**：重试过的 op 和一次过的 op 不是一回事——
+    # 「这一跳传输失败重试了 2 次才成功」和「这一跳顺利跑完」，
+    # 对读指标的人是完全不同的两件事。次数记在这里，看板直接能读。
+    attempts: int = 1
 
 
 # ============================================================
@@ -268,6 +318,15 @@ class TaskRun(BaseModel):
     event_log: EventLog = Field(default_factory=EventLog)
     result: Optional[dict[str, Any]] = None
     acceptance: Optional[AcceptanceEvaluation] = None
+    # **等外部时，等的是什么**（WAITING_EXTERNAL 期间有值）。
+    #
+    # 只有状态没有内容 = 读者只看到「在等」，不知道等谁、等什么、
+    # 谁能来答。所以「等的对象」必须落进记录：
+    # - kind：等的是什么（acceptance_decision = 等人给判定）
+    # - question：给人看的问题
+    # - failed_rules：为什么需要人判（哪条判据没过）
+    # - decidable_by：谁能判（现在只有 human）
+    pending_external: Optional[dict[str, Any]] = None
     evidence: Evidence = Field(default_factory=lambda: Evidence(
         event_log=EventLog(),
         operations={},
@@ -286,7 +345,7 @@ class TaskRun(BaseModel):
         if new_status == TaskRunStatus.RUNNING and self.identity.started_at is None:
             self.identity.started_at = datetime.now(timezone.utc)
         # 进入终态时记录 finished_at
-        if new_status in (TaskRunStatus.COMPLETED, TaskRunStatus.FAILED):
+        if new_status in TERMINAL_STATUSES:
             self.identity.finished_at = datetime.now(timezone.utc)
         self.event_log.append(
             event="status_change",
@@ -294,7 +353,7 @@ class TaskRun(BaseModel):
         )
 
     def is_terminal(self) -> bool:
-        return self.status in (TaskRunStatus.COMPLETED, TaskRunStatus.FAILED)
+        return self.status in TERMINAL_STATUSES
 
 
 def create_task_run(

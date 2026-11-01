@@ -162,6 +162,24 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
             ),
         ],
         exceptions=[
+            # ---- 空需求集：明确不交付 ----
+            #
+            # 放在第一条，因为它比下面任何一条都**具体**
+            # （例外匹配取第一条命中的）。
+            #
+            # 为什么要有这条（2026-11-01 实测）：
+            # 投料里 0 条需求，盒子**照跑完了**，但判据全挂
+            # （没有需求可绑、没覆盖率）。以前这里没有例外，
+            # 于是走「没匹配到例外 = 没人管 = failed」——
+            # 可这次履约**根本没跑挂**，它跑完了，只是**没东西可交**。
+            # 写成 failed 是在说「跑砸了」，读者会去查代码，
+            # 而真相是「合同说这种情况不交付」。
+            #
+            # 一句话：**「明确不交付」和「没人管」是两回事。**
+            ExceptionRule(
+                condition="requirement_count == 0",
+                action="no_deliver",
+            ),
             ExceptionRule(
                 condition="requirement_count > 1000",
                 action="escalate",

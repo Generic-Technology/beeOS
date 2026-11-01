@@ -33,8 +33,27 @@ from core.beeline_models import (
 )
 
 
-# 同一任务重复执行必须产出同一份结果
-IDEMPOTENT_BY_TASK = Idempotency(mode="required", key="task_id")
+#: **幂等声明——逐 op 说的是真话**（2026-11-01 改）
+#:
+#: 以前这里是一个常量 `required, key=...` 套在**每一个** op 上。
+#: 可「重复执行产生同结果」对多数 op 并不成立：
+#: LLM 有采样（同一份 prompt 再问一次是另一个产出），
+#: 有副作用的 op 更不成立（重放会再提交一次、再部署一次）。
+#:
+#: **为什么现在要紧**：runtime 开始拿这个声明**决定要不要重试**
+#: （`idempotency.mode=forbidden` 的 op 不许重试）。
+#: 声明不准 = 重试会重放有副作用的 op（开发盒会提交出第二个 commit）。
+#:
+#: **为什么是 optional 而不是 required**：
+#: `required` 的语义是「runtime 用 key 去重」——
+#: 跨履约的幂等台账（按 key 查历史产出）**还没做**，
+#: 现在声明 required 就是「声明了却没人执行」。
+#: 台账做出来之后，再把真正幂等的 op 升到 required。
+IDEMPOTENT_BY_TASK = Idempotency(mode="optional")
+#: **不许重放**的 op 单独一个：它有副作用，重放会重复做事。
+#: runtime 拿这个声明决定「传输类失败要不要整跳重试」。
+FORBIDDEN_REPLAY = Idempotency(mode="forbidden")
+
 
 
 WMS_DEVELOPMENT_BEELINE = Beeline(
@@ -58,34 +77,44 @@ WMS_DEVELOPMENT_BEELINE = Beeline(
         ),
 
         Operation(
+            # **不许重放**（forbidden）：这一跳会真的提交到 WMS 仓、并建一个交付分支。
+            # 重放一次 = 两个提交、两个分支 —— 而「重复执行产生同结果」对它根本不成立。
+            # **还会留下东西**（leaves_artifact）：提交和分支就在那儿。
             op_id="dev_code",
             type="dev_code",
             input_from="dev_intake",
             input="schema_dev_plan",
             output="schema_code_change",
             next=[NextRef(op_id="dev_build")],
+            leaves_artifact=True,
             bee=Bee(type="dev_code_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
+            idempotency=FORBIDDEN_REPLAY,
         ),
 
         Operation(
+            # **会留下东西**（leaves_artifact）：构建失败时隔离工作区**不会被拆**
+            #（拆工作区在下一跳的 finally 里），仓里会多一个 worktree。
             op_id="dev_build",
             type="dev_build",
             input_from="dev_code",
             input="schema_code_change",
             output="schema_build_check",
             next=[NextRef(op_id="build_packager")],
+            leaves_artifact=True,
             bee=Bee(type="dev_build_handler"),
             idempotency=IDEMPOTENT_BY_TASK,
         ),
 
         Operation(
+            # **会留下东西**（leaves_artifact）：jar 和前端产物被复制进制品库
+            #（制品库在仓外，不会被拆工作区带走）。
             op_id="build_packager",
             type="build_packager",
             input_from="dev_build",
             input="schema_build_check",
             output="schema_build_artifact",
             next=[],
+            leaves_artifact=True,
             bee=Bee(type="build_packager_handler"),
             idempotency=IDEMPOTENT_BY_TASK,
         )

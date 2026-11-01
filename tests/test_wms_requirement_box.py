@@ -522,7 +522,10 @@ class TestCaptureEndToEnd:
             "wms_requirement_box", "capture_business_requirement",
             {"narrative": "   "}, store,
         )
-        assert r["status"] == "completed"
+        # **履约层现在说「没交付」**（2026-11-01 产品决定）：
+        # 以前是 completed —— 判据在验收层、交付在履约层，两层各说各话，
+        # 一次没交付的履约在履约层写着「跑完了」。
+        assert r["status"] == "rejected"
         assert r["acceptance_status"] == "rejected"
         assert r["result"]["requirement_count"] == 0
 
@@ -891,7 +894,10 @@ class TestAcceptanceGate:
                 {"action": "订单是核心实体", "trace_to": "sent_2"},
             ]},
         )
-        assert r["status"] == "completed"
+        # 这次验收没过（模型只给了一个节点，覆盖率不到 100），
+        # 所以履约层的终态是「没交付」——这是 2026-11-01 改的：
+        # 履约层的状态要说「交付了没有」，不能跟验收层各说各话。
+        assert r["status"] == "rejected"
         assert "verify_graph_fidelity" in [s["op_id"] for s in r["op_trace"]]
         # beeline 里没有 acceptance op——判定是 execute() 之后单独调的
         assert not any("accept" in s["op_id"] for s in r["op_trace"])

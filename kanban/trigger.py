@@ -64,6 +64,7 @@ from core.field_map import (
 from core.models import BeeBoxDefinition, FieldDef, SchemaDef
 from core.beeline_models import Beeline
 from runtime import BeelineExecutor, create_task_run, evaluate_acceptance
+from runtime.acceptance import apply_acceptance_to_run
 from runtime.contract import validate_payload
 from runtime.handoff import HandoffError, assemble_handoff
 from runtime.models import TaskRunStatus
@@ -1063,6 +1064,10 @@ def trigger_task(
     acceptance_not_applicable = []
     if task_run.status == TaskRunStatus.COMPLETED:
         evaluation = evaluate_acceptance(task_run, definition.result)
+        # **验收结论落到履约层**（2026-11-01）：
+        # 不做这一步，一次「没交付」的履约在履约层写着 completed——
+        # 判据在验收层、交付在履约层，两层各说各话。
+        apply_acceptance_to_run(task_run, evaluation)
         acceptance_status = evaluation.status.value
         acceptance_passed = list(evaluation.passed_rules)
         acceptance_not_applicable = list(evaluation.not_applicable_rules)
@@ -1100,6 +1105,7 @@ def trigger_task(
         acceptance_status=acceptance_status,
         rejection_class=rejection_class,
         observed=observed,
+        acceptance_detail=acceptance_detail,
     )
 
     # 契约破了也要**先落盘再报错**——记录不许凭空消失。

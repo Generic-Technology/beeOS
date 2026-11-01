@@ -620,7 +620,13 @@ class TestTriggerApi:
 
     def test_trigger_rejected_flow(self, server_url: tuple[str, TaskRunStore],
                                    stub_llm):
-        """履约完成但验收失败（无 metric 需求）→ completed + rejected"""
+        """履约跑完了但验收没过 → 履约层说「没交付」+ 验收层 rejected
+
+        **为什么履约层不是 completed**（2026-11-01 产品决定）：
+        判据在验收层、交付在履约层，两层各说各话的话，
+        读者看到「completed + rejected」根本不知道这次到底成没成。
+        现在履约层的终态 = 交付了没有。
+        """
         url, _ = server_url
         status, data = self._post(url, {
             "box_id": "wms_design_box",
@@ -634,7 +640,7 @@ class TestTriggerApi:
             }},
         })
         assert status == 200
-        assert data["status"] == "completed"
+        assert data["status"] == "rejected"
         assert data["acceptance_status"] == "rejected"
 
     def test_removed_box_not_triggerable(self, server_url: tuple[str, TaskRunStore]):
@@ -710,6 +716,151 @@ class TestTriggerApi:
             "generate_evidence",
             "package_model",
         ]
+
+# ============================================================
+# POST /api/runs/{id}/decision（人在等判定时的回答口子）
+# ============================================================
+
+
+class TestDecisionApi:
+    """「停在等判定」的履约，得有一个**能回答**的口子
+
+    没有这个口子，它就永远停着——比直接拒绝还糟：
+    读者看到一个永远不动的任务，却不知道该干什么。
+    """
+
+    def _post_decision(self, url: str, run_id: str, body: dict):
+        conn = HTTPConnection(url.replace("http://", ""))
+        conn.request(
+            "POST", f"/api/runs/{run_id}/decision",
+            body=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        data = json.loads(resp.read())
+        conn.close()
+        return resp.status, data
+
+    def _waiting_run(self, store: TaskRunStore):
+        """造一条**停在等判定**的履约（带「在等什么」）"""
+        from runtime.models import TaskRunStatus
+
+        tr = create_task_run(
+            "pm", "i", "schema", "rel", "b", 1, "rt", "in",
+        )
+        tr.transition_to(TaskRunStatus.RUNNING, reason="x")
+        tr.transition_to(TaskRunStatus.COMPLETED, reason="x")
+        tr.transition_to(TaskRunStatus.WAITING_EXTERNAL, reason="等人判")
+        tr.pending_external = {
+            "kind": "acceptance_decision",
+            "question": "这次交付要不要放行？",
+            "failed_rules": [{"metric": "review_coverage", "actual": False}],
+            "decidable_by": "human",
+        }
+        store.append(
+            tr, box_id="wms_design_box", acceptance_status="rejected",
+            acceptance_detail=[{
+                "metric": "review_coverage", "outcome": "failed", "passed": False,
+            }],
+        )
+        return tr
+
+    def test_a_person_can_release_a_waiting_run(
+        self, server_url: tuple[str, TaskRunStore],
+    ):
+        """放行 → 这次履约接回去（不再是永远停着）"""
+        url, store = server_url
+        run = self._waiting_run(store)
+        status, data = self._post_decision(
+            url, run.identity.task_run_id,
+            {"decision": "approve", "note": "人看过，同意"},
+        )
+        assert status == 200
+        assert data["status"] == "completed"
+        assert data["acceptance_status"] == "accepted"
+
+    def test_the_release_leaves_a_trace(
+        self, server_url: tuple[str, TaskRunStore],
+    ):
+        """**放行要留痕**：放行了哪条没过、谁放的、为什么
+
+        「人放行了」和「判据过了」是两件事，混成一件就是造假信号。
+        """
+        url, store = server_url
+        run = self._waiting_run(store)
+        _status, data = self._post_decision(
+            url, run.identity.task_run_id,
+            {"decision": "approve", "note": "人看过，同意"},
+        )
+        decision = data["human_decision"]
+        assert decision["decision"] == "approve"
+        assert decision["note"] == "人看过，同意"
+        assert "review_coverage" in decision["overridden_rules"]
+
+    def test_the_record_still_shows_the_failed_rule(
+        self, server_url: tuple[str, TaskRunStore],
+    ):
+        """没过的那条判据**不许被抹掉**——历史记录里也要看得见"""
+        url, store = server_url
+        run = self._waiting_run(store)
+        self._post_decision(
+            url, run.identity.task_run_id, {"decision": "approve", "note": "行"},
+        )
+        record = store.get_run(run.identity.task_run_id)
+        assert record["status"] == "completed"
+        assert any(
+            row.get("metric") == "review_coverage"
+            and row.get("outcome") == "failed"
+            for row in record["acceptance_detail"]
+        ), "放行把没过的判据抹了"
+
+    def test_refusing_keeps_the_run_rejected(
+        self, server_url: tuple[str, TaskRunStore],
+    ):
+        url, store = server_url
+        run = self._waiting_run(store)
+        status, data = self._post_decision(
+            url, run.identity.task_run_id, {"decision": "reject", "note": "不行"},
+        )
+        assert status == 200
+        assert data["status"] == "rejected"
+
+    def test_a_run_that_is_not_waiting_cannot_be_answered(
+        self, server_url: tuple[str, TaskRunStore],
+    ):
+        """**别的状态不许接回去**——否则就是随便改历史"""
+        url, store = server_url
+        tr = create_task_run("pm", "i", "schema", "rel", "b", 1, "rt", "in")
+        store.append(tr, box_id="wms_design_box", acceptance_status="accepted")
+        status, data = self._post_decision(
+            url, tr.identity.task_run_id, {"decision": "approve", "note": ""},
+        )
+        assert status == 409, data
+        assert "等" in data["error"], data
+
+    def test_an_unknown_decision_is_refused(
+        self, server_url: tuple[str, TaskRunStore],
+    ):
+        url, store = server_url
+        run = self._waiting_run(store)
+        status, data = self._post_decision(
+            url, run.identity.task_run_id, {"decision": "随便", "note": ""},
+        )
+        assert status == 409, data
+
+    def test_an_unknown_run_is_404_not_409(
+        self, server_url: tuple[str, TaskRunStore],
+    ):
+        """**没有这次履约**（404）跟「有，但此刻不接受回答」（409）是两回事
+
+        混成一个码，读者分不清「我 id 写错了」还是「时机不对」。
+        """
+        url, _store = server_url
+        status, data = self._post_decision(
+            url, "no_such_run_id", {"decision": "approve", "note": ""},
+        )
+        assert status == 404, data
+
 
 # ============================================================
 # POST /api/structure（自然语言 → TASK IN 结构化表达）

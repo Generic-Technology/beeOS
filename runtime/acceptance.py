@@ -26,6 +26,7 @@ from runtime.models import (
     AcceptanceStatus,
     RejectionClass,
     TaskRun,
+    TaskRunStatus,
 )
 
 
@@ -344,3 +345,101 @@ def evaluate_acceptance(
         )
 
     raise ValueError(f"unknown exception action: {exception.action}")
+
+# ============================================================
+# 验收结论 → 履约层状态
+# ============================================================
+
+
+def apply_acceptance_to_run(
+    task_run: TaskRun,
+    evaluation: AcceptanceEvaluation,
+) -> None:
+    """把验收结论落到**履约层**状态上
+
+    **为什么要有这一步**（2026-11-01 实测出来的）：
+    线上那条被判红的开发盒，记录里是
+    `status=completed` + `acceptance_status=rejected`——
+    一次**没交付**的履约，履约层却写着「跑完了」。
+
+    两层各说各话，读者只能自己猜「跑完了到底是成了还是没成」。
+    判据在验收层、交付在履约层，那**履约层的终态就该说「交付了没有」**。
+
+    口径（一句话一条，理由在括号里）：
+
+    | 验收结果 | 履约层 | 为什么 |
+    |---|---|---|
+    | 通过 | `completed` | 交付了 |
+    | 不通过 + 例外 `no_deliver` | `rejected` | 合同说「不交付」，这是**明确的不交付**，不是「跑挂了」 |
+    | 不通过 + 例外 `escalate`，queen 判 `human_review` | `waiting_external` | 要**等人给个说法**（见下） |
+    | 不通过 + 例外 `escalate`，其它决策 | `rejected` | queen 接管了，但这次不交付 |
+    | 不通过 + 例外 `rollback` | 不动（保持 `completed`） | 补偿还没做（反向 op 的设计还没定）；等那边定下来再改成 `compensating` |
+    | 不通过 + 没匹配到例外 | `failed` | 没成，且没人接 |
+
+    **「等外部」为什么是真的在等**：
+    queen 的 escalate 决策今天只被**记成一个字符串**
+    （`human_review` / `auto_resolve` / `observe_only`），
+    然后不管判成什么，验收一律返回 REJECTED——
+    **决策没有牙齿**：queen 说「要人看」，系统还是直接拒了。
+
+    现在 `human_review` 会让这次履约**停在 `waiting_external`**，
+    并把「等什么、为什么等、谁能答」记进 `pending_external`——
+    不然读者只看到「在等」，不知道在等谁。
+    """
+    if evaluation.status == AcceptanceStatus.ACCEPTED:
+        # 交付了 → 履约层保持 completed
+        return
+
+    if evaluation.status == AcceptanceStatus.COMPENSATING_ACCEPTANCE:
+        # 补偿还没实现：履约层先不动（见函数说明）
+        return
+
+    if evaluation.status == AcceptanceStatus.REJECTED:
+        if (
+            evaluation.exception_action == "escalate"
+            and evaluation.queen_decision == "human_review"
+        ):
+            task_run.pending_external = {
+                "kind": "acceptance_decision",
+                "question": (
+                    "验收没过，且合同要求升级给人判定——"
+                    "这次交付要不要放行？"
+                ),
+                "failed_rules": evaluation.failed_rules,
+                "rejection_class": (
+                    evaluation.rejection_class.value
+                    if evaluation.rejection_class else ""
+                ),
+                "decidable_by": "human",
+                "queen_decision": evaluation.queen_decision,
+            }
+            task_run.transition_to(
+                TaskRunStatus.WAITING_EXTERNAL,
+                reason=(
+                    "验收不通过，合同要求升级；queen 判 human_review"
+                    "——这次履约在等人给判定"
+                ),
+            )
+            return
+
+        action = evaluation.exception_action
+        if action is None:
+            # **没人接**：判据没过，又没有合同例外说「不交付」
+            # → 就是没成（failed），不是「明确拒绝」。
+            # 这两者的区别是「有人决定了不交付」和「没人管」。
+            task_run.transition_to(
+                TaskRunStatus.FAILED,
+                reason="验收不通过，且没有匹配的合同例外——这次没成",
+            )
+            return
+        task_run.transition_to(
+            TaskRunStatus.REJECTED,
+            reason=f"验收不通过（{action}）——决定不交付",
+        )
+        return
+
+    # 理论上到不了这里（REJECTED / ACCEPTED / COMPENSATING 三种都覆盖了）
+    task_run.transition_to(
+        TaskRunStatus.FAILED,
+        reason=f"验收结论不认识：{evaluation.status.value}",
+    )

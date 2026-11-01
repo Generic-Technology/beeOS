@@ -635,6 +635,16 @@ task run 在 instance 内的完整执行流程。
 - task run 跨 op 的状态（input / output 中间数据）保存在 instance 内存或临时存储
 - 每个 op 执行结果记录到 task run 审计字段（步骤级日志）
 
+**runtime 会读的两个 op 级声明**（不是注释，是 runtime 的判断依据，所以必须逐 op 说真话）：
+
+| 声明 | runtime 拿它做什么 | 说错的代价 |
+|---|---|---|
+| `idempotency.mode` | 决定这一跳失败后**能不能重放**：`forbidden` → 不许重试，直接往下走；`optional` / `required` → 传输类失败可重试（上限 3 次）| 声明成能重放但实际不幂等 → 重试把副作用做两遍（开发盒的提交就是这种，所以它声明 `forbidden`）|
+| `leaves_artifact` | 决定链没走完时落**`partially_completed`**（留了东西，有残留）还是 **`failed`**（什么都没留下）| 声明错 → 现场明明有 commit，看板上却写着「失败，什么都没发生」|
+
+`idempotency.mode = required` 目前**没有人声明**：它意味着「跨履约也要去重」（需要台账），台账还没做——
+声明了就是一句空承诺。盒子现在诚实地写 `optional` / `forbidden`。
+
 #### 3.4.4 异常处理 + task run 状态机
 
 按 §1.3 持续流动原则暴露——不静默吞错，让异常显式可观测。
@@ -645,32 +655,46 @@ task run 在 instance 内的完整执行流程。
 |---|---|
 | **triggered** | task run 创建，等待进入执行 |
 | **running** | 正在按 beeline 执行 operation |
-| **RETRYING** | op 失败后重试中（带重试次数上限 + 重试策略）|
-| **PARTIALLY_COMPLETED** | 部分 operation 完成（如分支一边失败，一边成功）|
-| **WAITING_EXTERNAL** | 等待外部系统响应（外部 API 调用 / 异步回调）|
-| **COMPENSATING** | 触发补偿动作（执行反向 op 撤销已完成操作）|
-| **REJECTED** | 显式拒绝（合同例外条款触发，决定不交付）|
-| **COMPLETED** | 正常完成（验收通过）|
-| **FAILED** | 失败（验收不通过 / 重试耗尽 / 拒绝后无补偿）|
+| **RETRYING** | 这一跳**传输类失败**（LLM 调用挂了），正在重试。只有这类失败才重试——盒子逻辑错（op 报错）不重试，解析错也不重试。重试由 op 的 idempotency 声明驱动：`forbidden` 不许重试；上限 3 次，每次重试都落盘（`attempts` + `op_retry` 事件）|
+| **PARTIALLY_COMPLETED** | 链没走完，但**已经有 op 声明留下了产物/副作用**（`Operation.leaves_artifact`）——东西留在现场，读者不能只看到一个 `failed`。「有 op 成功完成」**不等于**「有东西留在现场」：需求盒第一跳切碎句子也是「成功完成」，但什么都没留下，所以由**盒子声明**，runtime 不猜 |
+| **WAITING_EXTERNAL** | 等外部给个说法。当前落地的是**等人给判定**：验收判红 + 合同要求升级 + queen 判 `human_review` → 履约停在这儿，`pending_external` 记着等谁、等什么、哪条判据没过；放行/拒绝走 `POST /api/runs/{id}/decision`。外部系统回调那一支还没做 |
+| **COMPENSATING** | 触发补偿动作（执行反向 op 撤销已完成操作）—— **未实现**，等反向 op 的设计定下来 |
+| **REJECTED** | **明确不交付**：合同例外触发（`no_deliver`，或 queen 接管后判不交）。与 `FAILED` 的区别是「有人做了不交付的决定」|
+| **COMPLETED** | beeline 走完 **且** 验收通过 = **交付了**。走完 ≠ 交付了，验收判红时这里会被改判（见下）|
+| **FAILED** | 没成，**且没人接**：判据没过又没有匹配的合同例外 / 重试耗尽 / op 失败且没有残留 |
+
+**履约层终态 = 交付了没有**（2026-11-01 定）：
+
+判据在验收层，交付在履约层，两层各说各话的话，读者只能自己猜「跑完了到底是成了还是没成」。
+所以验收结论会改写履约层状态：
+
+| 验收结果 | 履约层落到 |
+|---|---|
+| 通过 | `completed` |
+| 不通过 + 例外 `no_deliver` | `rejected` |
+| 不通过 + 例外 `escalate` + queen 判 `human_review` | `waiting_external` |
+| 不通过 + 例外 `escalate` + 其它决策 | `rejected` |
+| 不通过 + 例外 `rollback` | 不动（补偿还没做）|
+| 不通过 + 没匹配到例外 | `failed` |
 
 **异常处理动作**：
 
 | 异常类型 | 状态转换 | 处理动作 |
 |---|---|---|
-| **op 临时失败**（网络抖动 / 外部超时）| → RETRYING | runtime 重试 op（按 op idempotency 策略：required / optional / forbidden）|
-| **op 永久失败**（业务规则不满足）| → FAILED | 当前 op 标记失败，按 beeline 编排决定下一步（无 next = task run 失败；分支条件可走错误处理 op）|
-| **外部异步等待**（需要外部回调）| → WAITING_EXTERNAL | task run 持久化等待，runtime 注册回调；回调到达后恢复执行 |
-| **需要补偿**（已完成部分要撤销）| → COMPENSATING | 执行反向 op（每个 op 可声明 compensate_bee）|
-| **合同例外触发**（验收规则 fail 且 actions=rollback/no_deliver）| → REJECTED / COMPENSATING | 按 contract.exceptions.actions 执行（no_deliver / rollback / escalate）|
+| **op 临时失败**（LLM 调用超时 / 传输挂了）| → RETRYING | runtime 重试 op（上限 3 次）；op 声明 `idempotency.mode=forbidden` 就不许重试，直接往下走；每次重试落盘 |
+| **op 永久失败**（业务规则不满足 / 盒子逻辑错）| → FAILED 或 PARTIALLY_COMPLETED | 当前 op 标记失败，不重试。链走不完时：若已有 op 声明留下了产物 → `partially_completed`（有残留），否则 → `failed` |
+| **外部异步等待**（需要外部回调）| → WAITING_EXTERNAL | task run 持久化等待，runtime 注册回调；回调到达后恢复执行（**回调那一支未实现**，当前只落地了「人给判定」这一支）|
+| **需要补偿**（已完成部分要撤销）| → COMPENSATING | 执行反向 op（每个 op 可声明 compensate_bee）—— **未实现** |
+| **合同例外触发**（验收规则 fail 且 exceptions 命中）| → REJECTED / WAITING_EXTERNAL / COMPENSATING | 按 `contract.exceptions` 执行：`no_deliver` → `rejected`；`escalate` + queen 判 `human_review` → `waiting_external`；`rollback` → 补偿（还没做，状态先不动）；**没命中任何例外** → `failed` |
 | **beeline 完整性错误**（环 / 引用不存在）| 启动期错误 | task run 不创建（不进入执行）|
 | **task 数据不符合 schema** | 触发期错误 | trigger 拒绝（不创建 task run）|
 
 **重试 vs 补偿策略**：
 
-- **retry**——op idempotency.mode = required / optional：runtime 可重试
-- **compensate**——op 失败但合同要求 rollback：执行反向 op（state reversal）
-- **resume**——WAITING_EXTERNAL 后回调到达：从 checkpoint 继续
-- **reject**——合同例外触发 no_deliver：标记 REJECTED，不交付
+- **retry**——op idempotency.mode = required / optional：runtime 可重试；`forbidden` 不许重试。**当前实现只对传输类失败（LLM 调用）重试**——盒子逻辑错不重试（重试也不会变对），解析错不重试（重试还是会错）
+- **compensate**——op 失败但合同要求 rollback：执行反向 op（state reversal）—— **设计未定，暂缓**
+- **resume**——WAITING_EXTERNAL 后人给了判定：从 checkpoint 继续（`runtime/resume.py`）
+- **reject**——合同例外触发 no_deliver：标记 REJECTED，明确不交付
 - **dead-letter**——重试耗尽 / 补偿失败：标记 FAILED，queen 接管（人工 / 自动改善）
 
 **暴露方式**：

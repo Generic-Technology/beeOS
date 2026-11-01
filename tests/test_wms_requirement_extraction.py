@@ -228,7 +228,10 @@ class TestEmptyVsModelFailure:
             "wms_requirement_box", "capture_business_requirement",
             {"narrative": "   "}, store,
         )
-        assert r["status"] == "completed"
+        # **履约层现在说「没交付」**（2026-11-01 产品决定）：
+        # 以前是 completed —— 判据在验收层、交付在履约层，两层各说各话，
+        # 一次没交付的履约在履约层写着「跑完了」。
+        assert r["status"] == "rejected"
         assert r["result"]["requirement_count"] == 0
         assert r["acceptance_status"] == "rejected"
 

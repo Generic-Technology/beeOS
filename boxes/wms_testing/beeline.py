@@ -28,7 +28,27 @@ from core.beeline_models import (
 
 
 # 同一任务重复执行必须产出同一份结果
-IDEMPOTENT_BY_TASK = Idempotency(mode="required", key="task_id")
+#: **幂等声明——逐 op 说的是真话**（2026-11-01 改）
+#:
+#: 以前这里是一个常量 `required, key=...` 套在**每一个** op 上。
+#: 可「重复执行产生同结果」对多数 op 并不成立：
+#: LLM 有采样（同一份 prompt 再问一次是另一个产出），
+#: 有副作用的 op 更不成立（重放会再提交一次、再部署一次）。
+#:
+#: **为什么现在要紧**：runtime 开始拿这个声明**决定要不要重试**
+#: （`idempotency.mode=forbidden` 的 op 不许重试）。
+#: 声明不准 = 重试会重放有副作用的 op（开发盒会提交出第二个 commit）。
+#:
+#: **为什么是 optional 而不是 required**：
+#: `required` 的语义是「runtime 用 key 去重」——
+#: 跨履约的幂等台账（按 key 查历史产出）**还没做**，
+#: 现在声明 required 就是「声明了却没人执行」。
+#: 台账做出来之后，再把真正幂等的 op 升到 required。
+IDEMPOTENT_BY_TASK = Idempotency(mode="optional")
+#: **不许重放**的 op 单独一个：它有副作用，重放会重复做事。
+#: runtime 拿这个声明决定「传输类失败要不要整跳重试」。
+FORBIDDEN_REPLAY = Idempotency(mode="forbidden")
+
 
 
 WMS_TESTING_BEELINE = Beeline(
@@ -51,14 +71,19 @@ WMS_TESTING_BEELINE = Beeline(
         ),
 
         Operation(
+            # **不许重放**（forbidden）：这一跳会往验证实例里**造数据**
+            #（库区、库位…）再清掉。重放一次 = 再造一套，
+            # 而上一套要是没清干净（正是失败的时候），两套都留在那儿。
+            # **会留下东西**（leaves_artifact）：造出来的数据就是残留。
             op_id="test_execute",
             type="test_execute",
             input_from="test_intake",
             input="schema_test_execution",
             output="schema_test_verdict",
             next=[NextRef(op_id="test_packager")],
+            leaves_artifact=True,
             bee=Bee(type="test_execute_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
+            idempotency=FORBIDDEN_REPLAY,
         ),
 
         Operation(

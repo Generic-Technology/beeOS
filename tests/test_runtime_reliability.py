@@ -218,9 +218,18 @@ def test_op_output_not_dict_still_produces_a_failed_record():
 
     result = BeelineExecutor(_BadOutputRunner()).execute(task_run, beeline, {})
 
-    # **关键断言**：状态是 failed（不是「记录不存在」）
+    # **关键断言**：状态说的是实话，**不是「记录不存在」**
+    #
+    # **为什么是 failed 而不是 partially_completed**：
+    # op1 是这个假 beeline 的第一跳，它**没有声明留下东西**
+    # （`Operation.leaves_artifact` 默认 False）——
+    # runtime 判「部分完成」问的是「有没有哪一跳动了真实世界」，
+    # 不是「跑完了几跳」。这跳只是把输入传下去，什么都没留下。
+    #
+    # **这条守卫的意图**：异常路径必须落成一条**看得见的**记录，
+    # 且失败原因要能查清。
     assert result.status == TaskRunStatus.FAILED, \
-        f"异常没有落成 failed 记录：status={result.status}"
+        f"异常没有落成一条说得清状态的记录：status={result.status}"
     # 而且失败原因要能查清
     reasons = [
         str((e.detail or {}).get("reason") or "")

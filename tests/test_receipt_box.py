@@ -248,7 +248,11 @@ class TestBoxWiring:
             {"photo": "data:image/jpeg;base64," + base64.b64encode(b"x").decode()},
             store,
         )
-        assert r["status"] == "completed"
+        # **履约层的状态现在说「没交付」**（2026-11-01 产品决定）：
+        # 以前这里是 completed —— 一次没交付的履约，履约层写着「跑完了」，
+        # 判据在验收层、交付在履约层，两层各说各话。
+        # 现在履约层的终态 = 交付了没有。
+        assert r["status"] == "rejected"
         assert r["acceptance_status"] == "rejected"
         failed = {a["metric"] for a in r["acceptance_detail"] if not a["passed"]}
         assert "line_arithmetic" in failed

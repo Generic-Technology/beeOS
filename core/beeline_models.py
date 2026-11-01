@@ -38,9 +38,17 @@ class ExternalSystem(BaseModel):
 class Idempotency(BaseModel):
     """operation 幂等性配置
 
-    required  —— 重复执行必须产生同结果（runtime 用 key 去重）
+    required  —— 重复执行必须产生同结果（**承诺**：runtime 会按 key 去重；
+                 但跨履约的去重台账**还没做**，所以这一档现在只是承诺）
     optional  —— 不强制幂等，runtime 允许重试（默认）
-    forbidden —— 明确禁止重试（如通知类 op 重复执行会重复发邮件）
+    forbidden —— 明确禁止重试（如提交代码、部署、造数据这类有副作用的 op；
+                 重放会重复做事）
+
+    **runtime 拿这一档决定要不要整跳重试**（2026-11-01）：
+    传输类失败（网络/超时/5xx）会让这一跳重试——
+    所以声明必须**逐 op 说真话**：
+    有副作用的 op 必须声明 forbidden，否则一次网络抖动就会重放它
+    （开发盒会提交出第二个 commit）。
     """
 
     mode: Literal["required", "optional", "forbidden"]
@@ -72,6 +80,30 @@ class Operation(BaseModel):
     idempotency: Optional[Idempotency] = None
     bee: Optional[Bee] = None
     external_system: Optional[ExternalSystem] = None
+
+    #: 这一跳**成功之后会不会留下东西**（产物 / 副作用）。
+    #:
+    #: **为什么要有这个声明**（2026-11-01 实测撞出来的）：
+    #: runtime 只知道「哪几跳跑完了」，**不知道哪几跳留下了东西**——
+    #: 需求盒的第 1 跳（把句子切碎）也是「成功完成」，
+    #: 可它什么都没留下（碎句只在内存里）；
+    #: 开发盒的第 2 跳（提交代码）也是「成功完成」，
+    #: 可它**留下了一个 commit 和一个分支**。
+    #:
+    #: 两者在 runtime 眼里一模一样，在读者眼里完全不是一回事：
+    #: 后者意味着「现场有残留，要人看（将来的补偿动作处理的就是它）」，
+    #: 前者意味着「什么都没发生，就是挂了」。
+    #:
+    #: **所以这个判断只能由盒子自己做**——它知道哪一跳动了真实世界。
+    #: runtime 只负责照着声明判：链没走完 + 有跳留下了东西 → partially_completed，
+    #: 否则 → failed。
+    leaves_artifact: bool = Field(
+        default=False,
+        description=(
+            "这一跳成功后会留下产物或副作用（提交、部署、落库、造数据…）。"
+            "留了东西 → 链没走完时是「部分完成」；没留 → 是「失败」。"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_resource(self) -> "Operation":

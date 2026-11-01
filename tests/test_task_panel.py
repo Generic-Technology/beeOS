@@ -304,6 +304,31 @@ def test_the_status_badge_lives_on_the_box_cards():
     )
 
 
+def test_the_failed_state_says_whether_anybody_picked_it_up():
+    """**failed 有两个来源**，文案必须分开说
+
+    履约层落 `failed` 现在有两种情况：
+    - op 跑挂了（没成）
+    - 判据没过、又**没人接**（没成，但没人管）
+
+    两种都写「跑挂了」，读者会去查代码——
+    而真相是「合同里没人接这一件」，查代码查不出来。
+    """
+    pill = _js_function("boxStatePill")
+    label = _js_function("runStateLabel")
+    for fn in (pill, label):
+        assert "跑挂了" in fn, "op 跑挂的说法没了"
+        assert "没交付·没人管" in fn, (
+            "「判据没过又没人接」的说法没了——"
+            "读者会以为这次是跑挂的，去查代码"
+        )
+    # 判据没过又说「交付了」，就是造假信号
+    assert "交付了" in pill and "交付了" in label
+    assert "交付了" not in pill.split("acc === 'rejected'")[0], (
+        "「交付了」不能挂在判红那一支上"
+    )
+
+
 def test_the_topology_view_is_not_used_for_a_task():
     """选了任务不画拓扑：拓扑画的是域的接线（环），不是这件任务
 

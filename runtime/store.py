@@ -48,6 +48,7 @@ def task_run_to_record(
     acceptance_status: Optional[str] = None,
     rejection_class: Optional[str] = None,
     observed: Optional[dict[str, Any]] = None,
+    acceptance_detail: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """TaskRun → 精简持久化 record"""
     duration_ms = 0
@@ -155,6 +156,15 @@ def task_run_to_record(
         "artifact": artifact,
         "artifact_truncated": artifact_truncated,
         "observed": observed or {},
+        # **逐条判据的明细也落盘**（2026-11-01 补）：
+        # 以前它只活在 trigger 那一瞬间的 HTTP 响应里 → 历史记录里
+        # 查不到「哪条判据没过、实测值是多少」，
+        # 看板的验收栏对旧记录是空的（又一处「算了却看不见」）。
+        # 人要判「这次要不要放行」的时候，更需要它。
+        "acceptance_detail": acceptance_detail or [],
+        # **在等什么**：停在 waiting_external 时，这里是「等谁判、等什么、哪条判据没过」。
+        # 只有状态没有内容 = 读者只看到「在等」，不知道该干什么。
+        "pending_external": task_run.pending_external,
         "error_kind": error_kind,
         "error_reason": error_reason,
         "started_at": task_run.identity.started_at.isoformat() if task_run.identity.started_at else None,
@@ -262,10 +272,12 @@ class TaskRunStore:
         acceptance_status: Optional[str] = None,
         rejection_class: Optional[str] = None,
         observed: Optional[dict[str, Any]] = None,
+        acceptance_detail: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         """追加一条 task run 记录（同步落盘）"""
         record = task_run_to_record(
-            task_run, box_id, acceptance_status, rejection_class, observed
+            task_run, box_id, acceptance_status, rejection_class, observed,
+            acceptance_detail,
         )
         self._cache.append(record)
         # **一次 write 写完整行 + flush + fsync**：
@@ -297,17 +309,45 @@ class TaskRunStore:
         return sorted(records, key=lambda r: r["created_at"], reverse=True)[:limit]
 
     def get_run(self, task_run_id: str) -> Optional[dict[str, Any]]:
-        """按 task_run_id 取单次履约的完整记录（含产出本体）
+        """按 task_run_id 取这次履约的**当前**记录（含产出本体）
 
         找不到返回 None —— 调用方据此回 404。
         这是「引用一次产出」的最小单位：拿到 run_id 就能把当时的产出、
         判据实测值、中止归因一并取回来，不必重放（LLM 腿重放也不等于原来那次）。
+
+        **取最新那条**（2026-11-01 改）：store 是**只追加**的日志，
+        同一个 task_run_id 可能有多条记录——
+        典型的是「停在等判定」之后，人给了判定又追加一条终态。
+        追加式日志里「最新」才是「当前状态」；
+        取第一条的话，被人判完的那次履约还是一副「在等」的样子。
         """
         self.refresh()
+        found = None
         for r in self._cache:
             if r.get("task_run_id") == task_run_id:
-                return r
-        return None
+                found = r
+        return found
+
+    def append_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        """追加一条**已经是 record 形状**的记录（同步落盘）
+
+        **什么时候用**：同一次履约的状态被更新了（人被判定 → 追加终态）。
+        store 是只追加的审计日志，所以更新 = 追加一条新的，
+        旧的那条留在日志里当历史（当时在等什么，那也是事实）。
+
+        **落盘方式跟 `append` 完全一致**：一次 write 写完整行 + flush + fsync。
+        """
+        self._cache.append(record)
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            self._loaded_size = self.path.stat().st_size
+        except OSError:
+            pass
+        return record
 
     def list_by_subject(
         self,

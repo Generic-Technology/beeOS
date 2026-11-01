@@ -35,8 +35,11 @@
 后两条是 **WMS 专属的**：少了它们，一个纯通用的「当库存 > 0 时…」照样前 5 条全绿，
 而盒子挂着 WMS 的招牌。
 
-**4 条例外**：需求数超限 → 升级；`rule_consistency` 为假 → 回滚；
+**5 条例外**：需求集为空 → 不交付；需求数超限 → 升级；`rule_consistency` 为假 → 回滚；
 没有业务负责人 → 不交付；有需求绑不上 WMS 概念 → 升级。
+
+第一条（空需求集）不是「跑挂了」，是**合同说这种情况不交付**——
+没有需求就没有模型可交，履约层落 `rejected`（明确不交付），不是 `failed`（没人管）。
 
 ## 已知盲区（如实声明）
 
@@ -74,7 +77,7 @@ flowchart TB
     T1 --> BL[beeline_wms_design_v1]
 
     Result --> R1[8 acceptance rules]
-    Result --> R2[4 exception rules]
+    Result --> R2[5 exception rules]
 ```
 
 ## 文件

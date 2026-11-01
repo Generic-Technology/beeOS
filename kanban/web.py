@@ -54,6 +54,7 @@ from kanban.trigger import (
     structure_business_text_with_llm,
     trigger_task,
 )
+from runtime.resume import ResumeError, ResumeNotFound, resume_waiting_run
 from runtime.store import TaskRunStore
 
 
@@ -305,6 +306,8 @@ def dashboard_data(
             # 跑完了但判据没过（rejected），跟跑一半挂了（failed），
             # 卡上得能分开说，别都叫「失败」。
             "last_run_state": latest["status"] if latest else None,
+            # 最近那次的 run id——「等判定」的按钮要用它
+            "last_run_id": latest.get("task_run_id") if latest else None,
             "task_run": ({
                 "task_run_id": tr.get("task_run_id"),
                 "status": tr.get("status"),
@@ -743,6 +746,14 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .box-state.bad {{ color: #dc2626; }}
   .box-state.warn {{ color: #b45309; }}
   .box-state.none {{ color: #94a3b8; font-weight: 400; }}
+  /* 等判定时的回答口子（2026-11-01） */
+  .box-state-decide {{ display: inline-flex; gap: 4px; margin-left: 4px; }}
+  .box-state-decide button {{
+    font-size: 10px; padding: 1px 6px; cursor: pointer;
+    border: 1px solid #cbd5e1; border-radius: 4px;
+    background: #fff; color: #334155;
+  }}
+  .box-state-decide button:hover {{ background: #f1f5f9; }}
   .box-state-at {{
     color: #94a3b8; font-weight: 400; font-variant-numeric: tabular-nums;
   }}
@@ -1863,7 +1874,7 @@ function renderTaskList(data) {{
       dots += '<span class="side-task-dot' + (me ? ' is-me' : '') + '"'
         + ' style="background:' + c + '"'
         + ' title="' + esc(b.display_name + (me ? '（当前盒子）' : '')
-        + '：' + (b.status === 'completed' ? '跑完' : '跑挂了')) + '"></span>';
+        + '：' + runStateLabel(b.status, b.acceptance_status)) + '"></span>';
     }}
     const kindLabel = t.kind === 'ops_event' ? '运维' : (t.kind === 'requirement' ? '需求' : '');
     html += '<a class="side-item task-item' + (active ? ' active' : '') + '"'
@@ -2159,6 +2170,19 @@ const MATURITY_DISPLAY = {{
 //   跑完了但判红（rejected）→ 跑完了，判据没过
 //   跑完了且通过（accepted）→ 跑完了，判据也过了
 // 前两个合成一个「失败」，就分不出「代码写不出来」和「写出来了但不对」。
+// **履约层状态的文案**（2026-11-01：状态从 4 个变成 9 个）
+// 「跑完了」和「交付了」是两件事——所以文案分开说，
+// 不把它们合成一个「失败」。
+function runStateLabel(s, acc) {{
+  if (s === 'completed') return (acc === 'accepted') ? '交付了' : '跑完';
+  if (s === 'failed') return (acc === 'rejected') ? '没交付·没人管' : '跑挂了';
+  if (s === 'rejected') return '没交付';
+  if (s === 'partially_completed') return '跑了一半·有残留';
+  if (s === 'waiting_external') return '等判定';
+  if (s === 'retrying') return '重试中';
+  return s || '—';
+}}
+
 function boxStatePill(box) {{
   const tr = box.task_run;
   const state = tr ? tr.status : box.last_run_state;
@@ -2166,19 +2190,69 @@ function boxStatePill(box) {{
   const at = tr ? tr.at : box.last_run_at;
   let cls = 'none', mark = '—', label = '未跑过';
   if (state === 'failed') {{
-    cls = 'bad'; mark = '✕'; label = '跑挂了';
+    // **failed 现在有两个来源**（2026-11-01 口径改了之后）：
+    // - op 跑挂了（没成）
+    // - 判据没过、又没有合同例外说怎么办（**没人管**）
+    //
+    // 两种都写「跑挂了」的话，读者会去查代码，
+    // 而真相是「合同里没人接这一件」——查代码查不出来。
+    if (acc === 'rejected') {{
+      cls = 'warn'; mark = '!'; label = '没交付·没人管';
+    }} else {{
+      cls = 'bad'; mark = '✕'; label = '跑挂了';
+    }}
+  }} else if (state === 'rejected') {{
+    // 履约层说「没交付」——判据没过，合同决定不交付（2026-11-01 起
+    // 履约层的终态 = 交付了没有，不再跟验收层各说各话）
+    cls = 'warn'; mark = '!'; label = '没交付';
+  }} else if (state === 'partially_completed') {{
+    // 链没走完，但**有东西留在现场**（提交 / 部署 / 造的数据）
+    cls = 'warn'; mark = '◐'; label = '跑了一半·有残留';
+  }} else if (state === 'waiting_external') {{
+    // 停在等人判定——得给一个能回答的口子
+    cls = 'warn'; mark = '⏸'; label = '等判定';
+  }} else if (state === 'retrying') {{
+    cls = 'warn'; mark = '↻'; label = '重试中';
   }} else if (state === 'completed') {{
     if (acc === 'rejected') {{
+      // 旧记录（判红发生在「验收不改写履约层」的那段时间）
       cls = 'warn'; mark = '!'; label = '跑完·判红';
     }} else if (acc === 'accepted') {{
-      cls = 'ok'; mark = '✓'; label = '跑完·通过';
+      cls = 'ok'; mark = '✓'; label = '交付了';
     }} else {{
       cls = 'none'; mark = '·'; label = '跑完·未判定';
     }}
   }}
-  return '<span class="box-state ' + cls + '">' + mark + ' ' + label
+  const pill = '<span class="box-state ' + cls + '">' + mark + ' ' + label
     + (at ? '<span class="box-state-at">' + esc(fmtClock(at)) + '</span>' : '')
     + '</span>';
+  // **等人判定时，给一个能回答的口子**：
+  // 停在 waiting_external 的履约，没有这个口子就永远停着。
+  if (state === 'waiting_external') {{
+    const runId = (tr && tr.task_run_id) || box.last_run_id || '';
+    if (runId) {{
+      return pill + '<span class="box-state-decide">'
+        + `<button onclick="decideRun('${{esc(runId)}}','approve')">放行</button>`
+        + `<button onclick="decideRun('${{esc(runId)}}','reject')">不放行</button>`
+        + '</span>';
+    }}
+  }}
+  return pill;
+}}
+
+// **人在等一次判定时的回答口子**（2026-11-01）
+// 放行**不会**把没过的那条判据抹掉——记录里写清「这条是人工放行的、谁放的」。
+function decideRun(runId, decision) {{
+  const note = window.prompt('判定说明（会记进这次履约的档案）', '');
+  if (note === null) return;
+  fetch('/api/runs/' + encodeURIComponent(runId) + '/decision', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{decision: decision, note: note}}),
+  }}).then(r => r.json()).then(d => {{
+    if (d && d.error) {{ window.alert('判定没生效：' + d.error); return; }}
+    location.reload();
+  }}).catch(e => window.alert('判定没生效：' + e));
 }}
 
 // ===== 门牌上的接线一行 =====
@@ -4272,7 +4346,9 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in ("/api/trigger", "/api/structure"):
+        if parsed.path not in ("/api/trigger", "/api/structure") and not (
+            parsed.path.startswith("/api/runs/") and parsed.path.endswith("/decision")
+        ):
             self.send_error(404)
             return
 
@@ -4281,6 +4357,41 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             self._send_json(400, {"error": "invalid JSON body"})
+            return
+
+        if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/decision"):
+            # **人在等一次判定时，给他一个能回答的口子**（2026-11-01）
+            #
+            # 为什么要有这个：queen 的 escalate 决策说「要人看」的时候，
+            # 这次履约会停在 `waiting_external`——**停在半路等人**。
+            # 没有这个口子，它就永远停着（比直接拒绝还糟：
+            # 读者看到一个永远不动的任务）。
+            #
+            # **判定要留痕**：`approve`（放行）不会把没过的那条判据抹掉——
+            # 记录里写清「这条是人工放行的、谁放的、为什么」。
+            # 「人放行了」和「判据过了」是两件事。
+            task_run_id = parsed.path[len("/api/runs/"):-len("/decision")]
+            decision = str(body.get("decision") or "").strip().lower()
+            note = str(body.get("note") or "").strip()
+            try:
+                record = resume_waiting_run(
+                    self.store, task_run_id, decision, note,
+                    decided_by=str(body.get("decided_by") or "human"),
+                )
+            except ResumeNotFound as e:
+                # **没有这次履约**（404）跟「有，但此刻不接受回答」（409）
+                # 是两回事——前者是 id 写错了，后者是时机不对。
+                self._send_json(404, {"error": str(e)})
+                return
+            except ResumeError as e:
+                self._send_json(409, {"error": str(e)})
+                return
+            self._send_json(200, {
+                "task_run_id": task_run_id,
+                "status": record.get("status"),
+                "acceptance_status": record.get("acceptance_status"),
+                "human_decision": record.get("human_decision"),
+            })
             return
 
         if parsed.path == "/api/structure":

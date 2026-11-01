@@ -197,7 +197,11 @@ class TestIntakeRejectsBeforeFulfillment:
                 "set_id": "s1", "business_goal": "wms", "requirements": []}},
             store,
         )
-        assert r["status"] == "completed"
+        # **履约层的状态现在说「没交付」**（2026-11-01 产品决定）：
+        # 以前这里是 completed —— 一次没交付的履约，履约层写着「跑完了」，
+        # 判据在验收层、交付在履约层，两层各说各话。
+        # 现在履约层的终态 = 交付了没有。
+        assert r["status"] == "rejected"
         assert r["acceptance_status"] == "rejected"
         assert r["rejection_class"] == "empty_input"
         # 这次投料真的履约了，所以留下记录
