@@ -272,6 +272,33 @@ def test_readme_has_no_hardcoded_test_count() -> None:
         for hit in _STALE_COUNT.findall(line):
             bad.append(f"README.md:{lineno}: 「{hit.strip()}」——测试规模不许写死数字")
     assert not bad, "\n".join(bad)
+
+
+# 盒子数量也是同一类数字：它由「仓里注册了几只盒子」决定，
+# 而盒子是**会长的**（脚手架接一个新域就是加一只）。
+# 写死的那一刻就开始过期，而过期的不是数字、是文档在骗人。
+_STALE_BOX_COUNT = re.compile(r"\d+\s*只(?:盒子|盒)\b")
+
+
+def test_readme_has_no_hardcoded_box_count() -> None:
+    """根 README 不许写死「N 只盒子」
+
+    **为什么盯根 README 这一份**：它是脚手架会改的那一份
+    （`scripts/new_box.py --apply` 往盒子清单表里加一行）。
+    加一只盒子就要同步改一处写死的数字 = 把「加盒子」这件事
+    变成「改产品 + 还守卫的债」。
+
+    根 README 改成「**全部已注册**（清单见下表）」：
+    清单就在下面一行，数字是**推导**出来的，不必抄。
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    bad: list[str] = []
+    for lineno, line in enumerate(readme.splitlines(), 1):
+        for hit in _STALE_BOX_COUNT.findall(line):
+            bad.append(f"README.md:{lineno}: 「{hit.strip()}」——盒子数量不许写死")
+    assert not bad, "\n".join(bad)
+
+
 def _box_facts() -> dict[str, tuple[int, int]]:
     """目录 → (判据条数, 例外条数)。按目录读 definition，不靠目录名猜。"""
     facts: dict[str, tuple[int, int]] = {}

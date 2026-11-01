@@ -115,6 +115,7 @@ def test_a_scope_spanning_two_domains_has_no_field_map():
     assert m.center is None
     assert not m.drawable
     assert "多个域" in m.reason
+    assert m.reason_code == "cross_domain"
     # 盒子还是列出来：「这个范围里有哪几只盒子」是事实，缺的只是 Map
     assert set(m.boxes) == {"a", "b", "c", "d"}
 
@@ -156,6 +157,97 @@ def test_a_cyclic_handoff_chain_is_reported_not_guessed():
     assert "成环" in m.reason
     assert "feedback_into" in m.reason, "要说清闭环那条边该声明成什么"
     assert "a" in m.reason and "b" in m.reason, "要点名是哪几只成环"
+
+
+def test_a_branched_domain_is_not_drawn_as_a_ring():
+    """**分叉的域画不出环** —— 而且要说清是哪一对没交接
+
+    拓扑排序对分叉的域照样能排出一个顺序（那是个合法的拓扑序），
+    但那个顺序里相邻的两只可能根本没有交接边——
+    而看板画出来的是「环」，读者会以为相邻就是相连。
+    **画出来的是一张撒谎的图**，所以这里不画。
+    """
+    # a→b→c→d 是主干（d 是汇点）；x 从 b 那里分叉出去（也投给 c）
+    m = derive_field_map("WMS", [
+        _p("a", feeds=["b"]),
+        _p("b", feeds=["c"]),
+        _p("c", feeds=["d"]),
+        _p("d"),
+        _p("x", feeds=["c"]),
+    ])
+    assert not m.drawable
+    assert "不是一条链" in m.reason
+    assert "x" in m.reason or "b" in m.reason, "要点名是哪一对没交接"
+
+
+def test_a_proper_chain_is_still_drawn():
+    """**一条真正的链照旧画得出来**（这条新判断不许误伤）"""
+    m = derive_field_map("WMS", [
+        _p("a", feeds=["b"]),
+        _p("b", feeds=["c"]),
+        _p("c", feeds=["d"]),
+        _p("d"),
+    ])
+    assert m.drawable, m.reason
+    assert m.center == "d"
+    assert m.reason == ""
+
+
+def test_the_verdict_is_machine_readable_not_just_a_sentence():
+    """`reason` 是给人读的一句话；**判定码**是给程序用的
+
+    为什么要有码：「域还小」和「接线坏了」在 `reason` 里是两句不同的话，
+    但程序不能靠认句子来判断——脚手架要区分：
+    接一个**新域**的第一只盒子时，域里就一只，画不出环是**正常状态**，
+    不该因此拒绝；分叉 / 成环 / 两个汇点才是真的坏了。
+
+    所以判定码必须是**结构化**的：脚手架读它，不读那句人话。
+    """
+    ok = derive_field_map("WMS", [
+        _p("a", feeds=["b"]),
+        _p("b", feeds=["c"]),
+        _p("c", feeds=["d"]),
+        _p("d"),
+    ])
+    assert ok.reason_code == "ok"
+
+    # **新域的第一只盒子**：域还小，不是接线坏了
+    small = derive_field_map("QA", [_p("only_one")])
+    assert not small.drawable
+    assert small.reason_code == "too_small", (
+        f"一只盒子的域该判 too_small，实际 {small.reason_code}"
+    )
+
+    branched = derive_field_map("WMS", [
+        _p("a", feeds=["b"]),
+        _p("b", feeds=["c"]),
+        _p("c", feeds=["d"]),
+        _p("d"),
+        _p("x", feeds=["c"]),
+    ])
+    assert branched.reason_code == "not_a_chain"
+
+    cyclic = derive_field_map("WMS", [
+        _p("a", feeds=["b"]),
+        _p("b", feeds=["a"]),
+        _p("c", feeds=["d"]),
+        _p("d"),
+    ])
+    assert cyclic.reason_code == "cycle"
+
+    two_sinks = derive_field_map("WMS", [
+        _p("a", feeds=["b"]),
+        _p("b"),
+        _p("c", feeds=["d"]),
+        _p("d"),
+    ])
+    assert two_sinks.reason_code == "multiple_sinks"
+
+    # 判定码和 reason 要**对得上**：不能有码而没话，也不能有话而没码
+    for m in (ok, small, branched, cyclic, two_sinks):
+        assert bool(m.reason) == (m.reason_code != "ok"), (
+            f"{m.domain}: reason={m.reason!r} / code={m.reason_code!r} 对不上"
+        )
 
 
 # ---------- 它是一个结构，不只是一张图 ----------

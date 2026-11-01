@@ -39,19 +39,22 @@ from tests.fixtures.sample_box.beeline import get_beeline as get_sample_beeline
 from boxes.wms_design import get_definition as get_mod_def
 from boxes.wms_design.beeline import get_beeline as get_mod_beeline
 
-# 看板盒子名单 = 注册表按业务流向排出来的那一串。
-# 手抄进各个测试会漂：加一只盒子就得改 N 处，漏一处就是一条假绿。
-# 这里钉一次，各处共用；真正要盯「顺序对不对」的地方仍单独断言。
-FLOW_ORDER = [
-    "receipt_capture_box",    # 费用报销线，独立于 WMS 域
-    "wms_requirement_box",
-    "wms_design_box",
-    "wms_development_box",
-    "wms_testing_box",
-    "wms_ops_box",
-    "wms_analysis_box",       # 线上效果分析：接运维的实测，回头验需求
-    "wms_system_box",        # WMS 生命周期链的终点
-]
+def _registry_roster() -> list[str]:
+    """看板名册 = 注册表按业务流向排出来的那一串（**从注册表推**，不手抄）
+
+    **为什么不能手抄**：手抄的那份是**第二份事实**。
+    仓里多一只盒子（一次再正常不过的产品变化）那份抄的就过期了，
+    而红的不是它，是「名册该从注册表来」这条守卫——
+    改产品的人不该替守卫还债。
+
+    真发生过：脚手架接一个新域（= 加一只盒子），
+    4 条看板守卫一起红，红的却是一条「手抄的名单」。
+    名册是**机械事实**（注册表里有哪些盒子），
+    产品事实（WMS 链长什么样）另有守卫钉着，不该混在一起。
+    """
+    from kanban.trigger import order_boxes_by_flow, registered_box_ids
+
+    return order_boxes_by_flow(registered_box_ids())
 
 
 def _find_free_port() -> int:
@@ -211,7 +214,7 @@ class TestDashboardData:
         # 名单是注册表（7 只都在），运行记录只影响计数。
         data = dashboard_data(store)
         assert data["metrics"]["total"] == 2
-        assert data["boxes"] == FLOW_ORDER
+        assert data["boxes"] == _registry_roster()
         # 过滤 mod
         data_mod = dashboard_data(store, box_filter=mod_def.id)
         assert data_mod["metrics"]["total"] == 2
@@ -252,7 +255,7 @@ class TestDashboardData:
         stats = dashboard_data(store)["box_stats"]
         # 所有注册盒子都在，哪怕只有 1 只跑过——「没跑过」读成 0 次运行，
         # 不是读成不存在。未注册的盒子不在名单里。
-        assert [s["box_id"] for s in stats] == FLOW_ORDER
+        assert [s["box_id"] for s in stats] == _registry_roster()
         assert all(s["total"] == 0 for s in stats if s["box_id"] != mod_def.id), (
             "没跑过的盒子也该有统计条目，只是计数为 0"
         )
@@ -331,7 +334,7 @@ class TestKanbanServer:
         # 「没跑过」该读成 0 次运行，不是读成不存在。
         # 顺序 = WMS 生命周期链 + 费用报销线。
         # 传 set 会让同层顺序随进程哈希随机化变，所以这里必须是稳定顺序。
-        assert data["boxes"] == FLOW_ORDER
+        assert data["boxes"] == _registry_roster()
         assert data["box_filter"] is None
         conn.close()
 
@@ -887,30 +890,54 @@ class TestTheRosterComesFromTheRegistry:
         )
 
     def test_the_names_land_in_flow_order(self):
-        """钉住具体顺序：同层按 box_id 字母序，有上游的垫后
+        """名册按**流程**排：谁把产出投给谁，谁就在前面
 
-        只测「set == list」不够——那两条完全乱序也会一起变。
-        业务流向（WMS 生命周期：需求 → 设计 → 开发 → 测试 → 运维 → 分析
-        → 系统档案）必须真的体现在顺序里。
+        **问性质，不钉名单**：钉名单 = 第二份事实（仓里多一只盒子就过期）。
+        改成问两件从 placement 推得出、又能真正逮住回退的事：
+
+        ① 每条已声明的交接边，上游都排在下游前面
+        ② 同层（没有上游的）按 box_id 字母序
+
+        ① 对**按字母序排**立刻红：analysis 按字母排在 requirement 前面，
+        而链上 requirement 在前。
+        ② 对**同层乱序**立刻红。
+        WMS 链本身的结构（哪只接哪只）由
+        `tests/test_wms_requirement_box.py::TestFeedInto` 钉着——
+        **产品事实归产品事实的守卫**，名册是机械事实，不混在一起。
 
         分析盒在这条链上，但它**反馈**给需求盒那条边不进排序：
         闭环塞进线性列表就成环，而成环时 `order_boxes_by_flow` 会
         静默按原顺序收尾。反馈由 domain_layout 单独处理。
         """
-        from kanban.trigger import order_boxes_by_flow, registered_box_ids
+        from kanban.trigger import (
+            BOX_REGISTRY,
+            order_boxes_by_flow,
+            registered_box_ids,
+        )
 
-        assert order_boxes_by_flow(registered_box_ids()) == [
-            # 无上游 → 同层最前，按 box_id 字母序
-            "receipt_capture_box",
-            "wms_requirement_box",
-            # 每一环都被上一环挡住，必须严格垫后
-            "wms_design_box",
-            "wms_development_box",
-            "wms_testing_box",
-            "wms_ops_box",
-            "wms_analysis_box",
-            "wms_system_box",          # 全链的终点
+        order = order_boxes_by_flow(registered_box_ids())
+        pos = {b: i for i, b in enumerate(order)}
+
+        def _feeds_into(box_id: str) -> list[str]:
+            return list(BOX_REGISTRY[box_id][0]().placement.feeds_into)
+
+        # ① 上游必须在下游前面
+        violations = [
+            f"{box_id} → {target}"
+            for box_id in order
+            for target in _feeds_into(box_id)
+            if target in pos and pos[target] < pos[box_id]
         ]
+        assert not violations, f"名册顺序没按流程：{violations}"
+
+        # ② 同层按 box_id 字母序
+        roots = [
+            b for b in order
+            if not any(b in _feeds_into(other) for other in order)
+        ]
+        assert roots == sorted(roots), (
+            f"没有上游的那些盒子该按字母序排：{roots}"
+        )
 
 
 class TestTheFlatGridStaysScannable:

@@ -54,6 +54,18 @@ class BeeBoxMap:
     `reason` 为空 = Map成立；非空 = **画不出来**，原因写在这里。
     跨域、没有汇点、汇点不唯一、交接成环——四种情况各有各的原因，
     不合并成一个「画不出来」。
+
+    ## `reason_code`：`reason` 的机器可读版本
+
+    `reason` 是**给人读的一句话**。但程序要判断的是另一件事：
+    「这个域画不出图」到底是**接线坏了**，还是**这个域还太小**？
+
+    - 接线坏了（`no_sink` / `multiple_sinks` / `cycle` / `not_a_chain`）
+      → 谁接谁真的不对，必须有人来改
+    - 域还小（`too_small` / `empty`）→ 接线没错，只是盒子还不够多
+
+    脚手架要靠这个区分：接一个**新域**的第一只盒子时，域里就一只，
+    画不出环是**正常的**（域才刚开），不该因此拒绝。
     """
 
     domain: str
@@ -64,6 +76,8 @@ class BeeBoxMap:
     feeds_center: tuple[str, ...] = ()
     feedback: tuple[tuple[str, str], ...] = ()
     reason: str = ""
+    # 机器可读的判定码：见类文档。空 reason ⇔ "ok"
+    reason_code: str = "ok"
 
     @property
     def drawable(self) -> bool:
@@ -81,8 +95,26 @@ class BeeBoxMap:
             "feeds_center": list(self.feeds_center),
             "feedback": [list(e) for e in self.feedback],
             "reason": self.reason,
+            "reason_code": self.reason_code,
             "drawable": self.drawable,
         }
+
+
+def _broken_adjacency(
+    ring: Sequence[str], handoffs: Sequence[tuple[str, str]],
+) -> tuple[str, str] | None:
+    """环上第一对「相邻却没有交接边」的盒子（没有就返回 None）
+
+    **为什么要有这个判断**：拓扑排序对**分叉**的域照样能排出一个顺序
+    （那是个合法的拓扑序），但顺序里相邻的两只可能根本没有交接边。
+    看板画出来的是环，读者会以为相邻就是相连——**那是撒谎**。
+    """
+    edges = set(handoffs)
+    for i in range(len(ring) - 1):
+        pair = (ring[i], ring[i + 1])
+        if pair not in edges:
+            return pair
+    return None
 
 
 def _topo_within(ids: Sequence[str], edges: Sequence[tuple[str, str]]) -> tuple[list[str], list[str]]:
@@ -157,13 +189,18 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
     ordered, cyclic = _topo_within(ring, edges)
 
     reason = ""
+    reason_code = "ok"
     if center is None:
         if len(ids) < 3:
             reason = f"域内只有 {len(ids)} 只盒子，撑不起环"
+            # **域还小 ≠ 接线坏了**：新域的第一只盒子就在这儿。
+            reason_code = "too_small"
         elif not sinks:
             reason = "域内没有汇点（每只盒子都还有下游）"
+            reason_code = "no_sink"
         else:
             reason = "域内有 " + str(len(sinks)) + " 个汇点，中心不唯一：" + "、".join(sinks)
+            reason_code = "multiple_sinks"
     elif cyclic:
         # 闭环的边声明成 feeds_into 了。主干因此成环，环序排不出来。
         # 不猜：把是哪几只说清楚——不然图上就只是一个顺序不对的环，
@@ -172,6 +209,26 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
             "域内交接边成环（" + "、".join(cyclic) + "）——"
             "闭环那条边应该声明成 feedback_into，不是 feeds_into"
         )
+        reason_code = "cycle"
+    else:
+        broken = _broken_adjacency(ordered, handoffs)
+        if broken:
+            # **环上相邻必须有交接边**。
+            #
+            # 拓扑排序对**分叉**的域照样能排出一个顺序（那是合法的拓扑序），
+            # 但那个顺序里相邻的两只可能根本没有交接边——
+            # 而看板画出来的是「环」，读者会以为相邻就是相连。
+            # **画出来的是一张撒谎的图**，所以这里不画，并把哪一对说清楚。
+            #
+            # 域里应该是一条**线性链**：新盒子要么插在链上，要么自己开一条链。
+            first, second = broken
+            reason = (
+                f"域内不是一条链（{'、'.join(broken)} 之间没有交接边，"
+                "却会画成环上相邻）——"
+                "新盒子要么**插在链上**（接手上一只的下游），"
+                "要么**自己开一条链**"
+            )
+            reason_code = "not_a_chain"
 
     return BeeBoxMap(
         domain=domain,
@@ -182,6 +239,7 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
         feeds_center=feeds_center,
         feedback=tuple(feedback),
         reason=reason,
+        reason_code=reason_code,
     )
 
 
@@ -209,9 +267,12 @@ def field_map_of_scope(
                 "范围横跨多个域，各域流水线互不相干，没有共同汇点——"
                 "硬凑一个中心等于替业务声明一条不存在的拓扑"
             ),
+            reason_code="cross_domain",
         )
     if not domains:
-        return BeeBoxMap(domain=scope, reason="这个范围里没有盒子")
+        return BeeBoxMap(
+            domain=scope, reason="这个范围里没有盒子", reason_code="empty",
+        )
     domain = domains[0]
     ids = scopes[domain]
     return derive_field_map(

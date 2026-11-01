@@ -62,7 +62,7 @@ flowchart TB
     ExternalSystem（含 DAG 校验）
   - `metrics.py` — 指标计算契约
 
-- **`boxes/`** — 业务履约盒子（产品层）。**8 只，全部已注册**
+- **`boxes/`** — 业务履约盒子（产品层）。**全部已注册**（清单见下表）
   - 每只盒子：`__init__.py` / `schemas.py` / `definition.py` / `runner.py`
     / `measure.py` / `beeline.py` / `README.md`
 
@@ -102,6 +102,7 @@ flowchart TB
 - **`scripts/`** — 部署与校验
   - `deploy.sh` — 部署上线（同步 → 重启服务 → 线上自检）
   - `run_chain.py` — 端到端串跑多只盒子
+  - `new_box.py` — 造一只合规的新盒子（接新域只写业务，不写样板）
   - `verify_mermaid.py` — 文档里的 mermaid 块渲染校验
   - `standardization_audit.py` — 标准化审计
 
@@ -125,7 +126,7 @@ flowchart TB
 flowchart LR
     Done[已完成]
     Done --> S1[Definition + beeline + TaskRun 顶层数据]
-    Done --> S2[8 只盒子注册进 BOX_REGISTRY 全部 live]
+    Done --> S2[盒子注册进 BOX_REGISTRY]
     Done --> S3[盒间接力通道 + ref 深校验]
     Done --> S4[开发盒按方案生成代码 判据跑外部神谕]
     Done --> S5[测试盒真实例真单据流四种结论分开]
@@ -138,7 +139,7 @@ flowchart LR
 > 测试规模：**千条量级**。真实条数以 `.venv/bin/python -m pytest tests/ -q` 报的为准——
 > 本文不写死数字（写死的数字必然过期，仓库里有一条守卫专门盯着这件事）。
 
-WMS 域 8 只盒子已串成一条可运行的链：
+WMS 域的盒子已串成一条可运行的链：
 
 ```
 需求捕获 → 仓储建模 → 代码生成 → 场景验证 → 运维核对 → 效果分析
