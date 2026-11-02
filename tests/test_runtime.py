@@ -504,27 +504,70 @@ class TestEndToEnd:
         assert "completed" in status_changes
 
     def test_queen_escalation_handler_basic(self):
+        """盒子说「升级给人看」→ runtime 的决策词必须是 `human_review`
+
+        **为什么改（2026-11-01）**：以前这里断言的是 `queen.escalate_to_human`。
+        那个词**验收层不认识**——验收层认 `human_review`，
+        两套词各说各话，于是 escalate 永远落 `rejected`，
+        **`waiting_external` 一次都没被走到过**。
+
+        决策词表现在只有三个（human_review / auto_resolve / observe_only），
+        盒子的 action（`escalate_to_human`）由 runtime 映射过来。
+        """
         task_run = create_task_run("o", "i", "c", "r", "b", 1, "rt", "in")
-        task_run.result = {"refund_amount": 600}
+        # 字段名是**盒子自己的**——runtime 不认识它，只管求值。
+        task_run.result = {"amount": 600}
 
         queen_rules = {
             "exception_handling": {
                 "escalation_rules": [
-                    {"trigger": "refund_amount > 500", "action": "escalate_to_human"},
+                    {"trigger": "amount > 500", "action": "escalate_to_human"},
                 ],
             },
         }
         decision = default_queen_escalation_handler(task_run, [], queen_rules)
-        assert decision == "queen.escalate_to_human"
+        assert decision == "human_review"
 
     def test_queen_escalation_no_rule_match(self):
+        """没命中任何升级规则 → **仍然交给人看**
+
+        **为什么改了（2026-11-01）**：以前这里断言 `auto_resolve`
+        ——「没规则 = 不升级 = 直接拒掉」。
+
+        可盒子的例外写的是 `action="escalate"`，而每一条 escalate 例外
+        在盒子里的注释都是「升级人工」「送人」——**升级的意思就是交给人看**。
+        按旧口径，一次 escalate 会变成**没人看的拒绝**：
+        读者看到「没交付」，却没人被叫来。
+
+        现在：Queen 只能**按盒子明说的**降级（`auto_resolve` / `observe_only`），
+        自己不许决定「这事不用人看」。
+        """
         task_run = create_task_run("o", "i", "c", "r", "b", 1, "rt", "in")
-        task_run.result = {"refund_amount": 100}
+        task_run.result = {"amount": 100}
 
         queen_rules = {
             "exception_handling": {
                 "escalation_rules": [
-                    {"trigger": "refund_amount > 500", "action": "escalate_to_human"},
+                    {"trigger": "amount > 500", "action": "escalate_to_human"},
+                ],
+            },
+        }
+        decision = default_queen_escalation_handler(task_run, [], queen_rules)
+        assert decision == "human_review"
+
+    def test_the_queen_may_downgrade_only_when_the_box_says_so(self):
+        """**盒子明说「这个我自动解决」→ 才不升级**
+
+        这是 Queen 唯一的降级权：它不能自己决定不升级，
+        但盒子可以把某条情况声明成 `auto_resolve`。
+        """
+        task_run = create_task_run("o", "i", "c", "r", "b", 1, "rt", "in")
+        task_run.result = {"amount": 100}
+
+        queen_rules = {
+            "exception_handling": {
+                "escalation_rules": [
+                    {"trigger": "amount < 200", "action": "auto_resolve"},
                 ],
             },
         }

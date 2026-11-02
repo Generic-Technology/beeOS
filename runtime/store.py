@@ -165,6 +165,9 @@ def task_run_to_record(
         # **在等什么**：停在 waiting_external 时，这里是「等谁判、等什么、哪条判据没过」。
         # 只有状态没有内容 = 读者只看到「在等」，不知道该干什么。
         "pending_external": task_run.pending_external,
+        # **Queen 这次做了什么决策**（设计文档 §3.4.7：决策可追溯、可复盘）。
+        # 有值时，读者能分清「合同说「不交付」」和「queen 判了不用人看」。
+        "policy_decision": task_run.policy_decision,
         "error_kind": error_kind,
         "error_reason": error_reason,
         "started_at": task_run.identity.started_at.isoformat() if task_run.identity.started_at else None,

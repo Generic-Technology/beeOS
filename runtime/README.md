@@ -90,6 +90,38 @@ flowchart TB
 「明确不交付」和「没人管」是两回事：前者有人做了决定，后者是没人接。
 判据没过又没有合同例外说怎么办 → 就是 `failed`，别写成 `rejected`。
 
+## Queen 决策层：升级 = 交给人
+
+**Queen 的权力来自盒子自己的声明**，runtime 只做通用求值——runtime 不认识任何业务。
+
+| 环节 | 谁说了算 | 规矩 |
+|---|---|---|
+| **什么时候升级** | **盒子** | 例外里写 `action="escalate"`（这只盒子的事）|
+| **升级之后怎么办** | **Queen** | 在盒子声明的 `queen.rules.exception_handling.escalation_rules` 上求值 |
+| **决策词** | **runtime**（唯一真源 `runtime/models.py`）| 只有三个：`human_review` / `auto_resolve` / `observe_only` |
+| **盒子的 action → 决策词** | runtime 映射 | `escalate_to_human` → `human_review`；不认识的 action → `human_review` + 说清 |
+
+**「升级」默认就是交给人**（2026-11-01 定的口径）：
+没命中任何 Queen 规则时，决策是 `human_review`（停在 `waiting_external`），
+不是 `auto_resolve`（直接拒掉）。
+理由：**没人看的拒绝比多问一句更糟**——Queen 只能按盒子明说的降级，
+不许自己决定「这事不用人看」。
+
+以前这里写死了一个业务字段名（`refund_amount >`），
+于是六只盒子声明的升级规则**一条都没被求值过**，
+而全系统**一次都没传过** `queen_decision_fn` → `waiting_external` 一次都没走到过。
+
+**决策可追溯**：Queen 每次决策都记进 `task_run.policy_decision`
+（设计文档 §3.4.7），落盘在记录里：
+
+```python
+{"decision": "human_review", "reason": "规则「x > 1」命中（escalate_to_human）",
+ "triggered_rule": "x > 1", "unusable_rules": ["y > 1（产出里没有「y」这个量）"]}
+```
+
+`unusable_rules` 是**用不上的规则**——条件指向一个产出里没有的量，
+它永远不成立。**不许静默**：读者以为规则在守着，其实它一次都没触发过。
+
 ## Acceptance 4 状态机（独立阶段）
 
 | 状态 | 含义 |

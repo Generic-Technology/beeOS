@@ -84,6 +84,7 @@ from runtime.acceptance import apply_acceptance_to_run
 from runtime.contract import validate_payload
 from runtime.handoff import HandoffError, assemble_handoff
 from runtime.models import TaskRunStatus
+from runtime.queen import QueenDecision, decide_escalation
 from runtime.runner import HandlerRunner
 from runtime.store import TaskRunStore
 
@@ -1175,7 +1176,27 @@ def trigger_task(
     acceptance_passed = []
     acceptance_not_applicable = []
     if task_run.status == TaskRunStatus.COMPLETED:
-        evaluation = evaluate_acceptance(task_run, definition.result)
+        # **Queen 的决策入口在这里**（2026-11-01 补上）：
+        # 以前全系统**一次都没传过** `queen_decision_fn` →
+        # escalate 永远落 rejected → **`waiting_external` 从没被走到过**。
+        #
+        # 决策规则来自**盒子自己的声明**（`definition.queen.rules`），
+        # runtime 只做通用求值——runtime 不认识任何业务词。
+        queen_decisions: list[QueenDecision] = []
+
+        def _queen_decision(tr: Any, failed: list[dict[str, Any]]) -> str:
+            decision = decide_escalation(
+                tr, failed, definition.queen.rules.model_dump(),
+            )
+            queen_decisions.append(decision)
+            return decision.decision
+
+        evaluation = evaluate_acceptance(
+            task_run, definition.result, queen_decision_fn=_queen_decision,
+        )
+        if queen_decisions:
+            # **决策落进 task run**（设计文档 §3.4.7：可追溯、可复盘）。
+            task_run.policy_decision = queen_decisions[0].to_dict()
         # **验收结论落到履约层**（2026-11-01）：
         # 不做这一步，一次「没交付」的履约在履约层写着 completed——
         # 判据在验收层、交付在履约层，两层各说各话。
@@ -1239,6 +1260,11 @@ def trigger_task(
         "acceptance_passed": acceptance_passed,
         "acceptance_not_applicable": acceptance_not_applicable,
         "rejection_class": rejection_class,
+        # **停在等判定时，等的是什么**（谁判、等什么、哪条判据没过）。
+        # 只有状态没有内容 = 读者只看到「在等」，不知道该干什么。
+        "pending_external": task_run.pending_external,
+        # **Queen 这次做了什么决策**（可追溯、可复盘；设计文档 §3.4.7）
+        "policy_decision": task_run.policy_decision,
         # 产出自描述：这只盒子声明的展示形态 + 结果类型。
         # 消费方（看板渲染器、将来的 API 调用方）据此知道该拿哪种视图，
         # 不需要去猜 result 里有没有某个字段。猜错会渲染成另一种形状还不报错。

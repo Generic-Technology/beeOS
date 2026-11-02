@@ -788,6 +788,22 @@ task run 在 instance 内的完整执行流程。
 > Queen = "在履约合同内做运维决策的智能体"，不是"无限制的运维 Agent"。
 > Queen 的权力来自 beeBox owner 的定义 + 授权，queen 永远不会越权（不能改 contract / acceptance / release / policy）。
 
+**升级（escalate）的口径**（2026-11-01 定）：
+
+| 环节 | 谁说了算 | 规矩 |
+|---|---|---|
+| **什么时候升级** | **盒子** | 例外里写 `action="escalate"` |
+| **升级之后怎么办** | **Queen** | 在盒子声明的 `queen.rules.exception_handling.escalation_rules` 上求值 |
+| **决策词** | **runtime**（唯一真源 `runtime/models.py`）| `human_review` / `auto_resolve` / `observe_only` |
+| **盒子的 action → 决策词** | runtime 映射 | `escalate_to_human` → `human_review`；不认识的 action → `human_review` + 说清 |
+
+**「升级」默认就是交给人**：没命中任何升级规则时，决策是 `human_review`
+（履约停在 `waiting_external`），不是 `auto_resolve`（直接拒掉）。
+**没人看的拒绝比多问一句更糟**——Queen 只能按盒子明说的降级，
+不许自己决定「这事不用人看」。
+
+**runtime 不含业务知识**：升级规则由**盒子**声明（条件写在盒子自己的产出字段上），
+runtime 只做通用条件求值——它不认识什么是库区 / 拣货 / 收据。
 **审计**：Queen 每次决策都记录到 task run.policy_decision 字段（§2.4 12 字段之一），决策可追溯、可复盘。
 
 ---

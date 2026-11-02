@@ -894,10 +894,12 @@ class TestAcceptanceGate:
                 {"action": "订单是核心实体", "trace_to": "sent_2"},
             ]},
         )
-        # 这次验收没过（模型只给了一个节点，覆盖率不到 100），
-        # 所以履约层的终态是「没交付」——这是 2026-11-01 改的：
-        # 履约层的状态要说「交付了没有」，不能跟验收层各说各话。
-        assert r["status"] == "rejected"
+        # 这次验收没过（模型只给了一个节点，覆盖率不到 100）。
+        # 履约层的终态要说「交付了没有」——
+        # 而这次**停在等判定**：覆盖率低于 50 触发了盒子的 escalate 例外，
+        # 而**升级的意思就是交给人看**（2026-11-01 定的口径）。
+        # 以前这里是 rejected：一次没人看的拒绝。
+        assert r["status"] == "waiting_external", r["status"]
         assert "verify_graph_fidelity" in [s["op_id"] for s in r["op_trace"]]
         # beeline 里没有 acceptance op——判定是 execute() 之后单独调的
         assert not any("accept" in s["op_id"] for s in r["op_trace"])

@@ -104,6 +104,10 @@ trigger=(
         result_schema="schema_requirement_set_package",
         view="flow_graph",
         description="结构化业务需求集 + 4 项抽取验证证据",
+        # **我的投料条数叫 requirement_count**（2026-11-01）：
+        # runtime 的「投料是空的」归因以前写死了一个字段名——
+        # 业务知识漏进内核。现在由盒子自己声明，runtime 按合同办事。
+        empty_input_metric="requirement_count",
 
         acceptance=[
             AcceptanceRule(metric="contract_compliance", op="eq", value=True),

@@ -94,14 +94,34 @@ def assemble_handoff(
             raise HandoffError(
                 f"handoff {field_name!r} 指向的上游履约 {run_id!r} 找不到"
             )
-        if record.get("status") == "failed":
-            # **带上失败原因**：只说「失败了」等于让下游的人去猜。
-            # 上游已经知道为什么不接（op 的错误文本），不传下来就是
-            # 「算了却看不见」——链路断在哪儿只能靠猜。
+        # **上游必须跑完了，接过来的产出才作数**（2026-11-01 补齐）。
+        #
+        # 以前只挡 `failed`。可履约层现在有 9 个状态，
+        # 其中好几个的产出**同样不该被下游消费**：
+        # - `waiting_external`：还在等人判定——结论还没定
+        # - `partially_completed`：跑了一半，现场有残留
+        # - `rejected`：合同明确说了不交付
+        # - `triggered` / `running`：还没跑完
+        #
+        # 只挡 failed 的话，等判定的产出会被悄悄接给下游——
+        # 下游拿到的其实是**一份还没定稿的东西**。
+        upstream_status = str(record.get("status") or "")
+        if upstream_status != "completed":
+            # **带上原因**：只说「失败了」等于让下游的人去猜。
+            # 上游已经知道为什么不接（op 的错误文本、等人判定的事实），
+            # 不传下来就是「算了却看不见」——链路断在哪儿只能靠猜。
             reason = str(record.get("error_reason") or "").strip()
             detail = f"：{reason}" if reason else ""
+            why = {
+                "failed": "失败了",
+                "waiting_external": "还在等人判定（结论还没定）",
+                "partially_completed": "只跑了一半（现场有残留）",
+                "rejected": "合同明确说了不交付",
+                "triggered": "还没开始跑",
+                "running": "还在跑",
+            }.get(upstream_status, f"状态是 {upstream_status!r}")
             raise HandoffError(
-                f"handoff {field_name!r} 指向的上游履约 {run_id!r} 失败了{detail}，"
+                f"handoff {field_name!r} 指向的上游履约 {run_id!r} {why}{detail}，"
                 f"接过来的产出不可信"
             )
         artifact = record.get("artifact")

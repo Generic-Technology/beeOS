@@ -620,12 +620,17 @@ class TestTriggerApi:
 
     def test_trigger_rejected_flow(self, server_url: tuple[str, TaskRunStore],
                                    stub_llm):
-        """履约跑完了但验收没过 → 履约层说「没交付」+ 验收层 rejected
+        """履约跑完了但验收没过 → **停在等判定** + 验收层 rejected
 
-        **为什么履约层不是 completed**（2026-11-01 产品决定）：
-        判据在验收层、交付在履约层，两层各说各话的话，
-        读者看到「completed + rejected」根本不知道这次到底成没成。
-        现在履约层的终态 = 交付了没有。
+        **为什么履约层不是 completed、也不是 rejected**（2026-11-01 产品决定）：
+        - 不是 completed：判据在验收层、交付在履约层，
+          履约层的终态要说「交付了没有」，不能各说各话。
+        - 也不是 rejected：这次投料里的需求**一条都绑不上 WMS 概念**，
+          盒子的例外写的是 `action="escalate"`——
+          **升级的意思就是交给人看**（是投料错了，不是建模失败）。
+          直接拒掉就是一次**没人看的拒绝**：读者看到「没交付」，却没人被叫来。
+
+        所以这次履约停在 `waiting_external`，等人给判定。
         """
         url, _ = server_url
         status, data = self._post(url, {
@@ -640,8 +645,12 @@ class TestTriggerApi:
             }},
         })
         assert status == 200
-        assert data["status"] == "rejected"
+        assert data["status"] == "waiting_external", data["status"]
         assert data["acceptance_status"] == "rejected"
+        # 等的是谁、等什么——只有状态没有内容，读者不知道该干什么
+        assert data["pending_external"]["kind"] == "acceptance_decision"
+        # 决策可追溯（设计文档 §3.4.7）
+        assert data["policy_decision"]["decision"] == "human_review"
 
     def test_removed_box_not_triggerable(self, server_url: tuple[str, TaskRunStore]):
         """未注册 = trigger 拒收

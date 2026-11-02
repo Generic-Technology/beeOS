@@ -97,6 +97,10 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
         type="business_design_produced",
         result_schema="schema_business_design_package",
         view="ddd_design",
+        # **我的投料条数叫 requirement_count**（2026-11-01）：
+        # runtime 的「投料是空的」归因以前写死了一个字段名——
+        # 业务知识漏进内核。现在由盒子自己声明，runtime 按合同办事。
+        empty_input_metric="requirement_count",
         acceptance=[
             AcceptanceRule(
                 metric="requirement_coverage",
@@ -219,12 +223,29 @@ WMS_DESIGN_BOX = BeeBoxDefinition(
                 },
             },
             exception_handling={
+                # **无条件的策略声明**——runtime 不参与决策（它不知道
+                # 「什么时候用」：没有条件）。它们描述的是**这只盒子自己的行为**
+                # （追不到 trace 就自己推断、分类拿不准就归最像的那类）。
+                #
+                # **注意**：这里说「规则矛盾 → 送人看」，
+                # 而下面的**例外**写的是「`rule_consistency == false` → 回滚」。
+                # 同一件事两种说法——**这是盒子的业务决定，不是 runtime 该裁的**。
+                # 现状：回滚补偿还没做，所以那条路暂时落「不动」，
+                # 送人看的那条由升级默认口径兜住（升级 = 交给人）。
                 "rule_conflict_resolution": "flag_for_human_review",
                 "missing_trace_target": "auto_infer_from_description",
                 "ambiguous_classification": "assign_to_most_likely_type",
                 "escalation_rules": [
                     {"trigger": "requirement_count > 1000", "action": "escalate_to_human"},
-                    {"trigger": "rule_conflicts > 5", "action": "escalate_to_human"},
+                    # **原来这里还有一条 `rule_conflicts > 5`，删掉了**
+                    # （2026-11-01）：这个盒子**从来没算过规则冲突**——
+                    # `rule_conflicts` 恒是空数组，而且只存在于 evidence 里面，
+                    # 不在产出顶层。条件求值时字段根本取不到 →
+                    # 这条规则**一次都不会触发** = 一句空承诺。
+                    #
+                    # 「声明了却拿不到」比不声明更坏：读者以为规则在守着。
+                    # 等盒子真的算出冲突数（rule_consistency 现在还是 mock），
+                    # 再把这条加回来——那时候它才是真的。
                 ],
             },
             continuous_improvement={

@@ -228,8 +228,17 @@ class TestBoxWiring:
             trigger_task(BOX, "capture_receipt", {}, store)
         assert store.list_recent(limit=5) == []
 
-    def test_a_receipt_with_broken_maths_is_rejected(self, monkeypatch):
-        """端到端：判据红 → acceptance rejected（stub LLM，不花钱）
+    def test_a_receipt_with_broken_maths_waits_for_a_human(self, monkeypatch):
+        """端到端：判据红 → **停在等判定**（stub LLM，不花钱）
+
+        **为什么不是 rejected**（2026-11-01 改的）：
+        收据盒对「金额对不上」的例外写的是 `action="escalate"`，
+        而**升级的意思就是交给人看**——账对不上，人来判断是「算错了」
+        还是「照片没拍全」。所以履约停在 `waiting_external`，
+        等人给判定，而不是直接拒掉。
+
+        以前这里是 rejected：一次**没人看的拒绝**——
+        读者看到「没交付」，却没人被叫来。
 
         patch 的是 boxes.receipt.runner 上的名字，不是 runtime.llm：
         runner 里是模块级 from ... import complete_json，
@@ -248,12 +257,13 @@ class TestBoxWiring:
             {"photo": "data:image/jpeg;base64," + base64.b64encode(b"x").decode()},
             store,
         )
-        # **履约层的状态现在说「没交付」**（2026-11-01 产品决定）：
-        # 以前这里是 completed —— 一次没交付的履约，履约层写着「跑完了」，
-        # 判据在验收层、交付在履约层，两层各说各话。
-        # 现在履约层的终态 = 交付了没有。
-        assert r["status"] == "rejected"
+        # 履约层的终态 = 交付了没有；这次**等人给判定** → 停在等判定。
+        assert r["status"] == "waiting_external", r["status"]
         assert r["acceptance_status"] == "rejected"
+        # **等的是谁、等什么**——只有状态没有内容，读者不知道该干什么
+        assert r["pending_external"]["kind"] == "acceptance_decision"
+        # **决策可追溯**（设计文档 §3.4.7）
+        assert r["policy_decision"]["decision"] == "human_review"
         failed = {a["metric"] for a in r["acceptance_detail"] if not a["passed"]}
         assert "line_arithmetic" in failed
         assert "totals_match" in failed

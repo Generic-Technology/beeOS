@@ -32,6 +32,33 @@ from pydantic import BaseModel, Field
 # ============================================================
 
 
+#: **Queen 决策词表**（唯一的真源）
+#:
+#: 只有三个词，**两层共用**（2026-11-01）：
+#: - `human_review`：交给人看 → 履约停在 `waiting_external`
+#: - `auto_resolve`：自己解决 → 不交付
+#: - `observe_only`：只观察
+#:
+#: **为什么要放在这儿**：以前有三套词各说各话——
+#: 盒子说 `escalate_to_human`、runtime 说 `queen.escalate_to_human`、
+#: 验收层认 `human_review`。三套词对不上，决策就传不到履约层，
+#: **`waiting_external` 一次都没被走到过**。
+#:
+#: 盒子那套词（`escalate_to_human`）是**盒子的话**，
+#: 由 runtime 映射过来（见 runtime/queen.py 的 BOX_ACTION_TO_DECISION）；
+#: runtime 自己这套词是**履约层的话**，两层必须同源。
+DECISION_HUMAN_REVIEW = "human_review"
+DECISION_AUTO_RESOLVE = "auto_resolve"
+DECISION_OBSERVE_ONLY = "observe_only"
+
+#: 全部合法决策（守卫用）
+ALL_DECISIONS = (
+    DECISION_HUMAN_REVIEW,
+    DECISION_AUTO_RESOLVE,
+    DECISION_OBSERVE_ONLY,
+)
+
+
 class TaskRunStatus(str, Enum):
     """Task Run 9 状态（履约层）
 
@@ -327,6 +354,18 @@ class TaskRun(BaseModel):
     # - failed_rules：为什么需要人判（哪条判据没过）
     # - decidable_by：谁能判（现在只有 human）
     pending_external: Optional[dict[str, Any]] = None
+    # **Queen 这次做了什么决策**（可追溯、可复盘）
+    #
+    # 设计文档 §3.4.7 要求：「Queen 每次决策都记录到 task run.policy_decision
+    # 字段，决策可追溯、可复盘」。
+    #
+    # 为什么必须落盘：决策会**改变这次履约的走向**
+    # （human_review → 停在等判定；auto_resolve → 直接拒）。
+    # 不记的话，读者看到「这次没交付」，根本分不清是
+    # 「合同说「不交付」」还是「queen 判了不用人看」。
+    # 有值 = 有 QueenDecision.to_dict() 的形状：
+    # decision / reason / triggered_rule / unusable_rules。
+    policy_decision: Optional[dict[str, Any]] = None
     evidence: Evidence = Field(default_factory=lambda: Evidence(
         event_log=EventLog(),
         operations={},

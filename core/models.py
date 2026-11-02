@@ -288,6 +288,24 @@ class ResultDef(BaseModel):
     # 至少如实呈现，而不是掉进某个不相关的专用视图里。
     view: str = "generic"
 
+    # **我这盒子的「投料条数」叫什么**（可空 = 不声明）
+    #
+    # **为什么要有它**（2026-11-01 实测撞出来的）：
+    # runtime 的失败归因里有一条「投料是空的 → EMPTY_INPUT」，
+    # 以前它是**写死一个业务字段名**的：`result.get("requirement_count") == 0`。
+    # 一个**盒子专属的字段名**躺在 runtime 里 = 业务知识漏进内核：
+    # runtime 不该知道哪只盒子管「需求」还是管「单据」。
+    #
+    # 现在由**盒子自己声明**：合同里写清「我的投料条数是哪个 metric」，
+    # runtime 只按名字去读。**知识在盒子里，runtime 只按合同办事。**
+    #
+    # 不声明 = 不参与这条归因（runtime 会用另一条通用口径：
+    # 所有判据的实测值都是空 → 也是「投料没东西」）。
+    empty_input_metric: Optional[str] = Field(
+        default=None,
+        description="投料条数指标的名字（空 = 不声明）",
+    )
+
 
 class QueenAuthorization(BaseModel):
     """履约政策（Policy）：queen 自治授权档位"""

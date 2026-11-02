@@ -18,10 +18,12 @@ runtime.acceptance - Acceptance 阶段评估器
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from core.models import AcceptanceRule, ExceptionRule, ResultDef, is_not_applicable
 from runtime.models import (
+    DECISION_HUMAN_REVIEW,
     AcceptanceEvaluation,
     AcceptanceStatus,
     RejectionClass,
@@ -66,6 +68,123 @@ def _evaluate_rule(rule: AcceptanceRule, result: dict[str, Any]) -> bool | None:
         return actual is not None and rule.value in str(actual)
 
     raise ValueError(f"unknown op: {rule.op}")
+
+
+@dataclass
+class ConditionOutcome:
+    """一条条件的求值结果——**成立 / 不成立 / 用不上 / 为什么**
+
+    **为什么要多一个「用不上」**（2026-11-01 实测撞出来的）：
+    条件引用的字段在产出里根本没有、或者拿数组跟数字比——
+    这两种情况**永远不成立**。以前一律返回 False，
+    于是「规则指向一个盒子根本没算的量」= **静默失效**：
+    读者以为规则在守着，其实它一次都没触发过。
+
+    这种「声明了却拿不到」必须**看得见**，所以求值结果要带原因。
+    """
+    matched: bool
+    usable: bool = True
+    reason: str = ""
+    field: str = ""
+
+
+def evaluate_condition(
+    condition: str, result: dict[str, Any],
+) -> ConditionOutcome:
+    """求值一条条件，**并说清是「不成立」还是「用不上」**
+
+    与 `_evaluate_condition` 的区别只有一个：**带 detail**。
+    求值口径完全一样（同一个函数，`_evaluate_condition` 是它的薄包装）——
+    两套求值口径 = 迟早漂，所以不另写一份。
+    """
+    parts = condition_parts(condition)
+    if not parts:
+        return ConditionOutcome(False, usable=False, reason="条件是空的")
+    if len(parts) > 1:
+        # AND：每一段都要成立。
+        # **每一段都要求值**（不短路）——不然后面某段指向一个不存在的量时，
+        # 这次求值看不出「有一条规则用不上」。
+        outcomes = [evaluate_condition(part, result) for part in parts]
+        unusable = [o for o in outcomes if not o.usable]
+        if unusable:
+            return ConditionOutcome(
+                False, usable=False, reason=unusable[0].reason, field=unusable[0].field,
+            )
+        return ConditionOutcome(all(o.matched for o in outcomes), usable=True)
+
+    cond = parts[0]
+    matches = list(re.finditer(r"(>=|<=|==|!=|>|<)", cond))
+    if not matches:
+        # 裸标识符：一个 op 都匹配不上 → 永不触发。
+        # 这里返回 False 是刻意的（见 _evaluate_rule 的注释），
+        # 所以「有没有 op」必须由守卫提前拦住。
+        return ConditionOutcome(
+            False, usable=False, reason=f"条件里没有比较符：{cond!r}",
+        )
+    if len(matches) > 1:
+        # 一段里塞了两个比较符（多半是漏了 AND）。
+        # 硬跑下去会在比较时抛 TypeError——那会把整个 acceptance 评估
+        # 掀翻，看板上这只盒子直接 500，比规则不触发还糟。
+        # 守卫会提前拦住这种写法，这里只是不让它炸。
+        return ConditionOutcome(
+            False, usable=False,
+            reason=f"一段里塞了两个比较符（多半是漏了 AND）：{cond!r}",
+        )
+    match = matches[0]
+
+    op = match.group(1)
+    field = cond[: match.start()].strip()
+    value = cond[match.end():].strip()
+
+    op_fns = {
+        ">=": lambda a, b: a >= b,
+        "<=": lambda a, b: a <= b,
+        "==": lambda a, b: a == b,
+        "!=": lambda a, b: a != b,
+        ">": lambda a, b: a > b,
+        "<": lambda a, b: a < b,
+    }
+    # 尝试转换 value
+    try:
+        if value in ("true", "false"):
+            value = value == "true"
+        else:
+            value = float(value) if "." in value else int(value)
+    except (ValueError, TypeError):
+        value = value.strip('"').strip("'")
+
+    if field not in result:
+        return ConditionOutcome(
+            False, usable=False,
+            reason=f"产出里没有「{field}」这个量", field=field,
+        )
+    actual = result.get(field)
+    if actual is None:
+        return ConditionOutcome(
+            False, usable=False,
+            reason=f"「{field}」这次是空值（算不出来）", field=field,
+        )
+    try:
+        return ConditionOutcome(bool(op_fns[op](actual, value)), usable=True, field=field)
+    except TypeError:
+        # 类型对不上（比如拿数组跟数字比、拿字符串跟数字比）。
+        # 同样是「这条规则这次用不上」，不是「整个评估崩掉」。
+        return ConditionOutcome(
+            False, usable=False,
+            reason=(
+                f"「{field}」的类型（{type(actual).__name__}）"
+                f"跟 {value!r} 对不上"
+            ),
+            field=field,
+        )
+
+
+def _evaluate_condition(condition: str, result: dict[str, Any]) -> bool:
+    """条件成不成立（只有成立 / 不成立）
+
+    想要「用不上」的原因，用 `evaluate_condition`。
+    """
+    return evaluate_condition(condition, result).matched
 
 
 def _find_exception_rule(
@@ -119,84 +238,27 @@ def condition_fields(condition: str) -> list[str]:
     return fields
 
 
-def _evaluate_condition(condition: str, result: dict[str, Any]) -> bool:
-    """极简 condition 评估（PoC 用）——支持：
-    - "refund_amount > 500"
-    - "customer_tier == enterprise AND severity == critical"
-
-    解析规则集中在 `condition_parts` / `condition_fields`，
-    守卫读的是同一份——见 condition_fields 的说明。
-    """
-    parts = condition_parts(condition)
-    if not parts:
-        return False
-    if len(parts) > 1:
-        return all(_evaluate_condition(part, result) for part in parts)
-
-    cond = parts[0]
-    matches = list(re.finditer(r"(>=|<=|==|!=|>|<)", cond))
-    if not matches:
-        # 裸标识符：一个 op 都匹配不上 → 永不触发。
-        # 这里静默返 False 是刻意的（见 _evaluate_rule 的注释），
-        # 所以「有没有 op」必须由守卫提前拦住。
-        return False
-    if len(matches) > 1:
-        # 一段里塞了两个比较符（多半是漏了 AND）。
-        # 硬跑下去会在比较时抛 TypeError——那会把整个 acceptance 评估
-        # 掀翻，看板上这只盒子直接 500，比规则不触发还糟。
-        # 守卫会提前拦住这种写法，这里只是不让它炸。
-        return False
-    match = matches[0]
-
-    op = match.group(1)
-    field = cond[: match.start()].strip()
-    value = cond[match.end():].strip()
-
-    op_fns = {
-        ">=": lambda a, b: a >= b,
-        "<=": lambda a, b: a <= b,
-        "==": lambda a, b: a == b,
-        "!=": lambda a, b: a != b,
-        ">": lambda a, b: a > b,
-        "<": lambda a, b: a < b,
-    }
-    # 尝试转换 value
-    try:
-        if value in ("true", "false"):
-            value = value == "true"
-        else:
-            value = float(value) if "." in value else int(value)
-    except (ValueError, TypeError):
-        value = value.strip('"').strip("'")
-    actual = result.get(field)
-    if actual is None:
-        return False
-    try:
-        return op_fns[op](actual, value)
-    except TypeError:
-        # 类型对不上（比如拿 int 和一个没转成数字的 str 比）。
-        # 同样是「这条规则这次不适用」，不是「整个评估崩掉」。
-        return False
-
-
 def _classify_failure(
     failed: list[dict[str, Any]],
     result: dict[str, Any],
+    empty_input_metric: Optional[str] = None,
 ) -> RejectionClass:
     """给 REJECTED 归因——区分"投料没东西" / "模型没覆盖" / "规则打架" / 其余结构问题
 
     判据（按优先级，先看是否根本没东西可建）：
     1. 所有失败判据的 actual 都是 None——评测器一个值都没取到，
        说明上游没产出这些量（典型：0 条需求 → 没有任何设计元素 → 没有覆盖率）
-    2. requirement_count == 0——明确没需求
+    2. **盒子声明的投料条数为 0**——明确没投料
+       （字段名由**盒子自己声明**（`ResultDef.empty_input_metric`），
+       runtime 不写死任何一个盒子的字段名——业务知识不进内核）
     3. rule_consistency 判定为 false——规则自相矛盾（优先级高于覆盖率，
        因为规则矛盾时先修规则，补覆盖率没有意义）
     4. 有覆盖率判据失败且取到了具体数值——没覆盖全（判据名含 coverage 即可，
        不同盒子叫法不同：requirement_coverage / source_coverage）
     5. 其余（引用 / 结构 / 指标）
     """
-    # 1 + 2：什么都没取到 / 明确没需求
-    if result.get("requirement_count") == 0:
+    # 1 + 2：什么都没取到 / 明确没投料
+    if empty_input_metric and result.get(empty_input_metric) == 0:
         return RejectionClass.EMPTY_INPUT
     if failed and all(f.get("actual") is None for f in failed):
         return RejectionClass.EMPTY_INPUT
@@ -296,7 +358,9 @@ def evaluate_acceptance(
     # 有 fail：找 exception 规则
     exception = _find_exception_rule(contract.exceptions, result)
 
-    rejection_class = _classify_failure(failed, result)
+    rejection_class = _classify_failure(
+        failed, result, contract.empty_input_metric,
+    )
 
     # 没匹配到 exception：默认 REJECTED
     if exception is None:
@@ -330,12 +394,18 @@ def evaluate_acceptance(
         )
 
     if exception.action == "escalate":
-        # 触发 queen 决策
-        queen_decision = "pending"
+        # **默认交给人**（2026-11-01 改）：
+        # 例外写 `action="escalate"`，而每一条 escalate 例外在盒子里的
+        # 注释都是「升级人工」「送人」——**升级的意思就是交给人看**。
+        #
+        # 以前这里是 `queen_decision = "pending"`，然后不管判成什么
+        # 验收一律 REJECTED → **决策没有牙齿**，而且没人接的拒绝
+        # 比多问一句更糟。现在：没有 queen 决策函数也照样交给人。
+        queen_decision = DECISION_HUMAN_REVIEW
         if queen_decision_fn is not None:
             queen_decision = queen_decision_fn(task_run, failed)
         return AcceptanceEvaluation(
-            status=AcceptanceStatus.REJECTED,  # queen 默认拒绝（人工接管）
+            status=AcceptanceStatus.REJECTED,  # 验收层：没过
             passed_rules=passed,
             failed_rules=failed,
             not_applicable_rules=not_applicable,
@@ -397,7 +467,7 @@ def apply_acceptance_to_run(
     if evaluation.status == AcceptanceStatus.REJECTED:
         if (
             evaluation.exception_action == "escalate"
-            and evaluation.queen_decision == "human_review"
+            and evaluation.queen_decision == DECISION_HUMAN_REVIEW
         ):
             task_run.pending_external = {
                 "kind": "acceptance_decision",
