@@ -69,3 +69,17 @@ class HandlerRunner:
     @property
     def owner(self) -> str:
         return self._owner
+
+    @property
+    def handlers(self) -> dict[str, Handler]:
+        """这张表的**副本**（op.type → 实现）
+
+        **为什么要暴露它**：装配器住在 `core/`，而 `core/` 是底层——
+        「runtime 面向 core 的脚手架执行」，反过来 core 就得 import runtime，
+        底层依赖上层了。所以 core 交出去的是**协议数据**，
+        由盒子的 `runner.py` 把表接到执行器上。
+
+        守卫要拿这张表做装配期回归（拿全部已注册盒子过一遍装配器），
+        就得有个公开的取法——不许去摸 `_handlers`。
+        """
+        return dict(self._handlers)

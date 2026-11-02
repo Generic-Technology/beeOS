@@ -17,10 +17,14 @@ runtime.acceptance - Acceptance 阶段评估器
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
+from core.conditions import (
+    COMPARISON_PATTERN,
+    condition_fields as _condition_fields,
+    condition_parts as _condition_parts,
+)
 from core.models import AcceptanceRule, ExceptionRule, ResultDef, is_not_applicable
 from runtime.models import (
     DECISION_HUMAN_REVIEW,
@@ -113,7 +117,7 @@ def evaluate_condition(
         return ConditionOutcome(all(o.matched for o in outcomes), usable=True)
 
     cond = parts[0]
-    matches = list(re.finditer(r"(>=|<=|==|!=|>|<)", cond))
+    matches = list(COMPARISON_PATTERN.finditer(cond))
     if not matches:
         # 裸标识符：一个 op 都匹配不上 → 永不触发。
         # 这里返回 False 是刻意的（见 _evaluate_rule 的注释），
@@ -203,39 +207,30 @@ def _find_exception_rule(
 def condition_parts(condition: str) -> list[str]:
     """把一个 condition 按 AND 切成若干段
 
-    AND 大小写都认：写成小写 `and` 是很自然的手滑，而它的后果是
-    整条规则静默失效——**不报错、不提示**，比抛异常更难发现。
+    **实现搬到 `core/conditions.py` 了**（2026-11-03 架构升级）。
 
-    切分要求 AND 两侧有空白，避免把字段名里的字母误当连接词
-    （`brand` 里也有 `and`）。
+    为什么搬：这段解析是**协议**，不是执行。声明里写的例外条件，
+    装配期要按同一套解析验「这条规则真的能触发」，运行期也要按同一套
+    解析去读值。两处各写一份 = 两份事实 = 漂。
+
+    装配器在 `core/` 里，而 `core/` 是底层，不该反向依赖执行层——
+    所以语法归 core，这里继续导出，**现有 import 路径不用改**。
+
+    搬之前踩过的坑（原样留着，别删）：
+    守卫原来用 `re.split(r"(>=|<=|==|!=|>|<)", cond, maxsplit=1)` 取**位置最靠前**的
+    比较符，被验的代码按 `(">=", "<=", "==", "!=", ">", "<")` 的**优先级顺序**
+    找第一个出现的。条件里有两个比较符时两边选到**不同的字段**——
+    守卫验的是它自己那套解析，于是放行了一条实际永远不触发的规则。
     """
-    return [
-        part.strip()
-        for part in re.split(r"\s+AND\s+", condition.strip(), flags=re.IGNORECASE)
-        if part.strip()
-    ]
+    return _condition_parts(condition)
 
 
 def condition_fields(condition: str) -> list[str]:
     """这个条件实际会去读哪些字段
 
-    **必须和 `_evaluate_condition` 用同一套解析。**
-
-    这不是洁癖，是一个已经犯过的错：守卫原来用
-    `re.split(r"(>=|<=|==|!=|>|<)", cond, maxsplit=1)` 取**位置最靠前**的
-    比较符，被验的代码按 `(">=", "<=", "==", "!=", ">", "<")` 的**优先级顺序**
-    找第一个出现的。条件里有两个比较符时两边选到不同的字段——
-    守卫验的是它自己那套解析，于是放行了一条实际永远不触发的规则。
-
-    守卫用被验者自己的解析，才能保证「验的就是那个」。
+    **必须和 `_evaluate_condition` 用同一套解析**——见 `core/conditions.py`。
     """
-    fields: list[str] = []
-    for part in condition_parts(condition):
-        match = re.search(r"(>=|<=|==|!=|>|<)", part)
-        if match is None:
-            continue  # 裸标识符：不读任何字段
-        fields.append(part[: match.start()].strip())
-    return fields
+    return _condition_fields(condition)
 
 
 def _classify_failure(
