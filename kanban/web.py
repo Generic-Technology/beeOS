@@ -1276,9 +1276,18 @@ HTML_PAGE = f"""<!DOCTYPE html>
      .port 自己是 flex column 但没设 gap，间距全靠各块自己让。
      唯独这里忘了给，按钮行就贴着虚线框底边——一个大的点击目标和一个
      动作按钮挨在一起，会被读成同一个控件。 */
-  .media-intake {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }}
+  /* **图片区按内容高度，不被下面的表单挤扁**（2026-11-02 修）。
+     以前这里是 `flex: 1 1 auto; min-height: 0`——意思是「有多余空间就撑满，
+     不够就缩到 0」。加上表单之后高度不够了：图片区被压扁，
+     而它里面的字（标题、拍照按钮、格式提示）照着原样画出来，
+     于是**溢出压住了下面的表单**——两个控件叠在一起，谁也点不着。
+     缩到 0 还得靠 `min-height: 0` 才做得到，所以这不是溢出被裁掉，
+     是溢出**画在了别人身上**。
+     现在：图片区 `flex: 0 0 auto`（按内容高度，谁也不许压它），
+     表单区 `flex: 1 1 auto` + 自己内部滚动（空间让给它，不够就滚）。 */
+  .media-intake {{ flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }}
   .media-drop {{
-    flex: 1 1 auto; display: flex; flex-direction: column; align-items: center;
+    flex: 0 0 auto; display: flex; flex-direction: column; align-items: center;
     justify-content: center; gap: 8px; text-align: center;
     border: 1.5px dashed #cbd5e1; border-radius: 8px;
     background: #f8fafc; padding: 18px; cursor: pointer;
@@ -1305,7 +1314,13 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .media-cam-note {{ font-size: 11px; color: #94a3b8; }}
   /* 照片之外的事实：表单。放在图片控件下面——
      「拍一张 + 补一句」是一条动作，分成两屏就断了。 */
-  .media-fields {{ display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }}
+  /* 表单区吃掉剩下的高度，自己内部滚动。
+     滚动的是**这一块**，不是整栏——「履约」按钮要一直看得见、按得到。 */
+  .media-fields {{
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px;
+    padding-right: 2px;
+  }}
   .media-fields[hidden] {{ display: none; }}
   .mf-title {{ font-size: 11px; color: #64748b; }}
   .mf-row {{
@@ -1321,7 +1336,9 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .mf-area {{ resize: vertical; min-height: 34px; }}
   .mf-flag {{ font-size: 10px; color: #94a3b8; grid-column: 2; }}
   .mf-flag.req {{ color: #b45309; }}
-  .mf-desc {{ font-size: 10px; color: #94a3b8; grid-column: 2; }}
+  /* 描述**占满整行**：挤在输入框那一列的话，窄栏里它只剩三四个字宽，
+     一句话要竖着排七八行——那不是提示，是噪声。 */
+  .mf-desc {{ font-size: 10px; color: #94a3b8; grid-column: 1 / -1; }}
   /* ===== receipt 视图：小票 =====
      金额区用等宽右对齐——对账时要看的是小数点在哪一位。 */
   .rc-head {{ display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 6px; }}
@@ -1359,16 +1376,19 @@ HTML_PAGE = f"""<!DOCTYPE html>
     background: none; border: none; padding: 0; cursor: pointer;
     color: #2563eb; font-size: inherit; text-decoration: underline;
   }}
-  .media-preview {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; }}
+  /* 预览图**有上限高**：图片区现在是 `flex: 0 0 auto`（按内容高度），
+     不给上限的话一张 1400px 高的原图会把整栏撑开。
+     object-fit: contain 保证整张图看得见，不裁。 */
+  .media-preview {{ flex: 0 0 auto; max-height: 240px; display: flex; flex-direction: column; gap: 6px; }}
   .media-preview img {{
-    flex: 1 1 auto; min-height: 0; object-fit: contain;
+    flex: 0 0 auto; max-height: 200px; width: 100%; object-fit: contain;
     background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px;
   }}
   /* 浏览器画不出的格式（HEIC / AVIF）摆一块说明牌，不要摆一张破图。
      破图会被读成「载了张图但坏了」，实际是「压根没坏，是这个格式
      浏览器解不了」——这两件事得让用户分得清。 */
   .media-nopreview {{
-    flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+    flex: 0 0 auto; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 6px; text-align: center;
     background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;
     padding: 16px; font-size: 12px; color: #64748b;
@@ -3991,9 +4011,9 @@ function renderMediaFields(entry) {{
   const rows = rest.map((f) => {{
     const id = 'mf-' + f.name;
     const desc = f.description ? `<div class="mf-desc">${{esc(f.description)}}</div>` : '';
-    const flag = f.required
-      ? '<span class="mf-flag req">必填</span>'
-      : '<span class="mf-flag opt">照片没读出来时可以留空</span>';
+    // 「照片没读出来时可以留空」这句话**只在标题里说一遍**：
+    // 每行都挂一遍，十行就是十遍同样的字，把每行都撑高。
+    const flag = f.required ? '<span class="mf-flag req">必填</span>' : '';
     let input;
     if (f.type === 'enum' && f.values && f.values.length) {{
       const opts = f.values
