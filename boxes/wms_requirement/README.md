@@ -8,7 +8,7 @@
 
 产出分两层：
 
-- **机器结构**（`flow_graph` / `requirement_set_package`）——给下游盒子投料
+- **机器结构**（`schema_flow_graph` / `schema_requirement_set_package`）——给下游盒子投料
 - **人读文档**（`schema_requirement_document`）——给人看的那一份
 
 两条来自**同一份事实**：文档是从流程图派生的投影，不是另造一份。

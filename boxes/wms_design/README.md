@@ -39,7 +39,7 @@
 没有业务负责人 → 不交付；有需求绑不上 WMS 概念 → 升级。
 
 第一条（空需求集）不是「跑挂了」，是**合同说这种情况不交付**——
-没有需求就没有模型可交，履约层落 `rejected`（明确不交付），不是 `failed`（没人管）。
+没有需求就没有设计可交，履约层落 `rejected`（明确不交付），不是 `failed`（没人管）。
 
 ## 已知盲区（如实声明）
 
@@ -60,18 +60,18 @@ verify_coverage → check_consistency → generate_evidence → package_design
 
 ```mermaid
 flowchart TB
-    Def[BeeBoxDefinition]
+    Def[BoxDeclaration 声明]
     Def --> Schemas[schemas block - 11 schemas]
     Def --> Task[task Intent]
     Def --> Result[result Contract]
     Def --> Queen[queen Policy]
     Def --> Metrics[metrics]
 
-    Schemas --> S1[requirement_set 输入]
-    Schemas --> S2[design_elements]
-    Schemas --> S3[model_expectations]
-    Schemas --> S4[model_evidence]
-    Schemas --> S5[business_model_package 输出]
+    Schemas --> S1[schema_requirement_set_input]
+    Schemas --> S2[schema_design_elements]
+    Schemas --> S3[schema_design_expectations]
+    Schemas --> S4[schema_design_evidence]
+    Schemas --> S5[schema_business_design_package 输出]
 
     Task --> T1[handle_design_request]
     T1 --> BL[beeline_wms_design_v1]
@@ -84,7 +84,7 @@ flowchart TB
 
 - `__init__.py` — 入口（`get_definition`）
 - `schemas.py` — 11 个 schema
-- `definition.py` — BeeBoxDefinition 实例
+- `definition.py` — BoxDeclaration 声明（`assemble()` 装配后产出 BeeBoxDefinition）
 - `domain.py` — WMS 概念词表（实体 / 约束 / 指标 + 例词 + 代码落点）
 - `binder.py` — 需求 ↔ WMS 概念绑定
 - `runner.py` — 7 个 op 的 handler

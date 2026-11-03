@@ -26,11 +26,11 @@ ops_intake → ops_handle → ops_packager
 
 | 判据 | 口径 |
 |---|---|
-| `change_approval_rate` | 本次变更有审批记录（审批人 + 时间）|
-| `rollback_readiness` | 上一版制品仍在 + 回滚路径可达 |
+| `change_approval_rate` | 每条要放行的变更都**已验收且指名了构建** |
+| `rollback_readiness` | 回滚路径可达 **且** 知道当前跑的是哪一版（制品记录在）|
 | `incident_documented` | 每条告警都有处置记录（处置人 + 动作 + 时间）|
-| `runtime_state_recorded` | 线上真实状态已回写进档案，带 `source_task_run_id` |
-| `ops_determined` | 这次真的核对出了东西 |
+| `runtime_state_recorded` | **真的读到了线上业务现场**（有观测时刻佐证），不只是「端点有回应」|
+| `ops_determined` | 这次有变更或告警，且真的读到了线上现场 |
 
 **2 条例外**：回滚不可用且有变更 → 不交付；告警数超阈值 → 升级。
 
