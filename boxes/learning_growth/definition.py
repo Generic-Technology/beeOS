@@ -1,4 +1,5 @@
-"""boxes.learning_growth.definition - 成长记录盒的 Definition 数据
+"""
+boxes.learning_growth.definition - 成长记录盒的声明
 
 把每一次学习记成一条带出处的成长记录。
 
@@ -17,25 +18,29 @@
 分不清的档案 = 看着完整，其实不能当依据。
 
 **它是 Learning 域的唯一汇点**：三只学科盒的产出最终都跟这份档案对上。
+
+**为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
+盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
+拼装（以及当场校验）由 `core/scaffold.py` 的装配器做——
+声明自相矛盾的话，在装配那一步就报出来，而不是等到履约跑起来。
 """
 
 from __future__ import annotations
 
 from core.models import (
     AcceptanceRule,
-    BeeBoxDefinition,
     ExceptionRule,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
-    ResultDef,
-    TaskDef,
 )
+from core.scaffold import BoxDeclaration
+
 from boxes.learning_growth.schemas import ALL_SCHEMAS, SOURCE_KINDS
 
-LEARNING_GROWTH_BOX = BeeBoxDefinition(
+
+DECLARATION = BoxDeclaration(
     id="learning_growth_box",
     version=1,
     description=(
@@ -47,56 +52,52 @@ LEARNING_GROWTH_BOX = BeeBoxDefinition(
         "**是看到的还是听说的**。"
     ),
 
-    schemas=ALL_SCHEMAS,
+    # ---- 归属：这只盒子在企业里站在哪 ----
+    display_name="成长记录盒",
+    value_stream="Learning",
+    role="学习成长档案的履约",
+    domain="Learning",
+    # **放射形状**：本域没有交接链——学科的产出不是别科的输入，
+    # 它们各自直投成长记录盒。接线在生成时就填好了。
+    feeds_into=[],
 
-    placement=PlacementDef(
-        display_name="成长记录盒",
-        value_stream="Learning",
-        role="学习成长档案的履约",
-        domain="Learning",
-        # **汇点没有下游**：它不被投给谁，它是所有人的落点。
-        feeds_into=[],
+    # ---- 投料入口（Intent）----
+    task_type="run_growth",
+    task_schema="schema_learning_growth_input",
+    task_trigger=(
+        "一次学科练习记完之后\n"
+        "OR 想看成长档案时补录一条"
     ),
 
-    task=[
-        TaskDef(
-            type="run_growth",
-            task_schema="schema_learning_growth_input",
-            beeline_id="beeline_learning_growth_v1",
-            beeline_version=1,
-            # **不声明 subject_ref_field**：这一条记录**就是**档案的一条，
-            # 它不属于某个需求单元——它描述的是车宥安的学习轨迹本身。
-            trigger=(
-                "一次学科练习记完之后\n"
-                "OR 想看成长档案时补录一条"
-            ),
+    # ---- 产出契约（Contract）----
+    result_type="learning_growth_result",
+    result_schema="schema_learning_growth_output",
+    maturity="live",
+    artifact_view="generic",
+    acceptance=[
+        # 掌握度是**比率**，越界就是上游给错了——档案不该收。
+        AcceptanceRule(metric="mastery", op="gte", value=0),
+        AcceptanceRule(metric="mastery", op="lte", value=1),
+        # 出处类型必须是认得的那两种：第三种（空 / 自造词）不进档案。
+        AcceptanceRule(
+            metric="source_kind", op="in", value=list(SOURCE_KINDS),
         ),
+        # 出处链没断：这条记录还认得自己是从哪次学习来的。
+        AcceptanceRule(metric="source_record_present", op="eq", value=True),
+    ],
+    exceptions=[
+        ExceptionRule(
+            condition="source_record_present == false", action="escalate",
+        ),
+        ExceptionRule(condition="mastery > 1", action="escalate"),
     ],
 
-    result=ResultDef(
-        type="learning_growth_result",
-        result_schema="schema_learning_growth_output",
-        maturity="live",
-        acceptance=[
-            # 掌握度是**比率**，越界就是上游给错了——档案不该收。
-            AcceptanceRule(metric="mastery", op="gte", value=0),
-            AcceptanceRule(metric="mastery", op="lte", value=1),
-            # 出处类型必须是认得的那两种：第三种（空 / 自造词）不进档案。
-            AcceptanceRule(
-                metric="source_kind", op="in", value=list(SOURCE_KINDS),
-            ),
-            # 出处链没断：这条记录还认得自己是从哪次学习来的。
-            AcceptanceRule(metric="source_record_present", op="eq", value=True),
-        ],
-        exceptions=[
-            ExceptionRule(
-                condition="source_record_present == false", action="escalate",
-            ),
-            ExceptionRule(condition="mastery > 1", action="escalate"),
-        ],
-        view="generic",
-    ),
+    # ---- 作业路线（Procedure）----
+    beeline_id="beeline_learning_growth_v1",
+    beeline_version=1,
+    beeline_description="成长记录盒 履约作业路线：growth_intake → growth_work → growth_packager",
 
+    # ---- 履约政策（Policy）----
     queen=QueenDef(
         authorization=QueenAuthorization(
             task_routing="allow",
@@ -110,11 +111,8 @@ LEARNING_GROWTH_BOX = BeeBoxDefinition(
         ),
     ),
 
-    # **不声明指标**：掌握度该定到多少，那是家里和老师定的。
+    # **不声明指标**：指标是**承诺**（target），不是事实。
+    # 掌握度该定到多少，那是家里和老师定的——
     # 在这个数定下来之前声明一个，等于在看板上放一个**编出来的标准**。
     metrics=MetricsDef(),
 )
-
-
-def get_definition() -> BeeBoxDefinition:
-    return LEARNING_GROWTH_BOX

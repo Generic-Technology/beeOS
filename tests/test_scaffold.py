@@ -535,10 +535,6 @@ def _uses_legacy_path(module: str) -> bool:
 #:
 #: **每迁走一只，就从这里划掉一条**——迁到最后这个清单是空的。
 LEGACY_BOX_MODULES = (
-    "learning_chinese",
-    "learning_english",
-    "learning_growth",
-    "learning_math",
     "receipt",
     "wms_analysis",
     "wms_development",

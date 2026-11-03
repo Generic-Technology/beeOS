@@ -1,4 +1,5 @@
-"""boxes.learning_english.definition - 英语盒的 Definition 数据
+"""
+boxes.learning_english.definition - 英语盒的声明
 
 把一次英语练习记成一条带出处的学习事件
 
@@ -19,25 +20,29 @@
 
 - `mastery > 1` —— 得分超过满分：投料错了，升级人工
 - `ratio_exact == false` —— 两跳算出来的数对不上：升级人工
+
+**为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
+盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
+拼装（以及当场校验）由 `core/scaffold.py` 的装配器做——
+声明自相矛盾的话，在装配那一步就报出来，而不是等到履约跑起来。
 """
 
 from __future__ import annotations
 
 from core.models import (
     AcceptanceRule,
-    BeeBoxDefinition,
     ExceptionRule,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
-    ResultDef,
-    TaskDef,
 )
+from core.scaffold import BoxDeclaration
+
 from boxes.learning_english.schemas import ALL_SCHEMAS
 
-LEARNING_ENGLISH_BOX = BeeBoxDefinition(
+
+DECLARATION = BoxDeclaration(
     id="learning_english_box",
     version=1,
     description=(
@@ -46,46 +51,43 @@ LEARNING_ENGLISH_BOX = BeeBoxDefinition(
         "装出带出处的一条学习事件。"
     ),
 
-    schemas=ALL_SCHEMAS,
+    # ---- 归属：这只盒子在企业里站在哪 ----
+    display_name="英语盒",
+    value_stream="Learning",
+    role="英语学习事件的履约",
+    domain="Learning",
+    # **放射形状**：本域没有交接链——英语的产出不是别科的输入，
+    # 它们各自直投成长记录盒。接线在生成时就填好了。
+    feeds_into=["learning_growth_box"],
 
-    placement=PlacementDef(
-        display_name="英语盒",
-        value_stream="Learning",
-        role="英语学习事件的履约",
-        domain="Learning",
-        # **放射形状**：本域没有交接链——英语的产出不是别科的输入，
-        # 它们各自直投成长记录盒。接线在生成时就填好了。
-        feeds_into=['learning_growth_box'],
-    ),
+    # ---- 投料入口（Intent）----
+    task_type="run_english",
+    task_schema="schema_learning_english_input",
+    task_trigger="记一次英语练习：听写、单词、课文朗读",
 
-    task=[
-        TaskDef(
-            type="run_english",
-            task_schema="schema_learning_english_input",
-            beeline_id="beeline_learning_english_v2",
-            beeline_version=2,
-            trigger="记一次英语练习：听写、单词、课文朗读",
-        ),
+    # ---- 产出契约（Contract）----
+    result_type="learning_english_result",
+    result_schema="schema_learning_english_output",
+    maturity="live",
+    artifact_view="generic",
+    acceptance=[
+        # **判据读的是产出里的字段名**——字段不在产出 schema 里，
+        # 这条判据就永远读不到值。
+        AcceptanceRule(metric="mastery", op="gte", value=0),
+        AcceptanceRule(metric="mastery", op="lte", value=1),
+        AcceptanceRule(metric="ratio_exact", op="eq", value=True),
+    ],
+    exceptions=[
+        ExceptionRule(condition="mastery > 1", action="escalate"),
+        ExceptionRule(condition="ratio_exact == false", action="escalate"),
     ],
 
-    result=ResultDef(
-        type="learning_english_result",
-        result_schema="schema_learning_english_output",
-        maturity="live",
-        acceptance=[
-            # **判据读的是产出里的字段名**——字段不在产出 schema 里，
-            # 这条判据就永远读不到值。
-            AcceptanceRule(metric="mastery", op="gte", value=0),
-            AcceptanceRule(metric="mastery", op="lte", value=1),
-            AcceptanceRule(metric="ratio_exact", op="eq", value=True),
-        ],
-        exceptions=[
-            ExceptionRule(condition="mastery > 1", action="escalate"),
-            ExceptionRule(condition="ratio_exact == false", action="escalate"),
-        ],
-        view="generic",
-    ),
+    # ---- 作业路线（Procedure）----
+    beeline_id="beeline_learning_english_v2",
+    beeline_version=2,
+    beeline_description="英语盒 履约作业路线：english_intake → english_work → english_packager",
 
+    # ---- 履约政策（Policy）----
     queen=QueenDef(
         authorization=QueenAuthorization(
             task_routing="allow",
@@ -104,7 +106,3 @@ LEARNING_ENGLISH_BOX = BeeBoxDefinition(
     # 在这个数定下来之前声明一个，等于在看板上放一个**编出来的标准**。
     metrics=MetricsDef(),
 )
-
-
-def get_definition() -> BeeBoxDefinition:
-    return LEARNING_ENGLISH_BOX
