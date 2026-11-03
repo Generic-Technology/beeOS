@@ -77,7 +77,7 @@ DECLARATION = BoxDeclaration(
     # 本次履约处理的业务对象标识（归档按它分组）
     #
     # 标识**藏在需求集对象里**——`ref:` 字段装的是整份上游产出，
-    # 「这批模型对应哪批需求」的答案在它的 set_id 上。
+    # 「这批设计对应哪批需求」的答案在它的 set_id 上。
     # 所以要指明从对象的哪个键取。
     subject_ref_field="requirement_set_ref",
     subject_ref_subfield="set_id",
@@ -86,7 +86,7 @@ DECLARATION = BoxDeclaration(
         "仓储主管提交结构化 WMS 需求集（上架 / 拣货 / 盘点 / 波次合并）\n"
         "OR 货主要求重新出 WMS 设计\n"
         "OR 已有 WMS 设计要扩展新需求\n"
-        "OR 仓库换库位策略要重算模型"
+        "OR 仓库换库位策略要重算设计"
     ),
 
     # ---- 产出契约（Contract）----

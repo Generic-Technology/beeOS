@@ -246,9 +246,9 @@ class TestTheCompletenessCriterionCanActuallyFail:
 
         隔离：这条只查 schema，不跑链路。
         """
-        from boxes.wms_design.schemas import BUSINESS_MODEL_PACKAGE
+        from boxes.wms_design.schemas import BUSINESS_DESIGN_PACKAGE
 
-        by_name = {f.name: f for f in BUSINESS_MODEL_PACKAGE.fields}
+        by_name = {f.name: f for f in BUSINESS_DESIGN_PACKAGE.fields}
         assert "expectation_completeness" in by_name
         assert "expectations" in by_name
 

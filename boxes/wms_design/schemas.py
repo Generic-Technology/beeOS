@@ -1,16 +1,21 @@
 """
 boxes.wms_design.schemas - 业务设计盒子的业务 schemas
 
-定义 6 个业务 schema：
+定义 11 个业务 schema：
 
 输入层：
   - schema_business_requirement_set —— 业务需求集（任务输入）
   - schema_business_requirement —— 单个业务需求
+  - schema_requirement_set_input —— 需求集投料（ref: 交接入口）
+  - schema_design_task_input —— 设计盒投料（task_schema）
 
 处理层：
   - schema_parsed_requirements —— 解析后的需求（parse_requirements 输出）
   - schema_classified_requirements —— 分类后的需求（classify_requirements 输出）
   - schema_design_elements —— 生成的设计元素（generate_design_elements 输出）
+  - schema_design_package_elements —— 设计包内的元素明细
+  - schema_design_expectations —— 可判定的预期
+  - schema_design_evidence —— 验证证据（机械可验 5 项）
 
 输出层：
   - schema_business_design_package —— 业务设计包（最终结果 + 证据）
@@ -60,7 +65,7 @@ REQUIREMENT_TYPES = ("object", "rule", "process", "metric", "goal", "event")
 REQUIREMENT_PRIORITIES = ("must_have", "should_have", "could_have")
 
 # DDD 设计元素的五种 pattern
-MODEL_PATTERNS = ("entity", "specification", "domain_service", "domain_event", "domain_metric")
+DESIGN_PATTERNS = ("entity", "specification", "domain_service", "domain_event", "domain_metric")
 
 
 # ============================================================
@@ -231,7 +236,7 @@ ENTITY_ITEM = FieldDef(
     properties=[
         FieldDef(name="entity_id", type="string"),
         FieldDef(name="name", type="string"),
-        FieldDef(name="pattern", type="enum", values=list(MODEL_PATTERNS)),  # entity
+        FieldDef(name="pattern", type="enum", values=list(DESIGN_PATTERNS)),  # entity
         # **这个盒子是 WMS 设计盒**：元素必须说得出自己是 WMS 的
         # 哪个概念。说不出（null）就不算 WMS 设计的一分子。
         FieldDef(
@@ -252,7 +257,7 @@ EVENT_ITEM = FieldDef(
     properties=[
         FieldDef(name="event_id", type="string"),
         FieldDef(name="name", type="string"),
-        FieldDef(name="pattern", type="enum", values=list(MODEL_PATTERNS)),  # domain_event
+        FieldDef(name="pattern", type="enum", values=list(DESIGN_PATTERNS)),  # domain_event
         FieldDef(
             name="wms_kind",
             type="enum",
@@ -273,7 +278,7 @@ RULE_ITEM = FieldDef(
         FieldDef(name="name", type="string"),
         FieldDef(name="condition", type="string"),
         FieldDef(name="action", type="string"),
-        FieldDef(name="pattern", type="enum", values=list(MODEL_PATTERNS)),  # specification
+        FieldDef(name="pattern", type="enum", values=list(DESIGN_PATTERNS)),  # specification
         # 「当库存 > 0 时…」是通用规则；「同一 SKU 同库位不可重复
         # 占用」才是 WMS 规则。声明了约束的才算数——这条差别
         # wms_rule_binding 判据能数得出来。
@@ -295,7 +300,7 @@ PROCESS_ITEM = FieldDef(
     properties=[
         FieldDef(name="process_id", type="string"),
         FieldDef(name="name", type="string"),
-        FieldDef(name="pattern", type="enum", values=list(MODEL_PATTERNS)),  # domain_service
+        FieldDef(name="pattern", type="enum", values=list(DESIGN_PATTERNS)),  # domain_service
         FieldDef(
             name="wms_kind",
             type="enum",
@@ -315,7 +320,7 @@ METRIC_ITEM = FieldDef(
         FieldDef(name="metric_id", type="string"),
         FieldDef(name="name", type="string"),
         FieldDef(name="target", type="number"),
-        FieldDef(name="pattern", type="enum", values=list(MODEL_PATTERNS)),  # domain_metric（扩展元素）
+        FieldDef(name="pattern", type="enum", values=list(DESIGN_PATTERNS)),  # domain_metric（扩展元素）
         # 指标型需求也得能声明它是哪个 WMS 指标——
         # 「拣货准确率 99.5%」是条 metric 类型的需求，
         # 只因为类型不是 object 就判它「没绑上 WMS」是判据在犯病
@@ -332,7 +337,7 @@ METRIC_ITEM = FieldDef(
 )
 
 
-MODEL_ELEMENTS = SchemaDef(
+DESIGN_ELEMENTS = SchemaDef(
     id="schema_design_elements",
     description="生成的设计元素（op 产出：流程图视角的实体 / 规则 / 流程 / 指标 / 事件）",
     fields=[
@@ -369,7 +374,7 @@ MODEL_ELEMENTS = SchemaDef(
 
 
 # 设计包内嵌的设计元素：**同一份 item 定义**，DDD 五组的名字
-MODEL_PACKAGE_ELEMENTS = SchemaDef(
+DESIGN_PACKAGE_ELEMENTS = SchemaDef(
     id="schema_design_package_elements",
     description="设计包内嵌的设计元素（DDD 战术设计的五组：实体 / 规格 / 领域服务 / 领域事件 / 领域指标）",
     fields=[
@@ -402,7 +407,7 @@ MODEL_PACKAGE_ELEMENTS = SchemaDef(
 # 只有设计盒知道哪个需求绑到了哪个概念；需求盒那边只有业务原话，
 # 做不出可判定的预期，只能做出一句复述。
 
-MODEL_EXPECTATION = FieldDef(
+DESIGN_EXPECTATION = FieldDef(
     name="expectation",
     type="object",
     properties=[
@@ -415,11 +420,11 @@ MODEL_EXPECTATION = FieldDef(
 )
 
 
-MODEL_EXPECTATIONS = SchemaDef(
-    id="schema_model_expectations",
+DESIGN_EXPECTATIONS = SchemaDef(
+    id="schema_design_expectations",
     description="可判定的预期（每条 WMS 绑定一条：这条需求该怎样才算被满足）",
     fields=[
-        FieldDef(name="expectations", type="array", items=MODEL_EXPECTATION),
+        FieldDef(name="expectations", type="array", items=DESIGN_EXPECTATION),
     ],
 )
 
@@ -429,9 +434,9 @@ MODEL_EXPECTATIONS = SchemaDef(
 # ============================================================
 
 
-MODEL_EVIDENCE = SchemaDef(
+DESIGN_EVIDENCE = SchemaDef(
     id="schema_design_evidence",
-    description="模型验证证据（机械可验 5 项）",
+    description="设计验证证据（机械可验 5 项）",
     fields=[
         FieldDef(name="set_id", type="string"),
         FieldDef(name="business_goal", type="string"),
@@ -447,7 +452,7 @@ MODEL_EVIDENCE = SchemaDef(
         # ---- 可判定的预期 ----
         # 「判了就要带出来」：判据读的就是这份载体，
         # 不带出来的话，下游（测试盒 / 分析盒）根本不知道该验什么。
-        FieldDef(name="expectations", type="array", items=MODEL_EXPECTATION),
+        FieldDef(name="expectations", type="array", items=DESIGN_EXPECTATION),
         FieldDef(name="expectation_completeness", type="boolean"),
         FieldDef(
             name="evidence_detail",
@@ -492,7 +497,7 @@ MODEL_EVIDENCE = SchemaDef(
 )
 
 
-BUSINESS_MODEL_PACKAGE = SchemaDef(
+BUSINESS_DESIGN_PACKAGE = SchemaDef(
     id="schema_business_design_package",
     description="业务设计包（最终交付物）",
     fields=[
@@ -525,7 +530,7 @@ BUSINESS_MODEL_PACKAGE = SchemaDef(
         # 每条 WMS 绑定 → 一条预期（这条需求该怎样才算被满足）。
         # 少了它，下游只能拿需求描述去猜「算不算满足」——
         # 那就退化成「验名字存不存在」。
-        FieldDef(name="expectations", type="array", items=MODEL_EXPECTATION),
+        FieldDef(name="expectations", type="array", items=DESIGN_EXPECTATION),
         FieldDef(name="expectation_completeness", type="boolean"),
         # ---- exception 条件读到的量 ----
         # 这三个以前**产出里一直有、schema 里一直没写**。
@@ -713,7 +718,7 @@ REQUIREMENT_SET_INPUT_SCHEMA = SchemaDef(
     ],
 )
 
-MODEL_TASK_INPUT_SCHEMA = SchemaDef(
+DESIGN_TASK_INPUT_SCHEMA = SchemaDef(
     id="schema_design_task_input",
     description="设计任务（需求集）（一次设计任务的投料）",
     fields=[
@@ -730,12 +735,12 @@ ALL_SCHEMAS = [
     BUSINESS_REQUIREMENT_SET,
     BUSINESS_REQUIREMENT,
     REQUIREMENT_SET_INPUT_SCHEMA,
-    MODEL_TASK_INPUT_SCHEMA,
+    DESIGN_TASK_INPUT_SCHEMA,
     PARSED_REQUIREMENTS,
     CLASSIFIED_REQUIREMENTS,
-    MODEL_ELEMENTS,
-    MODEL_PACKAGE_ELEMENTS,
-    MODEL_EXPECTATIONS,
-    MODEL_EVIDENCE,
-    BUSINESS_MODEL_PACKAGE,
+    DESIGN_ELEMENTS,
+    DESIGN_PACKAGE_ELEMENTS,
+    DESIGN_EXPECTATIONS,
+    DESIGN_EVIDENCE,
+    BUSINESS_DESIGN_PACKAGE,
 ]
