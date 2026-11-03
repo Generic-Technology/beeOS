@@ -278,6 +278,38 @@ class TestANewBoxGoesThroughTheAssembler:
         assert definition.task[0].task_schema == declaration.task_schema
         assert definition.task[0].beeline_id == declaration.beeline_id
 
+    def test_the_generated_readme_scale_numbers_match_the_box(self, scaffolded, tmp_path):
+        """生成的 README 里的规模数字必须等于实际
+
+        **复用文档守卫自己的正则**（`_HOPS_RE` / `_OPS_RE` / `_SCHEMA_RE`）——
+        抄一份必然漂：文档守卫改了正则，这里就成了一条永远绿的空话。
+
+        今天模板里没有规模数字，所以这条是**空跑**——
+        它防的是「以后有人在模板里写了个「3 跳」，而盒子其实不是 3 跳」。
+        """
+        from tests.test_docs_match_code import _HOPS_RE, _OPS_RE, _SCHEMA_RE
+
+        module = importlib.import_module(f"boxes.{scaffolded.module}")
+        ops_n = len(module.ASSEMBLED.beeline.operations)
+        schemas_n = len(module.ASSEMBLED.definition.schemas)
+        allowed = {"跳": {ops_n}, "op": {ops_n}, "schema": {schemas_n}}
+        patterns = (("跳", _HOPS_RE), ("op", _OPS_RE), ("schema", _SCHEMA_RE))
+
+        readme = (
+            tmp_path / "boxes" / scaffolded.module / "README.md"
+        ).read_text(encoding="utf-8")
+
+        bad = []
+        for lineno, line in enumerate(readme.splitlines(), 1):
+            for kind, pattern in patterns:
+                for number in pattern.findall(line):
+                    if int(number) not in allowed[kind]:
+                        bad.append(f"第 {lineno} 行：「{number}」（{kind}）")
+        assert not bad, (
+            f"生成的 README 的规模数字对不上"
+            f"（实际 {ops_n} 跳 / {ops_n} 个 op / {schemas_n} 个 schema）：{bad}"
+        )
+
 
 class TestTheScaffoldItself:
     def test_it_refuses_to_overwrite_a_delivered_box(self, tmp_path):
