@@ -193,6 +193,10 @@ class BoxDeclaration(BaseModel):
     # ---- 产出契约（Contract）----
     result_type: str = Field(description="业务结果类型标识")
     result_schema: str = Field(description="产出的 schema id")
+    result_description: str = Field(
+        default="",
+        description="这个产出是什么（人话一句）。给读产出的人看",
+    )
     acceptance: list[AcceptanceRule] = Field(default_factory=list)
     exceptions: list[ExceptionRule] = Field(default_factory=list)
     maturity: Literal["live", "skeleton"] = Field(
@@ -617,6 +621,7 @@ def assemble(
         result=ResultDef(
             type=declaration.result_type,
             result_schema=declaration.result_schema,
+            description=declaration.result_description,
             acceptance=list(declaration.acceptance),
             exceptions=list(declaration.exceptions),
             maturity=declaration.maturity,

@@ -9,7 +9,25 @@ core.models - beeBox Definition 顶层数据结构
 from __future__ import annotations
 
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, model_validator
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+#: **不许静默吞掉不认识的参数。**
+#:
+#: pydantic 的默认行为是 `extra="ignore"`：传一个它不认识的参数，
+#: 它**照单全收地扔掉**，不报错也不提示。
+#:
+#: 后果实测过：票据盒和需求集盒都写了 `ResultDef(description=...)`，
+#: 而当时 `ResultDef` 根本没有这个字段 → 那两句说明**从来没被存下来**。
+#: 代码看着像写了，读的人以为产出有这句说明——实际产出里一个字都没有。
+#:
+#: 这正是「声明了却拿不到」那族病：**你以为声明了，其实没声明**。
+#: 所以改成 `forbid`：不认识的参数当场报错，当场说得清是哪个字段。
+#:
+#: **为什么这件事值得动 core**：整个架构升级的主题就是
+#: 「自相矛盾要在装配期就报错，别等运行时」。
+#: 而「不认识的字段被静默吞掉」是同一族病在**模型层**的表现。
+_FORBID_EXTRA = ConfigDict(extra="forbid")
 
 # 媒体字段默认接受的 MIME 类型。
 #
@@ -51,6 +69,7 @@ def is_not_applicable(value: Any) -> bool:
 class FieldDef(BaseModel):
     """字段定义（递归支持 object / array）"""
 
+    model_config = _FORBID_EXTRA
     name: str
     type: str  # string / number / boolean / integer / object / array / enum / ref:<schema_id>
     required: bool = True
@@ -91,6 +110,7 @@ class FieldDef(BaseModel):
 class SchemaDef(BaseModel):
     """业务 schema 定义（definition 内唯一）"""
 
+    model_config = _FORBID_EXTRA
     id: str = Field(description="schema 唯一标识（definition 内唯一）")
     description: Optional[str] = None
     fields: list[FieldDef]
@@ -104,6 +124,7 @@ class SchemaDef(BaseModel):
 class TaskDef(BaseModel):
     """履约意图（Intent）：beeBox 接收什么 task"""
 
+    model_config = _FORBID_EXTRA
     type: str = Field(description="task 类型标识")
     task_schema: str = Field(description="引用 schemas 块内的 schema id")
     beeline_id: str = Field(description="1:1 绑定的 beeline（履约程序 Procedure 实现）")
@@ -239,23 +260,63 @@ class AcceptanceRule(BaseModel):
     分开显示，免得「5 条过 + 1 条用不上」被读成「6 条全过」。
     """
 
+    model_config = _FORBID_EXTRA
     metric: str
     op: Literal["gte", "lte", "eq", "in", "match"]
     value: Any
 
 
 class ExceptionRule(BaseModel):
-    """履约合同（Contract）：例外条款"""
+    """履约合同（Contract）：例外条款
 
+    **为什么有 `reason`**（2026-11-04 补）：
+    以前票据盒在这里写了 `reason="没读出任何商品行——照片太糊 / 不是小票 /
+    拍的是二维码，别硬编"`，而**这个字段当时并不存在**——pydantic 默认
+    **静默丢弃**不认识的参数。于是例外触发时，**没人看得到为什么**。
+
+    例外条款是「这份合同说了什么情况下不交付」，
+    而 `reason` 是「为什么是这个情况、该怎么办」——
+    后者才是**人能拿去行动的东西**。丢了它，
+    例外就只剩一个动作名（escalate / no_deliver / rollback），
+    收到的人还得自己去猜。
+
+    同一个根：`extra="forbid"`（见本文件末尾 `_FORBID_EXTRA`）
+    让「写了却没存」当场变成报错。
+    """
+
+    model_config = _FORBID_EXTRA
     condition: str
     action: Literal["no_deliver", "rollback", "escalate"]
+    reason: str = Field(
+        default="",
+        description="这条例外为什么会发生、收到的人该怎么做（人话）",
+    )
 
 
 class ResultDef(BaseModel):
-    """履约合同（Contract）：业务结果定义"""
+    """履约合同（Contract）：业务结果定义
 
+    **为什么有 `description`**（2026-11-04 补）：
+    以前有两只盒子在这里写了 `description=...`（票据盒写「结构化小票 + 6 项
+    机械校验证据」，需求集盒写「结构化业务需求集 + 4 项抽取验证证据」），
+    而**这个字段当时并不存在**——pydantic 默认**静默丢弃**不认识的参数。
+    于是作者写的那句话去哪了？**没去哪**：它从来没被存下来。
+
+    这是「声明了却拿不到」那族病的典型形态：代码看着像写了，
+    读的人以为产出有这句说明，实际上产出里一个字都没有。
+
+    现在这个字段真的存在了，那两句说明也真的被带上了。
+    而且**不许再静默吞**：`extra="forbid"` 让不认识的参数当场报错，
+    而不是悄悄消失（见本文件末尾 `_FORBID_EXTRA`）。
+    """
+
+    model_config = _FORBID_EXTRA
     type: str = Field(description="业务结果类型标识")
     result_schema: str = Field(description="引用 schemas 块内的 schema id")
+    description: str = Field(
+        default="",
+        description="这个产出是什么（人话一句）。给读产出的人看",
+    )
     acceptance: list[AcceptanceRule]
     exceptions: list[ExceptionRule]
 
@@ -310,6 +371,7 @@ class ResultDef(BaseModel):
 class QueenAuthorization(BaseModel):
     """履约政策（Policy）：queen 自治授权档位"""
 
+    model_config = _FORBID_EXTRA
     task_routing: Literal["allow", "observe_only", "off"] = "allow"
     exception_handling: Literal["allow", "observe_only", "off"] = "allow"
     continuous_improvement: Literal["allow", "observe_only", "off"] = "observe_only"
@@ -318,6 +380,7 @@ class QueenAuthorization(BaseModel):
 class QueenRules(BaseModel):
     """履约政策（Policy）：queen 自治规则（业务化规则，可选）"""
 
+    model_config = _FORBID_EXTRA
     task_routing: Optional[dict[str, Any]] = None
     exception_handling: Optional[dict[str, Any]] = None
     continuous_improvement: Optional[dict[str, Any]] = None
@@ -326,6 +389,7 @@ class QueenRules(BaseModel):
 class QueenDef(BaseModel):
     """履约政策（Policy）：beeBox queen 自治配置"""
 
+    model_config = _FORBID_EXTRA
     authorization: QueenAuthorization
     rules: QueenRules
 
@@ -338,6 +402,7 @@ class QueenDef(BaseModel):
 class MetricDef(BaseModel):
     """度量定义（持续统计）"""
 
+    model_config = _FORBID_EXTRA
     name: str
     definition: str
     target: float
@@ -351,6 +416,7 @@ class MetricDef(BaseModel):
 
 
 class MetricsDef(BaseModel):
+    model_config = _FORBID_EXTRA
     quality: list[MetricDef] = Field(default_factory=list)
     latency: list[MetricDef] = Field(default_factory=list)
     cost: list[MetricDef] = Field(default_factory=list)
@@ -387,6 +453,7 @@ class PlacementDef(BaseModel):
     分开声明，闭环那条边不进拓扑排序，主干就永远无环。
     """
 
+    model_config = _FORBID_EXTRA
     display_name: str = Field(default="", description="给人看的名字")
     value_stream: str = Field(default="", description="所属企业价值流")
     role: str = Field(default="", description="业务责任单元的职责")
@@ -440,6 +507,7 @@ class BeeBoxDefinition(BaseModel):
     **placement 归盒子自己**：看板读它，不拥有它。
     """
 
+    model_config = _FORBID_EXTRA
     id: str = Field(description="definition 唯一标识")
     version: int = Field(description="definition 版本（递增序列号）")
     description: str

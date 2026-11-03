@@ -71,6 +71,7 @@ def declaration_from_definition(
         subject_kind=task.subject_kind,
         result_type=result.type,
         result_schema=result.result_schema,
+        result_description=result.description,
         acceptance=list(result.acceptance),
         exceptions=list(result.exceptions),
         maturity=result.maturity,

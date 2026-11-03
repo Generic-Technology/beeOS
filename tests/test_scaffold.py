@@ -24,6 +24,7 @@ import ast
 import pathlib
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from core.beeline_models import Beeline
 from core.models import (
@@ -31,6 +32,7 @@ from core.models import (
     BeeBoxDefinition,
     ExceptionRule,
     FieldDef,
+    ResultDef,
     SchemaDef,
 )
 from core.scaffold import (
@@ -620,6 +622,63 @@ class TestOnePathPerBox:
             f"  新写的旧盒子：  {sorted(derived - recorded)}（改成新写法）\n"
             f"  忘了划掉的：    {sorted(recorded - derived)}（从台账里划掉）"
         )
+
+
+class TestTheModelsDoNotSilentlyDropDeclarations:
+    """**写了却没存**当场报错，不许静默吞
+
+    实测过：票据盒给 `ResultDef` 写了 `description=...`、
+    给 `ExceptionRule` 写了 `reason=...`——而当时这两个字段**并不存在**，
+    pydantic 默认 `extra="ignore"` → **静默丢弃**。
+
+    后果：作者写的那句说明**从来没被存下来**，代码却看着像写了。
+    这是「声明了却拿不到」那族病在**模型层**的表现——
+    你以为声明了，其实没声明。
+
+    所以 core 的模型一律 `extra="forbid"`：不认识的参数当场报错，
+    当场说得清是哪个字段、哪个类。
+    """
+
+    def test_an_unknown_field_is_rejected_not_swallowed(self):
+        with pytest.raises(ValidationError) as excinfo:
+            ResultDef(
+                type="x", result_schema="y", acceptance=[], exceptions=[],
+                nosuchfield=1,
+            )
+        assert "nosuchfield" in str(excinfo.value)
+
+    def test_the_result_description_is_actually_kept(self):
+        """写了就得存下来——不然写它干什么"""
+        result = ResultDef(
+            type="x", result_schema="y", acceptance=[], exceptions=[],
+            description="这个产出是什么",
+        )
+        assert result.description == "这个产出是什么"
+
+    def test_the_exception_reason_is_actually_kept(self):
+        """例外条款的「为什么」要送到收到的人手里"""
+        rule = ExceptionRule(
+            condition="items_count == 0", action="no_deliver",
+            reason="照片太糊 / 不是小票 / 拍的是二维码，别硬编",
+        )
+        assert "别硬编" in rule.reason
+
+    def test_every_core_model_forbids_extra_fields(self):
+        """不只是这两个——core 里的每个模型都不许静默吞"""
+        import core.models as m
+
+        for name in dir(m):
+            obj = getattr(m, name)
+            if not (isinstance(obj, type) and issubclass(obj, BaseModel)):
+                continue
+            # **只看 core.models 自己定义的模型**——
+            # `BaseModel` 是从 pydantic 导入进来的，它不属于这一层。
+            if obj.__module__ != m.__name__:
+                continue
+            config = obj.model_config or {}
+            assert config.get("extra") == "forbid", (
+                f"core.models.{name} 还会静默吞掉不认识的参数"
+            )
 
 
 # ============================================================
