@@ -37,12 +37,18 @@ def _boxes_dir() -> Path:
 
 
 def _box_package_by_id(box_id: str) -> str | None:
-    """按 definition 的 id 找到盒子自己的包名（不靠命名约定猜）"""
+    """按 definition 的 id 找到盒子自己的包名（不靠命名约定猜）
+
+    **走包级 API（`boxes.<pkg>.get_definition()`），不走 `definition.py`**：
+    盒子迁移到装配器之后，`definition.py` 里只剩声明本身，
+    装出来的东西住在包里。包才是盒子的**公开面**——
+    每只盒子都从包导出 `get_definition` / `get_beeline`。
+    """
     for pkg in sorted(_boxes_dir().iterdir()):
         if not pkg.is_dir() or not (pkg / "definition.py").exists():
             continue
         try:
-            mod = importlib.import_module(f"boxes.{pkg.name}.definition")
+            mod = importlib.import_module(f"boxes.{pkg.name}")
         except Exception:
             continue
         try:
@@ -76,7 +82,7 @@ def test_the_declared_chain_comes_from_the_box_own_beeline():
     for box_id in sorted(BOX_REGISTRY):
         pkg = _box_package_by_id(box_id)
         assert pkg, f"找不到 {box_id} 对应的盒子包"
-        mod = importlib.import_module(f"boxes.{pkg}.beeline")
+        mod = importlib.import_module(f"boxes.{pkg}")
         own = [op.op_id for op in mod.get_beeline().operations]
         assert declared_beeline_ops(box_id) == own, (
             f"{box_id}：看板读到的声明链跟盒子自己的 beeline 不一致"

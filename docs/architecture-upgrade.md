@@ -114,7 +114,29 @@ C9 用**被验者自己的解析器**（`runtime/acceptance.py` 的 `condition_p
 | `schemas.py` | 业务 schema | **基本不变**（契约是业务真） |
 | `measure.py` | 指标采集 | 没有指标就不建这个文件 |
 | `README.md` | 这只盒子是什么 | 内容变薄 |
-| `__init__.py` | 薄导出 | 不变 |
+| `__init__.py` | **装配 + 导出** | 见下 |
+
+**`__init__.py` 是盒子的清单，也是装配发生的地方**：
+
+```python
+ASSEMBLED = assemble(DECLARATION, COMPONENTS, schemas=ALL_SCHEMAS, handlers=MODEL_HANDLERS)
+WMS_DESIGN_BOX = ASSEMBLED.definition
+WMS_DESIGN_BEELINE = ASSEMBLED.beeline
+```
+
+**装配期就报错**——声明自相矛盾的话，这一行就抛 `AssemblyError`，
+带着「是哪个 op、哪个 schema、现在是什么、应该是什么」。
+
+装配器住在 `core/`，而 `core/` 是底层，**不反向依赖 `runtime/`**。
+所以 core 交出去的是**协议数据**（声明 / 作业路线 / 实现表），
+执行器由盒子的 `runner.py` 那行接到 runtime 上：
+
+```python
+RUNNER = HandlerRunner(MODEL_HANDLERS, owner="wms_design_box")
+```
+
+**每只盒子都从包导出 `get_definition()` / `get_beeline()`**——
+包是盒子的公开面，别的模块一律从包拿，不去摸 `definition.py`。
 
 **样板里的「为什么」注释原样保留。**
 压成一行 = 静默复制，比现在更糟——那些注释是踩坑记录，不是装饰。
@@ -126,16 +148,37 @@ C9 用**被验者自己的解析器**（`runtime/acceptance.py` 的 `condition_p
 1. **`wms_design`**（跳数最多、判据最多、例外最多、还有 ref 交接）
    ——它能装下，协议就够用；装不下说明协议漏了东西，
    **现在暴露比迁完所有盒子再发现便宜得多**。
+   - ✅ **已迁（2026-11-03）**：7 跳 / 8 判据 / 5 例外 / ref 交接全部走新协议。
+     差分验证：迁移前后**声明 + 作业路线逐字节相同**，
+     **真跑一次链路的产出也逐字节相同**。
 2. 学习域 4 只 → 票据 → WMS 其余。
 3. 每迁一只：跑全量 + 真跑一次链路 + 对比迁移前后的产出。
 4. 最后删旧路径，**不留兼容层**。
 
-**迁移期的两套路径并存是计划内的**，控制手段是：
-「新盒子必须走装配器」+「旧路径清单写死」两条守卫同时上。
-清单不写死就会漏（漏一只 = 两只盒子同时留着两套规矩）。
+**迁移期的两套路径并存是计划内的**，控制手段是三条守卫同时上：
+
+- 一只盒子**不许混着写**（不能同时出现 `BoxDeclaration` 和 `BeeBoxDefinition`）
+- 走了新路径的盒子**必须真的在装配**（声明写在文件里没人装 = 没迁移）
+- 「新盒子必须走装配器」——由**脚手架模板**保证（`scripts/new_box.py` 改造后
+  生成的盒子直接就是新写法），而不是靠人记着
 
 **差分测试**：迁移前录一份产出，迁移后重跑比对。
 无 LLM 腿的盒子逐字节比；有 LLM 的比结构与判据结论（LLM 有采样，逐字节比必然假红）。
+
+### 5.1 差分验证怎么做（已跑通）
+
+```bash
+# 迁移前：在上一个 commit 的隔离 worktree 里导出
+python -c "dump 声明 + 作业路线 → JSON"
+# 迁移后：主仓导出同样的东西
+diff -u before.json after.json     # 必须完全一致
+```
+
+真跑链路同理：同一个投料、同一份 store，比对 `status` /
+`acceptance_status` / `result` / `acceptance`。
+
+**空文件不算「一致」**——第一次跑差分时两边都 dump 失败，
+`diff` 对着两个空文件说「完全一致」。所以比对前必须先断言体积非空。
 
 ## 6. 风险与保险
 

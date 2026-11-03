@@ -37,7 +37,7 @@ from runtime import create_task_run, BeelineExecutor
 from tests.fixtures.sample_box import get_definition as get_sample_def
 from tests.fixtures.sample_box.beeline import get_beeline as get_sample_beeline
 from boxes.wms_design import get_definition as get_mod_def
-from boxes.wms_design.beeline import get_beeline as get_mod_beeline
+from boxes.wms_design import get_beeline as get_mod_beeline
 
 def _registry_roster() -> list[str]:
     """看板名册 = 注册表按业务流向排出来的那一串（**从注册表推**，不手抄）
@@ -1784,7 +1784,7 @@ class TestTheRenameKeepsHistoryReadable:
 
     def test_every_renamed_op_id_is_in_the_legacy_alias_table(self):
         """改过名的 op id 必须在旧名别名表里，否则老记录显示成「一跳都没跑到」"""
-        from boxes.wms_design.beeline import get_beeline as get_design_beeline
+        from boxes.wms_design import get_beeline as get_design_beeline
 
         ops = {op.op_id for op in get_design_beeline().operations}
         assert not any("model" in op for op in ops), (

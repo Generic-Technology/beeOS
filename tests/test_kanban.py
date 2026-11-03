@@ -28,7 +28,7 @@ from tests.fixtures.sample_box.beeline import get_beeline as get_sample_beeline
 from tests.fixtures.sample_box.runner import RUNNER as SAMPLE_RUNNER
 from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
 from boxes.wms_design import get_definition as get_mod_def
-from boxes.wms_design.beeline import get_beeline as get_mod_beeline
+from boxes.wms_design import get_beeline as get_mod_beeline
 from kanban.cli import render_dashboard
 
 

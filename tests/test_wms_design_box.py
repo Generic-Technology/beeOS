@@ -17,7 +17,7 @@ from boxes.wms_design import WMS_DESIGN_BOX, get_definition
 from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
 from boxes.wms_design.measure import COMPUTERS as MODEL_COMPUTERS
 from boxes.wms_design.schemas import REQUIREMENT_TYPES
-from boxes.wms_design.beeline import WMS_DESIGN_BEELINE, get_beeline
+from boxes.wms_design import WMS_DESIGN_BEELINE, get_beeline
 from core import metrics as m
 from core.models import NOT_APPLICABLE
 from runtime import (

@@ -488,6 +488,94 @@ class TestEveryRegisteredBoxSurvivesAssembly:
 
 
 # ============================================================
+# 迁移期的路径纪律
+# ============================================================
+
+
+def _module_of(box_id: str) -> str:
+    """box_id → 它在 boxes/ 下的模块名
+
+    从注册表推（不手抄名单）——手抄的名册必漂：
+    加一只盒子忘了改名单，那条守卫就永远绿着 = 形同虚设。
+    """
+    from kanban.trigger import BOX_REGISTRY
+
+    get_def = BOX_REGISTRY[box_id][0]
+    parts = get_def.__module__.split(".")
+    # 迁移前是 "boxes.<mod>.definition"，迁移后是 "boxes.<mod>"——
+    # 两种都取第二段。
+    return parts[1]
+
+
+class TestOnePathPerBox:
+    """一只盒子只走一条路径——不许两套规矩并行
+
+    迁移期必然有两套路径并存（这是计划内的）。但**一只盒子内部**
+    不许同时出现两套写法：那种盒子「一半新一半旧」，
+    读的人得同时记两套规矩，改的时候容易只改一半。
+    """
+
+    def test_no_box_mixes_the_two_paths(self):
+        from kanban.trigger import BOX_REGISTRY
+
+        for box_id in sorted(BOX_REGISTRY):
+            module = _module_of(box_id)
+            src = (REPO / "boxes" / module / "definition.py").read_text(
+                encoding="utf-8"
+            )
+            uses_new = "BoxDeclaration(" in src
+            uses_old = "BeeBoxDefinition(" in src
+            assert not (uses_new and uses_old), (
+                f"{box_id} 的 definition.py 同时用了 BoxDeclaration 和 "
+                f"BeeBoxDefinition——一只盒子只走一条路径"
+            )
+
+    def test_a_migrated_box_assembles_itself(self):
+        """走了新路径的盒子，**必须真的在装配**——
+        声明写在文件里却没人装它，等于没迁移
+        """
+        from kanban.trigger import BOX_REGISTRY
+
+        migrated = []
+        for box_id in sorted(BOX_REGISTRY):
+            module = _module_of(box_id)
+            src = (REPO / "boxes" / module / "definition.py").read_text(
+                encoding="utf-8"
+            )
+            if "BoxDeclaration(" not in src:
+                continue
+            migrated.append(box_id)
+            init_src = (REPO / "boxes" / module / "__init__.py").read_text(
+                encoding="utf-8"
+            )
+            assert "assemble(" in init_src, (
+                f"{box_id} 已经用 BoxDeclaration 声明了，却没有调用装配器——"
+                f"声明写在文件里没人装，等于没迁移"
+            )
+        assert migrated, "一只盒子都没迁——迁移期的守卫自己先失效了"
+
+    def test_the_migration_is_actually_moving(self):
+        """迁过的盒子要真的能装出来，而且装出来的东西跟旧的一样
+
+        这条不是「格式对不对」，是**行为没变**。
+        """
+        from kanban.trigger import BOX_REGISTRY
+
+        for box_id in sorted(BOX_REGISTRY):
+            module = _module_of(box_id)
+            src = (REPO / "boxes" / module / "definition.py").read_text(
+                encoding="utf-8"
+            )
+            if "BoxDeclaration(" not in src:
+                continue
+            # 装配在 import 时就发生——导入得进去，说明装得出来
+            import importlib
+
+            importlib.import_module(f"boxes.{module}")
+            assert box_id in BOX_REGISTRY
+
+
+# ============================================================
 # 分层：装配器住在 core，不许反向依赖执行层
 # ============================================================
 

@@ -21,7 +21,7 @@ from uuid import uuid4
 # 它引用的 schema id 全部来自本盒的 schemas.py，每个 op 的 handler 都在
 # 本盒的 runner.py 里。顶层一个 beelines/ 目录会让人以为存在一种可复用的
 # 跨盒路线，实际上一条都没有。
-from boxes.wms_design.beeline import get_beeline as get_design_beeline
+from boxes.wms_design import get_beeline as get_design_beeline
 from boxes.wms_analysis.beeline import get_beeline as get_wms_analysis_beeline
 from boxes.wms_development.beeline import get_beeline as get_wms_development_beeline
 from boxes.wms_ops.beeline import get_beeline as get_wms_ops_beeline
