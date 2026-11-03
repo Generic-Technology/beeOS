@@ -9,6 +9,11 @@ boxes.receipt - 小票识别盒的履约流水线
 跟其他 beeline 的区别只有一处，但很关键：**LLM 只在第 1 步**。
 校验和打包都不再碰模型，所以「模型为了好看把数字凑平」这条路是堵死的。
 
+**为什么是「组件链」而不是一份 `Beeline(...)`**：
+盒子不手写 `Operation` / `NextRef` / `Bee` 那套样板——
+它只声明每一跳的**形状**（吃什么、吐什么、数据从哪来、下一步去哪），
+由 `core/scaffold.py` 的装配器把它组装成作业路线**并当场校验**。
+
 beeline 跟盒子是 **1:1 且不可分割** 的：它引用的 schema id 全部来自本盒的
 `schemas.py`，每个 op 的 handler 都在本盒的 `runner.py` 里。所以它住在盒子
 里面，而不是仓库顶层一个单独的目录——顶层目录会让人以为存在一种
@@ -17,44 +22,35 @@ beeline 跟盒子是 **1:1 且不可分割** 的：它引用的 schema id 全部
 
 from __future__ import annotations
 
-from core.beeline_models import Beeline, Bee, NextRef, Operation
+from core.scaffold import Component
 
 
-RECEIPT_CAPTURE_BEELINE = Beeline(
-    id="beeline_receipt_capture_v1",
-    version=1,
-    description="看图 → 机械校验 → 打包",
-    operations=[
-        Operation(
-            op_id="read_receipt",
-            type="read_receipt",
-            input_from="external",
-            input="schema_receipt_photo",
-            output="schema_receipt_parsed",
-            next=[NextRef(op_id="verify_receipt")],
-            bee=Bee(type="receipt_reader"),
-        ),
-        Operation(
-            op_id="verify_receipt",
-            type="verify_receipt",
-            input_from="read_receipt",
-            input="schema_receipt_parsed",
-            output="schema_receipt_parsed",
-            next=[NextRef(op_id="package_receipt")],
-            bee=Bee(type="arithmetic_checker"),
-        ),
-        Operation(
-            op_id="package_receipt",
-            type="package_receipt",
-            input_from="verify_receipt",
-            input="schema_receipt_parsed",
-            output="schema_receipt_parsed",
-            next=[],
-            bee=Bee(type="receipt_packager"),
-        ),
-    ],
-)
-
-
-def get_beeline() -> Beeline:
-    return RECEIPT_CAPTURE_BEELINE
+COMPONENTS: list[Component] = [
+    Component(
+        op_id="read_receipt",
+        type="read_receipt",
+        input_from="external",
+        input="schema_receipt_photo",
+        output="schema_receipt_parsed",
+        next=["verify_receipt"],
+        bee_type="receipt_reader",
+    ),
+    Component(
+        op_id="verify_receipt",
+        type="verify_receipt",
+        input_from="read_receipt",
+        input="schema_receipt_parsed",
+        output="schema_receipt_parsed",
+        next=["package_receipt"],
+        bee_type="arithmetic_checker",
+    ),
+    Component(
+        op_id="package_receipt",
+        type="package_receipt",
+        input_from="verify_receipt",
+        input="schema_receipt_parsed",
+        output="schema_receipt_parsed",
+        next=[],
+        bee_type="receipt_packager",
+    ),
+]

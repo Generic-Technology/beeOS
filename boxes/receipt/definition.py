@@ -1,5 +1,5 @@
 """
-boxes.receipt.definition - 小票识别履约盒 Definition
+boxes.receipt.definition - 小票识别履约盒的声明
 
 输入：一张小票照片
 输出：结构化小票 + 6 项机械校验证据
@@ -114,27 +114,30 @@ n/a 不算失败（不挡交付），但**也不算通过**——看板把它单
 
 这条边界跟捕获盒的 type_boundary 是同一个：无法机械验证的，
 就明确说是人工区，别用一条永远拿不到真值的判据把它盖过去。
+
+**为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
+盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
+拼装（以及当场校验）由 `core/scaffold.py` 的装配器做——
+声明自相矛盾的话，在装配那一步就报出来，而不是等到履约跑起来。
 """
 
 from __future__ import annotations
 
 from core.models import (
     AcceptanceRule,
-    BeeBoxDefinition,
     ExceptionRule,
     MetricDef,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
-    ResultDef,
-    TaskDef,
 )
+from core.scaffold import BoxDeclaration
+
 from boxes.receipt.schemas import ALL_SCHEMAS
 
 
-RECEIPT_CAPTURE_BOX = BeeBoxDefinition(
+DECLARATION = BoxDeclaration(
     id="receipt_capture_box",
     version=1,
     description=(
@@ -143,64 +146,62 @@ RECEIPT_CAPTURE_BOX = BeeBoxDefinition(
         "模型只负责看图抄字，算术一律由盒子自己算。"
     ),
 
-    schemas=ALL_SCHEMAS,
+    # ---- 归属：这只盒子在企业里站在哪 ----
+    display_name="Receipt Capture Box",
+    # 小票识别归费用报销价值流，不归软件交付——填错价值流
+    # 等于把盒子挂到错误的业务线上，跟业务语义造假是一回事。
+    value_stream="Expense Reimbursement",
+    role="Receipt Recognition Fulfillment",
+    feeds_into=[],
 
-    placement=PlacementDef(
-        display_name="Receipt Capture Box",
-        # 小票识别归费用报销价值流，不归软件交付——填错价值流
-        # 等于把盒子挂到错误的业务线上，跟业务语义造假是一回事。
-        value_stream="Expense Reimbursement",
-        role="Receipt Recognition Fulfillment",
-        feeds_into=[],
+    # ---- 投料入口（Intent）----
+    task_type="capture_receipt",
+    task_schema="schema_receipt_photo",
+    # **不声明 subject_ref_field**：小票没有预存 id——
+    # 它的标识是这次履约**产出**的（package_id 等），
+    # 投料里只有一张照片和一句商家提示，指不出「这是哪张单子」。
+    task_trigger=(
+        "财务 / 店长拍一张收银小票要录进账\n"
+        "OR 批量报销要先把小票转成结构化明细\n"
+        "OR 上一次解析金额对不上，要重拍重认"
     ),
 
-    task=[
-        TaskDef(
-            type="capture_receipt",
-            task_schema="schema_receipt_photo",
-            beeline_id="beeline_receipt_capture_v1",
-            beeline_version=1,
-            # **不声明 subject_ref_field**：小票没有预存 id——
-            # 它的标识是这次履约**产出**的（package_id 等），
-            # 投料里只有一张照片和一句商家提示，指不出「这是哪张单子」。
-            trigger=(
-                "财务 / 店长拍一张收银小票要录进账\n"
-                "OR 批量报销要先把小票转成结构化明细\n"
-                "OR 上一次解析金额对不上，要重拍重认"
-            ),
+    # ---- 产出契约（Contract）----
+    result_type="receipt_captured",
+    result_schema="schema_receipt_parsed",
+    # **这句话以前写了却被静默丢弃**（2026-11-04 修）：
+    # 当时 ResultDef 没有 description 字段，pydantic 照单全收地扔掉了。
+    # 现在它真的存下来了。
+    result_description="结构化小票 + 6 项机械校验证据",
+    artifact_view="receipt",
+    acceptance=[
+        AcceptanceRule(metric="field_completeness", op="eq", value=True),
+        AcceptanceRule(metric="line_arithmetic", op="eq", value=True),
+        AcceptanceRule(metric="sum_arithmetic", op="eq", value=True),
+        AcceptanceRule(metric="total_arithmetic", op="eq", value=True),
+        AcceptanceRule(metric="date_wellformed", op="eq", value=True),
+        AcceptanceRule(metric="totals_match", op="eq", value=True),
+    ],
+    exceptions=[
+        ExceptionRule(
+            condition="items_count == 0",
+            action="no_deliver",
+            reason="没读出任何商品行——照片太糊 / 不是小票 / 拍的是二维码，别硬编",
+        ),
+        ExceptionRule(
+            condition="totals_match == false",
+            action="escalate",
+            reason="金额自相矛盾（小计+税≠合计，或某行数量×单价≠金额），"
+                   "模型多半抄错了数字，需要人工对账后再重认",
         ),
     ],
 
-    result=ResultDef(
-        type="receipt_captured",
-        result_schema="schema_receipt_parsed",
-        view="receipt",
-        description="结构化小票 + 6 项机械校验证据",
+    # ---- 作业路线（Procedure）----
+    beeline_id="beeline_receipt_capture_v1",
+    beeline_version=1,
+    beeline_description="看图 → 机械校验 → 打包",
 
-        acceptance=[
-            AcceptanceRule(metric="field_completeness", op="eq", value=True),
-            AcceptanceRule(metric="line_arithmetic", op="eq", value=True),
-            AcceptanceRule(metric="sum_arithmetic", op="eq", value=True),
-            AcceptanceRule(metric="total_arithmetic", op="eq", value=True),
-            AcceptanceRule(metric="date_wellformed", op="eq", value=True),
-            AcceptanceRule(metric="totals_match", op="eq", value=True),
-        ],
-
-        exceptions=[
-            ExceptionRule(
-                condition="items_count == 0",
-                action="no_deliver",
-                reason="没读出任何商品行——照片太糊 / 不是小票 / 拍的是二维码，别硬编",
-            ),
-            ExceptionRule(
-                condition="totals_match == false",
-                action="escalate",
-                reason="金额自相矛盾（小计+税≠合计，或某行数量×单价≠金额），"
-                       "模型多半抄错了数字，需要人工对账后再重认",
-            ),
-        ],
-    ),
-
+    # ---- 履约政策（Policy）----
     queen=QueenDef(
         authorization=QueenAuthorization(
             task_routing="allow",
@@ -221,6 +222,7 @@ RECEIPT_CAPTURE_BOX = BeeBoxDefinition(
         ),
     ),
 
+    # ---- 履约度量（Metrics）----
     metrics=MetricsDef(
         quality=[
             MetricDef(
@@ -253,7 +255,3 @@ RECEIPT_CAPTURE_BOX = BeeBoxDefinition(
         ],
     ),
 )
-
-
-def get_definition() -> BeeBoxDefinition:
-    return RECEIPT_CAPTURE_BOX

@@ -27,7 +27,7 @@ from boxes.wms_development.beeline import get_beeline as get_wms_development_bee
 from boxes.wms_ops.beeline import get_beeline as get_wms_ops_beeline
 from boxes.wms_system.beeline import get_beeline as get_wms_system_beeline
 from boxes.wms_testing.beeline import get_beeline as get_wms_testing_beeline
-from boxes.receipt.beeline import get_beeline as get_receipt_capture_beeline
+from boxes.receipt import get_beeline as get_receipt_capture_beeline
 from boxes.wms_requirement.beeline import get_beeline as get_requirement_capture_beeline
 from boxes.wms_analysis.measure import COMPUTERS as WMS_ANALYSIS_COMPUTERS
 from boxes.wms_analysis.runner import RUNNER as WMS_ANALYSIS_RUNNER
