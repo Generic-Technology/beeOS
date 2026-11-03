@@ -200,6 +200,85 @@ class TestTheScaffoldedBoxIsHonestlyRed:
         )
 
 
+class TestANewBoxGoesThroughTheAssembler:
+    """**新盒子必须走装配器**——这条靠脚手架保证，不靠人记着
+
+    以前新盒子是**手抄一份样板**：抄错了就得到一只
+    「看起来注册了、其实哪儿都不对」的盒子——判据读不到字段、
+    例外永远不触发、op 的数据来源指了个不存在的 op，
+    而这一切要等履约跑起来才炸（或者更糟——永远不炸）。
+
+    现在盒子只提供**声明 + 组件链**，由 `core/scaffold.py` 的装配器
+    组装并当场校验。所以「新盒子走新路径」不是纪律，是**脚手架的输出**。
+    """
+
+    def test_the_generated_box_declares_rather_than_hand_writes(self, tmp_path):
+        spec = _spec()
+        write_box(spec, tmp_path / "boxes")
+        src = (tmp_path / "boxes" / spec.module / "definition.py").read_text(
+            encoding="utf-8",
+        )
+        assert "BoxDeclaration(" in src, "生成的盒子没有用 BoxDeclaration 声明"
+        assert "BeeBoxDefinition(" not in src, (
+            "生成的盒子不该手写 BeeBoxDefinition——"
+            "手写的那份不会被装配器校验"
+        )
+
+    def test_the_generated_beeline_is_a_component_chain(self, tmp_path):
+        spec = _spec()
+        write_box(spec, tmp_path / "boxes")
+        src = (tmp_path / "boxes" / spec.module / "beeline.py").read_text(
+            encoding="utf-8",
+        )
+        assert "Component(" in src, "生成的作业路线该是组件链"
+        assert "Operation(" not in src, (
+            "生成的作业路线不该手写 Operation——"
+            "手写的那份不会被装配器校验"
+        )
+
+    def test_the_generated_package_actually_assembles(self, tmp_path):
+        spec = _spec()
+        write_box(spec, tmp_path / "boxes")
+        src = (tmp_path / "boxes" / spec.module / "__init__.py").read_text(
+            encoding="utf-8",
+        )
+        assert "assemble(" in src, "生成的盒子没有调用装配器"
+
+    def test_the_generated_box_really_assembles(self, scaffolded):
+        """**装得出来**——而且装配器真的验了东西
+
+        这一条是前面几条的**结果**：装配在 import 时发生，
+        装不上就是 import 就炸。所以「装得上」= 声明 + 组件链 + 实现表
+        三者自洽。
+        """
+        module = importlib.import_module(f"boxes.{scaffolded.module}")
+        report = module.ASSEMBLED.report
+        assert report.checks, "装配报告是空的 = 什么都没验"
+        assert report.op_count == 3, f"跳数不对：{report.op_count}"
+        assert report.schema_count == 4, f"schema 数不对：{report.schema_count}"
+
+    def test_the_assembled_beeline_matches_the_declared_components(self, scaffolded):
+        """装出来的作业路线 == 声明的组件链（不多不少、顺序不变）"""
+        module = importlib.import_module(f"boxes.{scaffolded.module}")
+        declared = [c.op_id for c in module.COMPONENTS]
+        assembled = [op.op_id for op in module.ASSEMBLED.beeline.operations]
+        assert assembled == declared, (
+            f"装出来的作业路线跟组件链不一致：{assembled} vs {declared}"
+        )
+
+    def test_the_assembled_definition_matches_the_declaration(self, scaffolded):
+        """装出来的声明 == 声明里写的东西（不多不少）"""
+        module = importlib.import_module(f"boxes.{scaffolded.module}")
+        declaration = module.DECLARATION
+        definition = module.ASSEMBLED.definition
+        assert definition.id == declaration.id
+        assert definition.result.result_schema == declaration.result_schema
+        assert len(definition.result.acceptance) == len(declaration.acceptance)
+        assert len(definition.result.exceptions) == len(declaration.exceptions)
+        assert definition.task[0].task_schema == declaration.task_schema
+        assert definition.task[0].beeline_id == declaration.beeline_id
+
+
 class TestTheScaffoldItself:
     def test_it_refuses_to_overwrite_a_delivered_box(self, tmp_path):
         """**不许冲掉已交付的盒子**——那比没有脚手架更糟"""
@@ -311,8 +390,15 @@ class TestTheScaffoldItself:
         write_box(spec, tmp_path / "boxes")
         box_dir = tmp_path / "boxes" / spec.module
 
-        # 只许导入 core 的**模型**（数据形状），不许别的
-        allowed_core = {"core.models", "core.beeline_models", "core.metrics"}
+        # 只许导入 core 的**模型与协议**（数据形状 / 装配协议），不许别的
+        allowed_core = {
+            "core.models",
+            "core.beeline_models",
+            "core.metrics",
+            # **装配协议**：新盒子靠它把声明装成运行时认识的那几样。
+            # 它是**协议**，不是业务知识——跟 core.models 同一性质。
+            "core.scaffold",
+        }
         imported: set[str] = set()
         writes = []
         for path in sorted(box_dir.glob("*.py")):

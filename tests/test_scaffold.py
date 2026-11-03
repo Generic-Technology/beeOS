@@ -507,6 +507,48 @@ def _module_of(box_id: str) -> str:
     return parts[1]
 
 
+def _all_modules() -> list[str]:
+    """注册表里全部盒子的模块名（从注册表推）"""
+    from kanban.trigger import BOX_REGISTRY
+
+    return [_module_of(box_id) for box_id in sorted(BOX_REGISTRY)]
+
+
+def _definition_source(module: str) -> str:
+    return (REPO / "boxes" / module / "definition.py").read_text(encoding="utf-8")
+
+
+def _uses_legacy_path(module: str) -> bool:
+    """这只盒子还在旧写法上（手写 BeeBoxDefinition）"""
+    return "BeeBoxDefinition(" in _definition_source(module)
+
+
+#: 还在**旧写法**上的盒子模块——**写死的迁移台账**。
+#:
+#: **为什么手写而不是自动推导**：自动推导的话，
+#: 「新盒子必须走装配器」这条守卫就形同虚设——
+#: 有人手写一只新盒子用了旧写法，派生集合跟着它一起变，守卫永远绿。
+#:
+#: 手写清单是**意图**（「这些盒子还没迁」），派生集合是**事实**
+#: （「这些盒子确实还在旧写法」）。两者必须对上：
+#: 对不上时红，并说清该改哪一边。
+#:
+#: **每迁走一只，就从这里划掉一条**——迁到最后这个清单是空的。
+LEGACY_BOX_MODULES = (
+    "learning_chinese",
+    "learning_english",
+    "learning_growth",
+    "learning_math",
+    "receipt",
+    "wms_analysis",
+    "wms_development",
+    "wms_ops",
+    "wms_requirement",
+    "wms_system",
+    "wms_testing",
+)
+
+
 class TestOnePathPerBox:
     """一只盒子只走一条路径——不许两套规矩并行
 
@@ -516,17 +558,12 @@ class TestOnePathPerBox:
     """
 
     def test_no_box_mixes_the_two_paths(self):
-        from kanban.trigger import BOX_REGISTRY
-
-        for box_id in sorted(BOX_REGISTRY):
-            module = _module_of(box_id)
-            src = (REPO / "boxes" / module / "definition.py").read_text(
-                encoding="utf-8"
-            )
+        for module in _all_modules():
+            src = _definition_source(module)
             uses_new = "BoxDeclaration(" in src
             uses_old = "BeeBoxDefinition(" in src
             assert not (uses_new and uses_old), (
-                f"{box_id} 的 definition.py 同时用了 BoxDeclaration 和 "
+                f"{module} 的 definition.py 同时用了 BoxDeclaration 和 "
                 f"BeeBoxDefinition——一只盒子只走一条路径"
             )
 
@@ -534,22 +571,16 @@ class TestOnePathPerBox:
         """走了新路径的盒子，**必须真的在装配**——
         声明写在文件里却没人装它，等于没迁移
         """
-        from kanban.trigger import BOX_REGISTRY
-
         migrated = []
-        for box_id in sorted(BOX_REGISTRY):
-            module = _module_of(box_id)
-            src = (REPO / "boxes" / module / "definition.py").read_text(
-                encoding="utf-8"
-            )
-            if "BoxDeclaration(" not in src:
+        for module in _all_modules():
+            if "BoxDeclaration(" not in _definition_source(module):
                 continue
-            migrated.append(box_id)
+            migrated.append(module)
             init_src = (REPO / "boxes" / module / "__init__.py").read_text(
                 encoding="utf-8"
             )
             assert "assemble(" in init_src, (
-                f"{box_id} 已经用 BoxDeclaration 声明了，却没有调用装配器——"
+                f"{module} 已经用 BoxDeclaration 声明了，却没有调用装配器——"
                 f"声明写在文件里没人装，等于没迁移"
             )
         assert migrated, "一只盒子都没迁——迁移期的守卫自己先失效了"
@@ -559,20 +590,40 @@ class TestOnePathPerBox:
 
         这条不是「格式对不对」，是**行为没变**。
         """
+        import importlib
+
         from kanban.trigger import BOX_REGISTRY
 
         for box_id in sorted(BOX_REGISTRY):
             module = _module_of(box_id)
-            src = (REPO / "boxes" / module / "definition.py").read_text(
-                encoding="utf-8"
-            )
-            if "BoxDeclaration(" not in src:
+            if "BoxDeclaration(" not in _definition_source(module):
                 continue
             # 装配在 import 时就发生——导入得进去，说明装得出来
-            import importlib
-
             importlib.import_module(f"boxes.{module}")
             assert box_id in BOX_REGISTRY
+
+    def test_no_new_box_may_use_the_legacy_path(self):
+        """**新盒子必须走装配器**——手写也不例外
+
+        脚手架现在直接生成新写法，所以正常路径下这只守卫不会红。
+        它红只有一个原因：**有人手写了一只新盒子，用了旧写法**。
+        那种盒子不会被装配器校验——判据读不到字段、例外永远不触发，
+        要等履约跑起来才炸（或者永远不炸）。
+
+        对不上时红，并说清该改哪一边：
+        - 派生集合里多出来的 = 新写的旧盒子 → 把它改成新写法
+        - 台账里多出来的 = 已经迁走了却忘了划掉 → 划掉它
+        """
+        derived = {m for m in _all_modules() if _uses_legacy_path(m)}
+        recorded = set(LEGACY_BOX_MODULES)
+
+        assert derived == recorded, (
+            "旧路径台账跟实际对不上：\n"
+            f"  实际还在旧写法：{sorted(derived)}\n"
+            f"  台账记着：      {sorted(recorded)}\n"
+            f"  新写的旧盒子：  {sorted(derived - recorded)}（改成新写法）\n"
+            f"  忘了划掉的：    {sorted(recorded - derived)}（从台账里划掉）"
+        )
 
 
 # ============================================================

@@ -17,6 +17,22 @@ measure / __init__）+ 在 `kanban/trigger.py` 注册 3 处 + 根 README 加一�
 
 漏一处的后果不是报错，是一只「看起来注册了、其实哪儿都不对」的盒子。
 
+## 生成的盒子走**新协议**（2026-11-03 起）
+
+盒子不再是手抄一份 `BeeBoxDefinition` + `Beeline` 的样板，而是：
+
+- `definition.py` 只写 **`DECLARATION`**（这只盒子是什么）
+- `beeline.py` 只写 **`COMPONENTS`**（每一跳的形状）
+- `__init__.py` 调 **`assemble(...)`** 把它们装成运行时认识的那几样
+
+**为什么这样**：装配器在装配的时候会把 C1–C12 那些错**当场挑出来**——
+判据读不到字段、例外永远不触发、op 的数据来源指了个不存在的 op、
+末跳吐的形状跟声明的产出契约不是一回事。这些错以前要等履约跑起来才炸
+（或者更糟——永远不炸）。
+
+**「新盒子必须走装配器」这条规矩靠本脚手架保证，不靠人记着。**
+所以每只新盒子一落地就是新写法，不会有「一半新一半旧」的盒子。
+
 所以脚手架**按守卫的同一套口径生成**：生成完的盒子必须真的通过
 `tests/test_box_standard.py` 和 `tests/test_docs_match_code.py` 的检查。
 `tests/test_new_box_scaffold.py` 就是这么验的——它**调用真守卫**，
@@ -346,21 +362,69 @@ __DESCRIPTION__
 **为什么宁可红**：一只**零判据**的盒子会被判成「全过」——
 那是「看起来成功，其实什么也没验」的谎。
 骨架盒反过来：真声明它将来要验的东西，产出**不带**那些量 → 全红。
+
+## 这只盒子的零件在哪
+
+| 文件 | 装什么 |
+| --- | --- |
+| `definition.py` | `DECLARATION`——这只盒子是什么（声明） |
+| `beeline.py` | `COMPONENTS`——每一跳的形状（组件链） |
+| `runner.py` | 每一跳的实现（handler）+ handler 表 |
+| `schemas.py` | 业务 schema（契约） |
+
+**装配在这里发生**（下面这几行）：
+
+```python
+ASSEMBLED = assemble(DECLARATION, COMPONENTS, schemas=ALL_SCHEMAS, handlers=__CONST___HANDLERS)
+```
+
+声明自相矛盾的话，装配这一步就抛出来——**装配期就报错**，
+不用等到履约跑起来才发现「判据读不到字段」「例外永远不触发」。
 """
 
 from __future__ import annotations
 
-from boxes.__MODULE__.definition import __CONST___BOX, get_definition
+from core.beeline_models import Beeline
+from core.models import BeeBoxDefinition
+from core.scaffold import assemble
+
+from boxes.__MODULE__.beeline import COMPONENTS
+from boxes.__MODULE__.definition import DECLARATION
 from boxes.__MODULE__.runner import RUNNER, __CONST___HANDLERS
-from boxes.__MODULE__.beeline import __CONST___BEELINE, get_beeline
+from boxes.__MODULE__.schemas import ALL_SCHEMAS
+
+
+# **装配在这一步发生。** 声明自相矛盾 → 这里抛 AssemblyError，
+# 带着「是哪个 op、哪个 schema、现在是什么、应该是什么」。
+ASSEMBLED = assemble(
+    DECLARATION,
+    COMPONENTS,
+    schemas=ALL_SCHEMAS,
+    handlers=__CONST___HANDLERS,
+)
+
+__CONST___BOX: BeeBoxDefinition = ASSEMBLED.definition
+__CONST___BEELINE: Beeline = ASSEMBLED.beeline
+
+
+def get_definition() -> BeeBoxDefinition:
+    return ASSEMBLED.definition
+
+
+def get_beeline() -> Beeline:
+    return ASSEMBLED.beeline
+
 
 __all__ = [
+    "ASSEMBLED",
     "__CONST___BOX",
     "get_definition",
-    "RUNNER",
-    "__CONST___HANDLERS",
     "__CONST___BEELINE",
     "get_beeline",
+    "RUNNER",
+    "__CONST___HANDLERS",
+    "DECLARATION",
+    "COMPONENTS",
 ]
 '''
 
@@ -451,14 +515,22 @@ ALL_SCHEMAS = [
 ]
 '''
 
-_BEELINE_TEMPLATE = '''"""boxes.__MODULE__.beeline - __DISPLAY__ 的作业路线
+_BEELINE_TEMPLATE = '''"""boxes.__MODULE__.beeline - __DISPLAY__ 的作业路线（组件链）
 
 op 链（v__BEELINE_VERSION__）：
   1. `__OP_INTAKE__`      取投料 → 这一跳要做什么
   2. `__OP_WORK__`        真干活 → 真的观测到的东西
   3. `__OP_PACKAGER__`    装配产出
 
-**beeline 跟盒子是 1:1 且不可分割的**：它引用的 schema id 全部来自本盒的
+**为什么是「组件链」而不是一份 `Beeline(...)`**：
+盒子不手写 `Operation` / `NextRef` / `Bee` 那套样板——
+它只声明每一跳的**形状**（吃什么、吐什么、数据从哪来、下一步去哪），
+由 `core/scaffold.py` 的装配器把它组装成作业路线**并当场校验**。
+
+装出来的东西跟手写的那份**一模一样**（`tests/test_scaffold.py` 守着这条），
+所以「少写样板」不是「少写真相」。
+
+beeline 跟盒子是 1:1 且不可分割的：它引用的 schema id 全部来自本盒的
 `schemas.py`，每个 op 的 handler 都在本盒的 `runner.py` 里。
 所以它住在盒子里面，而不是仓库顶层一个单独的目录——
 顶层目录会让人以为存在一种「可复用的跨盒作业路线」，而实际上一条都没有。
@@ -466,99 +538,83 @@ op 链（v__BEELINE_VERSION__）：
 
 from __future__ import annotations
 
-from core.beeline_models import (
-    Bee,
-    Beeline,
-    Idempotency,
-    NextRef,
-    Operation,
-)
+from core.beeline_models import Idempotency
+from core.scaffold import Component
 
 
 # 同一任务重复执行必须产出同一份结果
 IDEMPOTENT_BY_TASK = Idempotency(mode="required", key="task_id")
 
 
-__CONST___BEELINE = Beeline(
-    id="__BEELINE_ID__",
-    version=__BEELINE_VERSION__,
-    description=(
-        "__DISPLAY__ 履约作业路线：__OP_INTAKE__ → __OP_WORK__ → __OP_PACKAGER__"
+COMPONENTS: list[Component] = [
+    Component(
+        op_id="__OP_INTAKE__",
+        type="__OP_INTAKE__",
+        input_from="external",
+        input="__SCHEMA_INPUT__",
+        output="__SCHEMA_PLAN__",
+        next=["__OP_WORK__"],
+        bee_type="__OP_INTAKE___handler",
+        idempotency=IDEMPOTENT_BY_TASK,
     ),
 
-    operations=[
-        Operation(
-            op_id="__OP_INTAKE__",
-            type="__OP_INTAKE__",
-            input_from="external",
-            input="__SCHEMA_INPUT__",
-            output="__SCHEMA_PLAN__",
-            next=[NextRef(op_id="__OP_WORK__")],
-            bee=Bee(type="__OP_INTAKE___handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
+    Component(
+        op_id="__OP_WORK__",
+        type="__OP_WORK__",
+        input_from="__OP_INTAKE__",
+        input="__SCHEMA_PLAN__",
+        output="__SCHEMA_OBSERVATION__",
+        next=["__OP_PACKAGER__"],
+        bee_type="__OP_WORK___handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+    ),
 
-        Operation(
-            op_id="__OP_WORK__",
-            type="__OP_WORK__",
-            input_from="__OP_INTAKE__",
-            input="__SCHEMA_PLAN__",
-            output="__SCHEMA_OBSERVATION__",
-            next=[NextRef(op_id="__OP_PACKAGER__")],
-            bee=Bee(type="__OP_WORK___handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
-
-        Operation(
-            op_id="__OP_PACKAGER__",
-            type="__OP_PACKAGER__",
-            input_from="__OP_WORK__",
-            input="__SCHEMA_OBSERVATION__",
-            output="__SCHEMA_OUTPUT__",
-            next=[],
-            bee=Bee(type="__OP_PACKAGER___handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
-    ],
-)
-
-
-def get_beeline() -> Beeline:
-    return __CONST___BEELINE
+    Component(
+        op_id="__OP_PACKAGER__",
+        type="__OP_PACKAGER__",
+        input_from="__OP_WORK__",
+        input="__SCHEMA_OBSERVATION__",
+        output="__SCHEMA_OUTPUT__",
+        next=[],
+        bee_type="__OP_PACKAGER___handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+    ),
+]
 '''
 
-_DEFINITION_TEMPLATE = '''"""boxes.__MODULE__.definition - __DISPLAY__ 的 Definition 数据
+_DEFINITION_TEMPLATE = '''"""boxes.__MODULE__.definition - __DISPLAY__ 的声明
 
 __DESCRIPTION__
 
 按 Fulfillment 5 维度 + 度量组织：
-- 基础元信息 + placement（归属 / 接谁 / 投给谁 / 属于哪个域）
-- 数据形状（schemas）
+- 基础元信息 + 归属（域 / 价值流 / 角色 / 接谁投给谁）
 - 履约意图 Intent（task）
 - 履约合同 Contract（result + acceptance + exceptions）
 - 履约政策 Policy（queen）
 - 履约度量 Metrics
 
 **成熟度：skeleton**。腿还没实现 → 产出不带判据要读的量 → 全红。
+
+**为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
+盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
+拼装（以及当场校验）由 `core/scaffold.py` 的装配器做——
+声明自相矛盾的话，在装配那一步就报出来，而不是等到履约跑起来。
 """
 
 from __future__ import annotations
 
 from core.models import (
     AcceptanceRule,
-    BeeBoxDefinition,
     ExceptionRule,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
-    ResultDef,
-    TaskDef,
 )
-from boxes.__MODULE__.schemas import ALL_SCHEMAS
+from core.scaffold import BoxDeclaration
 
-__CONST___BOX = BeeBoxDefinition(
+
+DECLARATION = BoxDeclaration(
     id="__BOX_ID__",
     version=1,
     description=(
@@ -567,47 +623,46 @@ __CONST___BOX = BeeBoxDefinition(
         "跑起来一定是红的，这是诚实的信号，不是故障。"
     ),
 
-    schemas=ALL_SCHEMAS,
+    # ---- 归属：这只盒子在企业里站在哪 ----
+    display_name="__DISPLAY__",
+    value_stream="__VALUE_STREAM__",
+    role="__ROLE__",
+    domain="__DOMAIN__",
+    # **接线在生成时就填好了**：空着的 feeds_into 会让这只盒子
+    # 变成本域的第二个终点 → 圆心算不出来 → 看板拓扑禁用。
+    feeds_into=__FEEDS_INTO__,
 
-    placement=PlacementDef(
-        display_name="__DISPLAY__",
-        value_stream="__VALUE_STREAM__",
-        role="__ROLE__",
-        domain="__DOMAIN__",
-        # **接线在生成时就填好了**：空着的 feeds_into 会让这只盒子
-        # 变成本域的第二个终点 → 圆心算不出来 → 看板拓扑禁用。
-        feeds_into=__FEEDS_INTO__,
-    ),
+    # ---- 投料入口（Intent）----
+    task_type="__TASK_TYPE__",
+    task_schema="__SCHEMA_INPUT__",
+    # **不声明 subject_ref_field**：等你知道这只盒子处理的是哪一类
+    # 业务对象再补。声明了就必须真的投进来（runtime 会拒）。
+    task_trigger="__DESCRIPTION__",
 
-    task=[
-        TaskDef(
-            type="__TASK_TYPE__",
-            task_schema="__SCHEMA_INPUT__",
-            beeline_id="__BEELINE_ID__",
-            beeline_version=__BEELINE_VERSION__,
-            # **不声明 subject_ref_field**：等你知道这只盒子处理的是哪一类
-            # 业务对象再补。声明了就必须真的投进来（runtime 会拒）。
-            trigger="__DESCRIPTION__",
-        ),
+    # ---- 产出契约（Contract）----
+    result_type="__MODULE___result",
+    result_schema="__SCHEMA_OUTPUT__",
+    maturity="skeleton",
+    artifact_view="generic",
+    acceptance=[
+        # **判据读的是产出里的字段名**——字段不在产出 schema 里，
+        # 这条判据就永远读不到值（装配期硬校验）。
+        AcceptanceRule(metric="__METRIC_OK__", op="eq", value=True),
+    ],
+    exceptions=[
+        # **例外 = 真会发生的失败**。写不出来就先别写：
+        # 一条永远不会触发的规则看起来在守着某件事，实际什么都没守。
+        ExceptionRule(condition="__METRIC_OK__ == false", action="escalate"),
     ],
 
-    result=ResultDef(
-        type="__MODULE___result",
-        result_schema="__SCHEMA_OUTPUT__",
-        maturity="skeleton",
-        acceptance=[
-            # **判据读的是产出里的字段名**——字段不在产出 schema 里，
-            # 这条判据就永远读不到值（生成期硬校验）。
-            AcceptanceRule(metric="__METRIC_OK__", op="eq", value=True),
-        ],
-        exceptions=[
-            # **例外 = 真会发生的失败**。写不出来就先别写：
-            # 一条永远不会触发的规则看起来在守着某件事，实际什么都没守。
-            ExceptionRule(condition="__METRIC_OK__ == false", action="escalate"),
-        ],
-        view="generic",
+    # ---- 作业路线（Procedure）----
+    beeline_id="__BEELINE_ID__",
+    beeline_version=__BEELINE_VERSION__,
+    beeline_description=(
+        "__DISPLAY__ 履约作业路线：__OP_INTAKE__ → __OP_WORK__ → __OP_PACKAGER__"
     ),
 
+    # ---- 履约政策（Policy）----
     queen=QueenDef(
         authorization=QueenAuthorization(
             task_routing="allow",
@@ -628,10 +683,6 @@ __CONST___BOX = BeeBoxDefinition(
     # 并在 `measure.py` 给每个指标一个采集算法。
     metrics=MetricsDef(),
 )
-
-
-def get_definition() -> BeeBoxDefinition:
-    return __CONST___BOX
 '''
 
 _RUNNER_TEMPLATE = '''"""boxes.__MODULE__.runner - __DISPLAY__ 的 operation 实现
@@ -650,6 +701,9 @@ op 链：
 
 **失败路径必须显式**：真实现时，每一次失败都要进产出并带原因，
 不要静默跳过、不要填默认值。兜底会把链路 bug 伪装成业务 bug。
+
+**这张表就是装配器要的那张表**：装配时它按 `op.type` 给每一跳
+找到实现——**没有实现的跳，装配这一步就报错**（不等到履约跑起来才炸）。
 """
 
 from __future__ import annotations
@@ -745,6 +799,9 @@ __DESCRIPTION__
 2. `__OP_WORK__` — 真干活 → 真的观测到的东西
 3. `__OP_PACKAGER__` — 装配产出 → `__SCHEMA_OUTPUT__`
 
+声明在 `definition.py`（`DECLARATION`），组件链在 `beeline.py`（`COMPONENTS`），
+`__init__.py` 把它们**装配**成运行时认识的那几样。
+
 ## 怎么把它变成真的
 
 骨架盒的腿在 `runner.py` 里，三个 handler 现在只把投料带过去。
@@ -755,10 +812,10 @@ __DESCRIPTION__
    判据读的就是这个字段，填错就是判据在撒谎。
 2. **写腿**：`__OP_WORK___handler` 里做真正的业务动作。
    失败要**显式带原因**进产出，不要静默跳过、不要填默认值。
-3. **加指标**：在 `definition.py` 的 `metrics` 里声明指标，
+3. **加指标**：在 `definition.py` 的 `DECLARATION.metrics` 里声明指标，
    在 `measure.py` 里给每一个指标一个采集算法。
    声明了却没采集器 = 看板上拿不到那个数。
-4. **改成 live**：`result.maturity` 从 `skeleton` 改成 `live`。
+4. **改成 live**：`DECLARATION.maturity` 从 `skeleton` 改成 `live`。
    **先做完 1~3 再改这一处**——顺序反了，看板上会出现一只
    「标着 live、读数却毫无意义」的盒子。
 5. **看文档**：`README.md`（根目录）的盒子清单要提到这只盒子，
@@ -771,6 +828,9 @@ __DESCRIPTION__
 - **schema 归消费者所有**：本盒声明自己吃什么、吐什么。
 - **不许 import 别的盒子**：`tests/test_layering.py` 管着这条。
 - **业务知识住在盒子里**，不进 `core/`。
+- **声明自相矛盾时装配期就报错**：改完 `definition.py` 或 `beeline.py`
+  之后，import 一下这只盒子——装不上就是声明有问题，
+  错误信息会说是哪个 op、哪个 schema、现在是什么、应该是什么。
 '''
 
 
@@ -850,9 +910,14 @@ def registration_snippet(spec: BoxSpec) -> str:
     **为什么是「三处」**：BOX_REGISTRY（这只盒子是什么）、
     METRIC_COMPUTERS（它的指标怎么算）、RUNNER_REGISTRY（它的腿在哪）。
     少登记一处，盒子就有一半是「声明了却拿不到」。
+
+    **导入一律走包级 API**（`from boxes.<mod> import ...`）：
+    盒子迁到装配器之后，声明在 `definition.py`、组件链在 `beeline.py`，
+    而**装出来的东西住在包里**。从 `boxes.<mod>.beeline` 摸 `get_beeline`
+    那种写法已经不存在了。
     """
     return "\n".join([
-        f"from boxes.{spec.module}.beeline import get_beeline as get_{spec.module}_beeline",
+        f"from boxes.{spec.module} import get_beeline as get_{spec.module}_beeline",
         f"from boxes.{spec.module}.measure import COMPUTERS as {spec.const}_COMPUTERS",
         f"from boxes.{spec.module}.runner import RUNNER as {spec.const}_RUNNER",
         f"from boxes.{spec.module} import get_definition as get_{spec.module}_definition",
@@ -938,7 +1003,7 @@ def apply_registration(
         raise SystemExit(f"{spec.box_id} 已经注册过了——不重复注册")
 
     imports = "\n".join([
-        f"from boxes.{spec.module}.beeline import get_beeline as get_{spec.module}_beeline",
+        f"from boxes.{spec.module} import get_beeline as get_{spec.module}_beeline",
         f"from boxes.{spec.module}.measure import COMPUTERS as {spec.const}_COMPUTERS",
         f"from boxes.{spec.module}.runner import RUNNER as {spec.const}_RUNNER",
         f"from boxes.{spec.module} import get_definition as get_{spec.module}_definition",
@@ -1026,6 +1091,11 @@ def _definition_path_of(box_id: str) -> Path | None:
     `receipt_capture_box` 住在 `boxes/receipt/`，
     `wms_testing_box` 住在 `boxes/wms_testing/`。
     猜错 = 改错文件（或者报「文件不存在」让人自己找）。
+
+    **迁到装配器之后多了一步**：装好的盒子，`get_definition` 住在**包**里
+    （`boxes/<mod>/__init__.py`），而**接线声明在 `definition.py`**。
+    所以包要拼出 `definition.py`，模块就是它自己。
+    （少了这一步，接线改写会改到 `__init__.py` 去——那里根本没有 `feeds_into=`。）
     """
     import sys
 
@@ -1038,7 +1108,13 @@ def _definition_path_of(box_id: str) -> Path | None:
         return None
     module = sys.modules.get(getattr(entry[0], "__module__", "") or "")
     path = getattr(module, "__file__", None)
-    return Path(path) if path else None
+    if not path:
+        return None
+    file_path = Path(path)
+    if hasattr(module, "__path__"):
+        # 它是**包**（装好的盒子）：接线声明在同目录的 definition.py
+        return file_path.parent / "definition.py"
+    return file_path
 
 
 def _rewire_upstream(spec: BoxSpec, path: Path) -> str:
