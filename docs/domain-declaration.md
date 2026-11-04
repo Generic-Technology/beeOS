@@ -498,13 +498,76 @@ each_handoff_has_channel  5/5
 **读数要能在装配期就出来**（不是等第一次履约才知道），
 所以装配期就得能**验通道** → 又回到 §5.1 的 D3c → 又回到「`validate_payload` 下沉 core」。
 
+### 5.5 实测推翻了一条假设：**规则不能只按「环」写**
+
+Learning 域（4 只盒子：math / chinese / english → growth）是**放射**（star），
+实测它的三条边（2026-11-05）：
+
+| 边 | 通道 | 判定 |
+|---|---|---|
+| `learning_math` → `learning_growth` | `subject_result: ref:schema_learning_subject_result` | ✅ 有通道 |
+| `learning_chinese` → `learning_growth` | 同上 | ✅ |
+| `learning_english` → `learning_growth` | 同上 | ✅ |
+
+**三条边全是真交接（handoff），而且共用同一个通道字段。**
+三科的产出是三个不同的 schema（`schema_learning_math_output` / `_chinese_` / `_english_`），
+但**字段完全相同**（10 个，名字和类型都一样），
+growth 声明的接料形状 `schema_learning_subject_result` 是那 10 个字段的**子集**（9 个）。
+
+**于是 §5.3 那三条规则，Learning 域里有两条不适用**：
+
+| 规则 | ring 域（WMS） | star 域（Learning） |
+|---|---|---|
+| `all_archived` | 适用 | **不适用**——源盒的边是 handoff，不是 archive |
+| `all_handoff` | 适用（环序上接下一环）| **不适用**——**没有环序** |
+| `each_handoff_has_channel` | 适用 | **适用**（3/3 通过）|
+
+> **「汇点」这个词盖了两种东西。**
+>
+> | 域 | 汇点 | 汇点收不收上游产出 |
+> |---|---|---|
+> | WMS | `wms_system_box`（档案盒）| **不收**——它是去线上读的，所以那 5 条是 `archive` 边、**没有通道** |
+> | Learning | `learning_growth_box`（成长记录）| **收**——所以那 3 条是 `handoff` 边、**有通道** |
+>
+> **「汇点」只是拓扑位置（域内没有下游的那只），不是角色。**
+> 决定一条边是 `handoff` 还是 `archive` 的**不是它指向不指向汇点，而是「数据真的流过去吗」**——
+> 这正是 `kind` 存在的理由：**kind 才是事实，汇点只是拓扑。**
+>
+> **所以规则不能挂在「汇点/非汇点」上，要挂在 `kind` 上。**
+
+### 5.6 D3c 验的是「声明层对声明层」，不是「实跑过一次」
+
+装配期**没有上游的产出**（产出要等真履约）。所以 D3c 实际验的是：
+
+> **上游声明的产出形状，能不能满足下游声明的接料形状。**
+
+**这一层是够的**，而且是 sound 的：
+artifact 必然符合上游自己声明的 `result_schema`（那是上游 acceptance 的责任），
+而 D3c 验的正是「符合上游声明的 artifact，能不能满足下游的接料声明」。
+所以「合成样例能过」≈「任何合规产出都能过」。
+
+**但 D3c 验不出「上游真的产出了那个形状」**——那是**上游自己的 acceptance** 管的，
+不归域声明。**域声明管的是「声明之间对不对得上」，不是「现场跑没跑通」。**
+
+**因此 D3c 的实现就是「拿两份声明做结构兼容判定」**，
+而**最不漂的做法是复用 `runtime.contract.validate_payload` 那一份**——
+另写一套结构比较 = 第二份事实 = 漂（同 `core/conditions.py` 的教训）。
+这仍然是待定⑥（`validate_payload` 下沉 `core/<contract>.py`）。
+
 ---
 
-## 6. 连带要处理的三件事
+
 
 ### 6.1 跨域边：两端不共享任何域
 
 例：「Learning 域的盒子要用票据盒（未归域）的产出」——这条边**不属于 WMS 也不属于 Learning**。
+
+> **实测修正（2026-11-05）**：**现在没有任何盒子用票据盒的产出。**
+> `receipt_capture_box` 没有任何一条 `feeds_into` / `feedback_into` 指向它，
+> 也没有任何盒子的投料里有 `ref:schema_receipt_parsed` 通道——
+> **它的 20 个字段的产出完全悬空。**
+> 所以这只是个**假想的例子**，不是现状的描述。
+> 真正的现状是：**它是个孤儿盒子**（产出没人接），见 §6.2。
 
 **解法**：域可以声明**外部边**，挂在**接收方**的域里：
 
@@ -519,6 +582,12 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 ### 6.2 「未归域」的盒子（`receipt` 现在就是）
 
 它就是「不出现在任何域的 `members` 里」。但要区分**「有意的独立」**和**「忘了加」**。
+
+> **实测（2026-11-05）**：`receipt_capture_box` 不但未归域，
+> 而且**是个孤儿**——没人投给它，它那份 20 字段的产出**也没有任何下游能接**。
+> 所以「有意的独立」这个解释在这里**站不住**：一只盒子产出完整的东西却没人接，
+> 要么是它该进某个域，要么是它该有下游，要么是它**根本不该存在**。
+> **这三条是三种不同的决定，域声明不能替它做。**
 
 **解法**：盒子自己声明 `standalone: bool`（这是「我不参与任何域」的**业务属性**，
 不是域信息，不违反「盒子不留域信息」）。
@@ -696,12 +765,36 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
    `BeeBoxDefinition.placement: PlacementDef`，新协议已把字段摊平。
    三个字段退休时，旧协议的那份要不要一起标退休？
 6. **（新增）`validate_payload` 下沉到 `core/<contract>.py`？** D3c 要复用它，
-   而 `core` 不该反向依赖 `runtime`（§5.1）。倾向**下沉**，
+   而 `core` 不该反向依赖 `runtime`（§5.1、§5.6）。倾向**下沉**，
    依据同 `core/conditions.py`：「它是协议，不是执行」。
    **代价**：`runtime/contract.py` + `runtime/handoff.py` + `kanban/trigger.py` +
    `boxes/wms_requirement/runner.py` + 约 12 处测试引用要跟着改 import。
    **不做会怎样**：D3c 只能在 `runtime` 层做 → 域装配器就拿不到通道判定 →
    装配期报错这件事就落空了。
+7. **（新增，2026-11-05 实测）规则按形状分派怎么写？** Learning 域是**放射**，
+   `all_archived` / `all_handoff` 在它身上**都不适用**（§5.5）。
+   三个选项：
+   - (a) 规则自己声明适用范围（`applies_to: ring | star`）——**判据自己管自己**，最笨但最直白
+   - (b) 按 `kind` 分派规则（规则不认形状，只认边）——**推荐**：
+     边有 `kind`，规则的判据就是「某类边的完备性」，形状自动对上
+   - (c) 两套规则集（环的规则 / 放射的规则）——**两份规则 = 两份事实**，不推荐
+   > **倾向 (b)**：§5.5 已经证明「汇点/非汇点」不是判据，**`kind` 才是**。
+   > 规则挂在 `kind` 上之后，环和放射不需要两套——放射域的 `handoff` 边本来就该有通道。
+8. **（新增，2026-11-05 实测）多域下同一对盒子的边，要不要写两遍？**
+   §3.3 ③ 说「一只盒子属于 N 个域，就带着它的边在 N 个域里各出现一次」。
+   **那是同一对盒子的边写 N 份 = N 份事实 = 会漂。**
+   而现在**没有任何盒子属于多个域**（`placement.domain` 是单个字符串，实测），
+   所以多域是**纯未来能力**，**设计时极易忽略**。
+   要不要规定：**跨域边只在一处声明，另一处引用**？引用怎么表达？
+9. **（新增）域声明要不要版本化？** 附录 A4 实测：`release_id` 只固定**单只盒子**，
+   **不固定域成员**。域级规则一旦成为资产就必须版本化——但**域声明自己**的版本号 /
+   快照机制，稿子里一个字没写。
+10. **（新增）规则失败了，谁在什么时候看？** 装配期报错？CI？看板上的一个「域体检」页面？
+    （并行会话正在做的 `workshop/` 盒子体检台，**可能正好是那个落点**——
+    但「盒子体检」和「域体检」是不是同一件事，还没讨论。）
+11. **（新增）域声明谁维护？** `domains/<域>/` 是**业务方**维护还是**开发**维护？
+    §5.3 那条「需求盒是豁免」的注释，现在住在**需求盒的注释**里，
+    搬进域声明后——**它归谁改？** 这决定规则豁免会不会变成「谁都能加豁免」。
 
 ---
 
@@ -869,3 +962,50 @@ wms_analysis_box     wms_requirement_box  —                     下游 ref: []
 **这次实测推翻的一条旧结论**：本文早先写的是「归档覆盖 5/6 = 需求盒漏了 1 份」。
 **错了**——需求盒是**主动不写**那条边的，理由就写在它的注释里。
 真正的代价不是「漏了一份」，而是**这条域级规则的例外没有声明可以安放**（§1.3）。
+
+### B2. 第二轮实测（2026-11-05）：Learning 域 / receipt 归属 / 多域现状
+
+**三个疑点**：Learning 域的三条边通不通？`receipt` 跟 WMS 域有没有关系？
+现在有没有盒子属于多个域？
+
+**Learning 域的边**：
+
+```
+learning_math_box    -> learning_growth_box   subject_result: ref:schema_learning_subject_result  ✅
+learning_chinese_box -> learning_growth_box   subject_result: ref:schema_learning_subject_result  ✅
+learning_english_box -> learning_growth_box   subject_result: ref:schema_learning_subject_result  ✅
+```
+
+三科产出是**三个不同 schema**（`schema_learning_math_output` / `_chinese_` / `_english_`），
+但**字段完全相同**（10 个，名字和类型都一样）：
+
+```
+math    产出: {record_id, subject, activity, observed_at, mastery, evidence, source_kind, detail, notes, ratio_exact}
+growth 接料: {record_id, subject, activity, observed_at, mastery, evidence, source_kind, detail, notes}
+                                      ↑ 上游的子集（9 个，去掉 ratio_exact，notes 放宽成可选）
+```
+
+**receipt 的归属**：
+
+```
+投给 receipt 的盒子:      []
+feedback 给 receipt 的:   []
+引用 schema_receipt_parsed 的 ref 通道:  （无 —— 没人能接它的产出）
+receipt 产出字段（20 个）: merchant_name / receipt_no / receipt_date / receipt_time / items /
+                           items_count / subtotal / tax / discount / total / payment_method /
+                           field_completeness / line_arithmetic / sum_arithmetic /
+                           total_arithmetic / date_wellformed / totals_match / low_confidence_fields
+```
+
+**多域现状**：
+
+```
+各域成员数: {'WMS': 7, 'Learning': 4, '': 1}
+未归域的盒子: ['receipt_capture_box']
+→ placement.domain 是**单个字符串**，现在**不可能**多域
+```
+
+> **这三条实测各推翻/修正了稿子里的一条**：
+> Learning 域证明**规则不能只按环写**（§5.5）；
+> receipt 证明 §6.1 那个例子是**假想的**、§6.2 的「有意的独立」**站不住**；
+> 多域实测证明 §3.3 ③ 的「各写一份」是一个**没人踩过的坑**（§13 第 8 条）。
