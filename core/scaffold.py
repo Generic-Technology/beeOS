@@ -57,7 +57,13 @@ from core.beeline_models import (
     NextRef,
     Operation,
 )
-from core.conditions import condition_comparisons, condition_fields, condition_parts
+from core.decl_checks import (
+    check_acceptance_metrics,
+    check_exception_conditions,
+    check_maturity,
+    check_op_schema_refs,
+    check_schema_refs,
+)
 from core.models import (
     AcceptanceRule,
     BeeBoxDefinition,
@@ -259,7 +265,10 @@ class AssembledBox(BaseModel):
     ```
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    # **不许静默吞字段**（2026-11-04 补）：拼错当场报错。
+    # 一跳的形状拼错了（`inpt=` 而不是 `input=`），吞掉的后果是
+    # 「这一跳吃什么」变成空值，装配器还照样装得出来。
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     definition: BeeBoxDefinition
     beeline: Beeline
@@ -466,23 +475,22 @@ def assemble(
     checks.append("C10 末跳产出 == 产出契约")
 
     # ---- schema 存在性 ----
+    # **判定归 `core/decl_checks.py`**（与体检台共用一份）。
+    # 装配期和体检期问的是同一批事实，两处各写一份 = 两份事实 = 漂。
     schema_ids = {s.id for s in schemas}
-    for comp in components:
-        for role, sid in (("input", comp.input), ("output", comp.output)):
-            if sid not in schema_ids:
-                problems.append(
-                    f"op {comp.op_id!r} 的 {role} 指向未声明的 schema {sid!r}。"
-                    f"这只盒子声明的 schema 有：{sorted(schema_ids)}"
-                )
-    for role, sid in (
-        ("task_schema", declaration.task_schema),
-        ("result_schema", declaration.result_schema),
-    ):
-        if sid not in schema_ids:
-            problems.append(
-                f"{role} 指向未声明的 schema {sid!r}。"
-                f"这只盒子声明的 schema 有：{sorted(schema_ids)}"
-            )
+    problems.extend(check_schema_refs(
+        schema_ids=schema_ids,
+        result_schema=declaration.result_schema,
+        task_schemas={declaration.task_type: declaration.task_schema},
+    ))
+    problems.extend(check_op_schema_refs(
+        schema_ids=schema_ids,
+        op_refs=[
+            (f"op {comp.op_id!r}", role, sid)
+            for comp in components
+            for role, sid in (("input", comp.input), ("output", comp.output))
+        ],
+    ))
     checks.append("C6/C7 引用的 schema 都存在")
 
     # ---- 判据 ----
