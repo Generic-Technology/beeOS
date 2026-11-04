@@ -139,7 +139,10 @@ def health_summary(box_id: str) -> Optional[dict[str, Any]]:
     return None
 
 
-_PAGE = """<!DOCTYPE html>
+#: 页面源码。**raw string**——里面有 JS 的正则（`\*\*`），
+#: 非 raw 字符串会把 `\*` 当成 Python 的转义序列报警告
+#: （将来的 Python 会直接报错）。raw 才是这里正确的语义。
+_PAGE = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
