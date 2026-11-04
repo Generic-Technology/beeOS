@@ -443,6 +443,43 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 | **接线算法文件名** | **`core/<wiring>.py`** —— 它派生的是接线，不是「场」；「场图」是渲染出来的那张图 |
 | **域的装配产物名** | **`AssembledDomain`** —— 与 `AssembledBox` 对称 |
 | **边住哪** | **`domains/<域>/`**（业务事实）；**算法住 `core/`**（机制）|
+| **core 里两个装配器的文件名** | 倾向 **`core/<box_assembler>.py`** + **`core/<domain_assembler>.py`** —— 见下方说明 |
+
+### 12.1 关于 `core/scaffold.py` 改名（2026-11-05 讨论）
+
+**问题**：「脚手架」这个词在仓里被两个东西占了——
+
+| | 是什么 | 住哪 |
+|---|---|---|
+| **脚手架** | **生成代码**的工具 | `scripts/new_box.py` |
+| **装配器** | 把声明装成产物，**装配期报错** | `core/scaffold.py` |
+
+而 `architecture-upgrade.md` 的标题「盒子脚手架化」指的是**整个改造**
+（把「复制模板」变成「按协议填组件」），不是某一个文件。
+
+**三个选项**：
+
+| | 命名 | 成本 | 判断 |
+|---|---|---|---|
+| A | `core/<box_scaffold>.py` + `core/<domain_scaffold>.py` | 40 文件 | 与 `architecture-upgrade.md` 用词一致；跟 `scripts/new_box.py` 仍撞 |
+| B | `core/<box_assembler>.py` + `core/<domain_assembler>.py` | 40 文件 | ✅ **彻底分开**：脚手架=生成、装配器=装配 |
+| C | 不改（`core/scaffold.py` + `core/<domain>.py`）| **0** | 靠类名区分（`assemble` vs `assemble_domain`），已经够 |
+
+**倾向 B**：消掉的是贯穿全仓的术语歧义，而不只是文件名好看。
+`assembler` 也更准——`assemble()` 干的事就是装配，而 `scaffold` 在编程里
+通常指「项目脚手架/生成器」，正好是 `scripts/new_box.py` 的事。
+
+**但 `core/models.py` 不跟着改**——它现在装的是**新旧两套盒子协议**
+（`BeeBoxDefinition` + `PlacementDef` 即将退休）。等 12 只盒子迁完，
+它瘦成「盒子和域共用的公共类型」，**那时 `models.py` 这个名字恰好合适**。
+现在改是替未来还债。
+
+**执行时机**：**等 12 只盒子迁完再一次性改**。改名的 40 个文件里，
+36 个是 `boxes/<盒>/{__init__,beeline,definition}.py`——正在被迁移改着，
+现在动会撞车。
+
+**参照**：`core/field_map.py` → `core/<wiring>.py` 只牵 5 个文件 + 1 个测试文件，
+可以在同一批里顺手改掉。
 
 ---
 
