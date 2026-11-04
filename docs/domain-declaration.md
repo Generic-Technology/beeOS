@@ -55,17 +55,45 @@ learning_growth  → []
 | # | 事实 | 证据 |
 |---|---|---|
 | F1 | **一份能走通的边分两半说**：生产者说「谁交给谁」（`feeds_into`），消费者说「接什么形状」（`B.task_schema` 里的 `ref:` 通道）。**交界处没有任何东西对账。** | `runtime/handoff.py` 只认 `ref:` 通道；`core/field_map.py` 只认 `feeds_into` |
-| F2 | **5 只盒子声明投给档案盒，而档案盒投料里 0 个 `ref:` 通道**——那 5 条边在拓扑上画着，一条也走不通。 | 档案盒投料 `schema_system_probe_input` = `target_base_url` / `timeout_seconds` / `readonly_endpoints`；它是**去线上读**的盒子，不收上游产出 |
+| F2 | **11 条声明的边里只有 5 条走得通。** 域内 5 条交接边**全部有**真通道；5 条投档案盒的边**全部没有**；1 条闭环反馈边**也没有**。 | 档案盒投料 `schema_system_probe_input` = `target_base_url` / `timeout_seconds` / `readonly_endpoints`，`ref:` 通道数 = 0；它是**去线上读**的盒子，不收上游产出。实测见附录 B |
 | F3 | **悬空接线被静默丢弃**：`derive_field_map` 里 `edges = [... if t in idset]`，指向不存在盒子的 `feeds_into` 直接消失，无告警。 | 实测：`a → ghost_box` 得到 `reason_code=star`、`reason=''`，那条边人间蒸发 |
 
-### 1.3 域级意图被复制了 5 份，并且已经开始漏
+### 1.3 域级意图被复制了 5 份，而它的**例外**没有家
 
-「本域的过程产物都沉淀进系统档案」是一条**域级意图**，但现在它被写成
-**5 份盒子级声明**（design / development / testing / ops / analysis 各写一遍）。
+「五个生命周期盒的产物都沉淀进系统档案」是一条**域级意图**，现在它被写成
+**5 份盒子级声明**（design / development / testing / ops / analysis 各写一遍 `feeds_into`）。
 
-**而需求盒没写。** 它的 `feeds_into` 只有 `["wms_design"]`，形态跟其它 6 只都不一样。
+**而需求盒不在其中。**
 
-> 这条域级意图客观存在，现在没有家，只能靠每只盒子各写一遍——**复制就会漏，已经漏了。**
+> 这看起来像「复制漏了 1 份」——**不是**。需求盒的 `definition.py` 里写着理由：
+>
+> > 「需求盒产出的是系统档案的**输入**（读基线：这份系统该是什么样），
+> > 不是往档案里加东西。声明它「投给」系统盒，等于说档案是需求盒的下游，
+> > 而真实关系正好相反。」
+>
+> **它是主动不写那条边的。**
+
+**但这条「主动不写」没有任何机制守着。** 它住在**散文**里（盒子文件头的注释），
+不是声明。后果：
+
+> 如果有人**善意地**给需求盒补上 `feeds_into=[..., "wms_system_box"]`，
+> 域图**照样正常渲染**（汇点还是唯一，环序不变），
+> 只是 requirement 成了 `feeds_center` 的一员——
+> 而「五个生命周期盒都往系统盒汇」这句话，在数据上不再成立了。
+> **没有任何东西会报错。**
+
+需求盒自己的注释已经点破了这件事：
+
+> 「它让 requirement 也成了 feeds_center 的一员，于是
+> 『五个生命周期盒都往系统盒汇』这句话在数据上不再成立，
+> 而拓扑图是照着这句话画的。」
+
+**这就是「域级意图复制成 N 份」的真正代价**：不是漏写了一份，
+而是**这条规则的边界靠「没人补那条边」维持着**。
+加一只新的生命周期盒时，它会不会被归档、域图还是不是原来那张图，
+**全靠人记得**。
+
+> 域声明要解决的就是这件事：**让规则的例外有名有姓**（§5.2）。
 
 ### 1.4 域在仓里没有「家」
 
@@ -166,11 +194,27 @@ class Edge(BaseModel):
     via: Optional[str] = None      # 仅 handoff 有意义：下游投料里的哪个 ref 字段
     external: bool = False          # from_box 在本域之外（跨域入口边）
 
+class RuleKind(str, Enum):
+    # **下面三条都是「完备性规则」**：它们约束的是
+    # 「**应该被声明、但可能还没被声明**的东西」。
+    # 计数期望（成员数 == N）**不做**——它数的是规则自己，永远绿（§5.3）。
+    all_archived = "all_archived"                 # 每只成员都有 archive 边指向汇点（除豁免）
+    all_handoff = "all_handoff"                   # 环上每只非汇点成员都接到下一环
+    each_handoff_has_channel = "each_handoff_has_channel"  # 每条 handoff 边都有通道
+
+class Rule(BaseModel):
+    kind: RuleKind
+    # **豁免**：这些成员不参与这条规则。
+    # 「为什么豁免」写在声明处的注释里——它现在住在盒子文件头的散文里，
+    # 域声明给了它一个正经的家（§5.3）。
+    except_: list[str] = []
+
 class DomainDeclaration(BaseModel):
     id: str                          # "wms"
     display_name: str
     members: list[str]               # 本域有哪些盒子（唯一一份成员表）
     edges: list[Edge]                # 盒子之间怎么连（**业务事实**）
+    rules: list[Rule] = []           # 域级完备性规则（**业务断言**，判据是机制）
 
 class AssembledDomain(BaseModel):
     """装好的域——与 ``AssembledBox`` 对称"""
@@ -301,7 +345,7 @@ DOMAIN = DomainDeclaration(
 
 与 `core/scaffold.py` 的 C1–C12 同构，域级校验同样在装配期报错。
 
-**判定机制共用一份**：这些校验应加成 `core/decl_checks.py` 里的
+**判定机制共用一份**：这些校验应加成 `core/<decl_checks>.py` 里的
 `check_domain_*` 系列（那儿已经是「声明自洽判定的唯一真源，装配器与体检台共用一份」），
 **不在 `core/<domain>.py` 里另写一套判定**。
 
@@ -309,18 +353,146 @@ DOMAIN = DomainDeclaration(
 |---|---|---|
 | D1 | 每个 `members` 里的盒子都在注册表里存在 | 悬空成员 → 域的成员表里有个不存在的盒子 |
 | D2 | 每条边的两端都在 `members` 里（或声明为 `external`）| 边指向域外的盒子却没说明 → 拓扑漏边 |
-| D3 | `handoff` 边必须有 `via`，且 `via` 必须是下游 `task_schema` 里的 `ref:` 字段 | 声明了交接却没有通道 → **就是现在那 5 条假边** |
+| D3a | `handoff` 边必须有 `via`，且 `via` 必须是下游 `task_schema` 里的 `ref:` 字段 | 声明了交接却没有通道 → **搬的时候没做 `kind` 分类，就会被这条全拦下** |
+| D3b | `via` 指向的 `ref:` schema 能在**下游自己的** schemas 里解析 | 通道指向一个不存在的形状 → 交接时才发现 |
+| D3c | **上游的产出能通过 `via` 指向的那份形状的校验** | 通道名对、形状对不上 → 交接时才发现，错误离现场隔着两层 |
 | D4 | `feedback` 边不进拓扑排序 | 闭环边混进主干 → 排序遇环 → **静默按原顺序收尾** |
 | D5 | 汇点唯一 | 多个汇点 → 圆心算不出来 |
 | D6 | 主干无环 | 环上顺序变成任意的，图照常渲染，结构是错的 |
 | D7 | 每条边两端的 `kind` 合法（`archive` 不得有 `via`）| 归档归属被当成数据交接 |
 | D8 | 同一对盒子不得有两条同 `kind` 的边 | 重复声明，含义不明 |
 | D9 | 每只已注册盒子要么属于至少一个域，要么显式声明 `standalone` | 忘了归域 → 盒子不在任何域里，却没人知道 |
+| D10 | 每条边的两端都属于本域（`external=True` 除外）| 跨域边混进本域 → 拓扑算错 |
+| D11 | **每条 `handoff` 边都必须有通道**（D3a/b/c 三级全过）| 声明了交接却走不通 → **现在 11 条声明边里有 6 条没有通道**（5 条投档案盒 + 1 条闭环反馈），搬的时候不做 `kind` 分类就会被这条全拦下 |
+| D12 | 每条 `feedback` 边**要么有通道，要么显式声明 `no_channel`** | 反馈边到底通不通，现在看不出来 |
 
-**D3 是这套校验里最有价值的一条**——它把「声明了交接但没有通道」从**静默**变成**装配期就拒**。
+**D11 是这套校验里最有价值的一条**——它把「声明了交接但没有通道」从**静默**变成**装配期就拒**。
 
-**D1–D9 与 C1–C12 的分工**：C* 验「一只盒子自不自洽」（core 不认识注册表，只查自己）；
+**D1–D12 与 C1–C12 的分工**：C* 验「一只盒子自不自洽」（core 不认识注册表，只查自己）；
 D* 验「一个域的结构对不对」（需要成员信息，由调用方从注册表收集后传入）。
+
+### 5.1 D3 为什么必须拆成三级（实测逼出来的）
+
+原以为 D3 一条就够：「`via` 是下游投料里的 `ref:` 字段」。**实测证明不够**，而且差得很远。
+
+实测（`requirement → design` 这条边）：
+
+```
+下游 design 声明的通道：requirement_set_ref: ref:schema_requirement_set_input
+上游 requirement 的产出：schema_requirement_set_package
+                         ↑ id 根本不一样
+```
+
+而且**形状不是相等，是包含**：
+
+| | 上游产出 `schema_requirement_set_package` | 下游声明 `schema_requirement_set_input` |
+|---|---|---|
+| 字段数 | **19** | **6** |
+| 必填 | 15 个必填 | **3 个必填**（其余放宽成可选）|
+
+**下游声明的是「它自己要的那一小块」，不是上游的全部。** 这是「形状由消费者声明」的真正含义：
+消费者**不是复制上游的 schema**，而是声明「我接你的哪一部分、宽松到什么程度」。
+
+**所以 D3c 必须做「实跑校验」，不能做「id 相等」也不能做「形状相等」**：
+
+> 判据 = **用 `runtime.contract.validate_payload` 把上游产出喂给下游声明的那份形状**，
+> 零错误才算通道存在。
+
+这跟仓里已经踩过的坑是同一条纪律（`core/conditions.py` 的 docstring）：
+
+> 「它是协议，不是执行……两处各写一份 = 两份事实 = 漂。」
+
+**所以 D3c 必须复用 `runtime.contract.validate_payload` 那一份，不能另写一套形状比较。**
+而它现在住在 `runtime/`，`core` 不该反向依赖 `runtime`（`runtime → core` 是既有的干净方向，
+`core/scaffold.py` 里那句 `from runtime.runner import HandlerRunner` 是**文档字符串里的示例代码**，不是真 import）。
+
+**→ 倾向：把 `validate_payload` 下沉到 `core/<contract>.py`，`runtime/contract.py` 从 core import。**
+
+依据同 `core/conditions.py`：**它是协议，不是执行**。
+现在它住在 `runtime/` 只因为 runtime 是第一个用它的人；域装配期也要用它，且必须是同一份。
+（影响面：`runtime/contract.py` + `runtime/handoff.py` + `kanban/trigger.py` +
+`boxes/wms_requirement/runner.py` + 约 12 处测试引用——**下沉要连带把测试的 import 一起改**。）
+
+### 5.2 域能机械测的量（WMS 实测清单，2026-11-05）
+
+待定项「域级规则第一版要不要有」的前置问题是「**域能测什么**」。
+下表是**实测出来的**答案——每一行都是能机械判定、且**不需要 core 认识任何业务词**的量：
+
+| # | 量 | WMS 实测值 | 怎么测 | 能不能失败 |
+|---|---|---|---|---|
+| M1 | 域成员数 | **7** | `members` 长度 | ❌ 自证（见下）|
+| M2 | 汇点数 | **1**（`wms_system_box`）| 出度 0 且入度 > 0 | ✅ 能（多汇点 / 无汇点）|
+| M3 | 接线形状 | **ring** | 域内有交接边 → 环；无交接边 → 放射 | ✅ 能 |
+| M4 | 环序 | requirement→design→development→testing→ops→analysis | 交接边拓扑序 | ✅ 能（成环）|
+| M5 | 环上相邻必有交接边 | **成立** | 逐对查边 | ✅ 能 |
+| M6 | 域内交接边数 | **5** | `kind=handoff` | ❌ 自证 |
+| M7 | **交接边有通道数** | **5 / 5** | D3a/b/c 实跑 | ✅ 能 |
+| M8 | 投汇点边数（`archive`）| **5** | `kind=archive` | ❌ 自证 |
+| M9 | **归档覆盖** | **5 / 6**（6 只非汇点成员里，5 只归档了；剩下 1 只是**有意豁免**）| 有 `archive` 边指向汇点的成员 | ✅ **能**（少声明一条就抓出来）|
+| M10 | 闭环反馈边数 | **1** | `kind=feedback` | ❌ 自证 |
+| M11 | 反馈边有通道数 | **0 / 1** | 同 M7 | ✅ 能 |
+| M12 | 悬空边（指向不存在的盒子）| **0** | 边端点 vs 注册表 | ✅ 能（现在**静默丢弃**）|
+| M13 | 跨域边（端点不在本域）| **0** | 边端点 vs `members` | ✅ 能 |
+
+> **M7 / M11 是这批量里最硬的两个**——它们是**唯一**能发现「声明了交接但走不通」的量，
+> 而今天没有任何东西在看它们。
+
+### 5.3 域级规则第一版：**完备性规则**，不是计数期望
+
+**关键区分：一条规则能不能失败，取决于它约束的是「已经声明的东西」还是「应该被声明却没被声明的东西」。**
+
+| 规则形态 | 例 | 能不能失败 |
+|---|---|---|
+| **计数期望** | 「本域成员数 == 7」| ❌ **永远绿**——成员表就是那 7 个，规则数的是自己 |
+| **完备性规则** | 「除豁免外，每只成员都要有一条 `archive` 边指向汇点」| ✅ **能**——少声明一条就抓出来 |
+
+> 这跟「部署计数不能自证」是同一条：**自证的检查等于没有检查。**
+> 所以域级规则第一版**不做计数期望**（M1 / M6 / M8 / M10 那四行不写进规则）。
+
+**第一版只做三种完备性规则，全部只引用域声明 + 注册表：**
+
+| kind | 判据 | WMS 应读数 | 现在会抓出谁 |
+|---|---|---|---|
+| `all_archived` | 除豁免外，每只**非汇点**成员都有 `archive` 边指向汇点 | 6 只非汇点成员 − **豁免 1** = 该归档 **5** 只，实际 **5** 只 → **5/5 通过** | **新增的盒子忘了归档** |
+| `all_handoff` | 环序上每只非汇点成员都有 `handoff` 边接到下一环 | **5 / 5** | **新增的盒子忘了接进链** |
+| `each_handoff_has_channel` | 每条 `handoff` 边都有通道（D3a/b/c）| **5 / 5** | **声明了交接却走不通** |
+
+**为什么规则里必须带「豁免」**：需求盒就是豁免——它**有意**不归档（§1.3）。
+而豁免的理由现在住在**需求盒文件头的注释里**（散文）。
+域声明给了它一个正经的家：
+
+```python
+# domains/<wms>/<domain>.py
+rules=[
+    # 本域的过程产物都沉淀进系统档案。
+    # 需求盒是**有意的例外**：它产出的是系统档案的**输入**（读基线：
+    # 这份系统该是什么样），不是往档案里加东西——
+    # 声明它「投给」档案盒，等于说档案是需求盒的下游，而真实关系正好相反。
+    Rule(kind="all_archived", except_=["wms_requirement"]),
+]
+```
+
+**「为什么需求盒不归档」这句话，从此住在域级声明里，而不是某只盒子的注释里。**
+
+**规则的表达原则**（与 §3.3 同源）：
+
+> **域级规则只能引用「域声明里已有的东西」+「注册表」+「盒子的 schema」。**
+> 想引用「某只盒子是什么角色」（例如「汇点必须是系统档案盒」），就得先让盒子声明角色——
+> 那是**另一件事**（盒子的业务分类），第一版不碰。
+> **core 判不了的，就别写进规则。**
+
+### 5.4 域级规则的可读数（`rules_reading`）
+
+`AssembledDomain.rules_reading` 现在有位置了——它是**规则的读数**，不是规则的定义：
+
+```
+all_archived              5/5   (6 只非汇点成员，豁免 1: wms_requirement)
+all_handoff               5/5
+each_handoff_has_channel  5/5
+```
+
+**读数要能在装配期就出来**（不是等第一次履约才知道），
+所以装配期就得能**验通道** → 又回到 §5.1 的 D3c → 又回到「`validate_payload` 下沉 core」。
 
 ---
 
@@ -366,14 +538,29 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 | 步 | 做什么 | 守什么 |
 |---|---|---|
 | 1 | `core/<domain>.py`：`DomainDeclaration` / `Edge` / `assemble_domain` | 新协议只有形状，零业务词 |
-| 2 | 建 `domains/<wms>/` `domains/<learning>/`（域声明 + 成员 + 边） | 边逐条对着现有 `feeds_into` 搬，**不新增不删除** |
+| 2 | 建 `domains/<wms>/` `domains/<learning>/`（域声明 + 成员 + 边） | 边逐条对着现有 `feeds_into` 搬，**不新增不删除**——但**要按 `kind` 分类**（见下）|
 | 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 |
 | 4 | `core/field_map.py` 改成吃域声明 | 派生层仍然不拥有事实 |
 | 5 | 看板改读新来源 | 画布上的虚线边界只是它的一张照片 |
-| 6 | 补 D1–D9 守卫 + 「域声明必须真的在装配」守卫 | 声明了却没人装 = 没迁移 |
+| 6 | 补 D1–D12 守卫 + 「域声明必须真的在装配」守卫 | 声明了却没人装 = 没迁移 |
 
-**第 2 步最关键**：搬的时候**逐条对着搬**，那 5 条假边在第 3 步会被 D3 抓出来，
-然后**由人决定**它们是「该删」还是「该补通道」还是「该改成 `archive` 边」。
+**第 2 步的「按 `kind` 分类」是这次搬迁真正的活。** WMS 域现在的 11 条声明边，
+**不是 11 条同一种边**：
+
+| 现在（`feeds_into` / `feedback_into` 一锅烩）| 条数 | 搬成 | 有通道吗 |
+|---|---|---|---|
+| requirement→design、design→development、development→testing、testing→ops、ops→analysis | **5** | `kind=handoff`（`via` 写各自的 ref 字段名）| **全部有** |
+| design→system、development→system、testing→system、ops→system、analysis→system | **5** | `kind=archive`（**不带 `via`**）| **全部没有**——档案盒是去线上读的，不收上游产出 |
+| analysis→requirement | **1** | `kind=feedback` | **没有**——这条边是「开新一轮需求」，不是数据交接 |
+
+> **如果第 2 步只是照抄 `feeds_into`，那 6 条没有通道的边会被搬成 `handoff`，
+> 然后被 D3c 全部拒掉**——迁移就卡在那里。
+> 正确做法是**先分类**：`archive` 和 `feedback` 本来就**不该**有通道，
+> D3c 只查 `handoff`。
+
+**第 3 步会抓出来的东西**：那 5 条 `archive` 边搬完之后，
+「需求盒没有 archive 边」这件事就会变成**一条显式的豁免**
+（§5.3），而不是**一句藏在需求盒注释里的话**。
 
 ---
 
@@ -382,11 +569,11 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 | 现在 | 之后 |
 |---|---|
 | 闭环边靠每只盒子自己记得写进 `feedback_into` | 域声明一次性处理，**混了装配期就拒**（D4）|
-| 「产物进档案」被复制成 5 份盒子声明，需求盒漏了 1 份 | 1 条 `archive` 边 |
+| 「产物进档案」被复制成 5 份盒子声明，**需求的例外只活在散文里** | 5 条 `archive` 边 + **一条显式豁免** |
 | `feeds_into` 混着「数据交接」和「归档归属」两种语义 | `kind` 强制区分三种边（D7）|
-| 声明了交接但没有通道 → 静默失效 | D3 装配期就拒 |
+| 声明了交接但没有通道 → 静默失效 | D3c/D11 装配期就拒 |
 | 悬空 `feeds_into` → 静默丢弃 | D1/D2 装配期就拒 |
-| 「域」只是个字符串标签，域级规则无处可写 | 域声明 + `rules` |
+| 「域」只是个字符串标签，域级规则无处可写 | 域声明 + `rules` + **豁免机制** |
 
 ---
 
@@ -412,6 +599,11 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 - **不在 `domains/` 里放场图**——场图是 `core` 的派生产物；`domains/` 装的是**声明**
 - **不扫描目录发现域**——域是显式声明的（与盒子注册表同一条纪律）
 - **不把 `domain` 一词继续复用**——分组标签、DDD 领域本体、DDD 构件类型是三个东西
+- **不做计数期望型域级规则**——「成员数 == 7」永远绿，**自证的检查等于没有检查**（§5.3）
+- **不写 core 判不了的规则**——「汇点必须是系统档案盒」需要盒子先声明角色，
+  那是另一件事；第一版只做引用完整性（§5.3）
+- **不为 `archive` / `feedback` 边硬造通道**——档案盒是去线上读的，不收上游产出；
+  给它加一个假的 `ref:` 通道，是**造一根不存在的线**（§7）
 
 ---
 
@@ -485,10 +677,10 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 
 ## 13. 待定（需要人拍板）
 
-1. **域级规则（`rules`）第一版要不要有？** 现在一条都没有。
-   若第一条规则是「本域必须有且只有一只系统档案盒」，那它就是 `rules` 的样例。
-   **前提问题：域能测什么** —— 规则要能被机械判定，就得能引用**域级指标**
-   （汇点数 / 成员数 / 有通道的交接数 / 归档覆盖数）。
+1. ~~**域级规则（`rules`）第一版要不要有？**~~ → **2026-11-05 已定：要，但只做「完备性规则」**
+   （`all_archived` / `all_handoff` / `each_handoff_has_channel`），
+   **不做计数期望**（计数期望永远绿 = 没有检查）。
+   规则的形状与豁免机制见 §5.3。**已定。**
 2. **域需不需要生成器（`scripts/<new_domain>.py`）？** 倾向**第一版不需要**——
    域声明几乎全是业务事实（成员名单 + 边 + 规则），手写更直接；
    而盒子有大量机制样板（7 个文件 + 协议结构 + handler 骨架），才值得生成。
@@ -499,6 +691,13 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 5. **旧协议的 `PlacementDef` 怎么退休？** 11 只盒子还在用旧的
    `BeeBoxDefinition.placement: PlacementDef`，新协议已把字段摊平。
    三个字段退休时，旧协议的那份要不要一起标退休？
+6. **（新增）`validate_payload` 下沉到 `core/<contract>.py`？** D3c 要复用它，
+   而 `core` 不该反向依赖 `runtime`（§5.1）。倾向**下沉**，
+   依据同 `core/conditions.py`：「它是协议，不是执行」。
+   **代价**：`runtime/contract.py` + `runtime/handoff.py` + `kanban/trigger.py` +
+   `boxes/wms_requirement/runner.py` + 约 12 处测试引用要跟着改 import。
+   **不做会怎样**：D3c 只能在 `runtime` 层做 → 域装配器就拿不到通道判定 →
+   装配期报错这件事就落空了。
 
 ---
 
@@ -506,7 +705,9 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 
 **这份稿子实现完成前，它描述的一切都还不存在。** 实现时必须同时上：
 
-- **D1–D9**（§5）——域级装配期校验
+- **D1–D12**（§5）——域级装配期校验
+- **D3c 必须用 `runtime.contract.validate_payload` 实跑**——
+  守卫不许自己写一套形状比较（那会是第二份事实）
 - **「域声明必须真的在装配」**——声明写在文件里没人装 = 没迁移
   （与 `architecture-upgrade.md` §5 的「新盒子必须真的在装配」同族）
 - **「退休名不得回代码」**——`placement.domain` / `feeds_into` / `feedback_into`
@@ -515,6 +716,8 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 - **「成员与边对得上」**——域声明的 `members` 与 `edges` 的端点必须一致
 - **「盒子不留域信息」**——新协议的 `BoxDeclaration` 里不许再出现
   `domain` / `feeds_into` / `feedback_into` 三个字段
+- **「域级规则不是自证的」**——规则里不许出现「成员数 == N」这种数自己的读数；
+  判据要引用**域声明之外**的事实（注册表 / 盒子的 schema）
 
 ---
 
@@ -580,3 +783,85 @@ release_id = f"{definition.id}@v{definition.version}"
 
 所以现在回看一条历史履约，看到的是「这只盒子当时的版本」+「现在的接线图」——
 两者从未被固定在一起。现在没人需要这个；域级规则一旦成为资产，就必须版本化。
+
+---
+
+## 附录 B：§5.2 那张清单的实测脚本（可复现）
+
+**为什么要留下脚本**：这张表是本稿「域能测什么」的证据。
+**口头说的数不算数**——它得能被任何人重跑一遍。
+
+**怎么跑**（在仓库根目录，隔离 worktree 里也行）：
+
+```bash
+git worktree add --detach /tmp/beeos_dm HEAD
+cd /tmp/beeos_dm && <repo>/.venv/bin/python /tmp/measure_channel2.py
+```
+
+**核心判据只有一段**：通道存不存在 = **上游产出能不能通过下游声明的那份形状的校验**。
+
+```python
+def synth(field, schemas, depth=0):
+    """按 FieldDef 造一个类型合法的样例值（只为喂校验器）"""
+    t = field.type
+    if t == "string": return "x"
+    if t in ("number", "number_or_na"): return 1
+    if t == "integer": return 1
+    if t in ("boolean", "boolean_or_na"): return True
+    if t == "enum": return (field.values or ["x"])[0]
+    if t == "object":
+        return {p.name: synth(p, schemas, depth+1) for p in (field.properties or [])}
+    if t == "array":
+        return [synth(field.items, schemas, depth+1)] if field.items else []
+    if t.startswith("ref:"):
+        target = schemas.get(t[4:])
+        if target is None: return {}
+        return {f.name: synth(f, schemas, depth+1) for f in target.fields}
+    return None
+
+# 每条边：下游投料里每个 ref 通道，喂上游产出
+for fname, target_id in downstream_channels(dst):
+    target = sch[dst].get(target_id)
+    if target is None: continue
+    errs = validate_payload(artifact, target, schemas=sch[dst])
+    if not errs:  # ← 通道成立
+        hit = (fname, target_id); break
+```
+
+**实测输出（2026-11-05，commit `9500a62`）**：
+
+```
+上游                   下游                   通道字段                  下游声明的形状
+-------------------------------------------------------------------------------------------------
+wms_design_box       wms_development_box  design_package_ref    schema_design_package_input     ✅
+wms_design_box       wms_system_box       —                     下游 ref: []                      ❌
+wms_ops_box          wms_analysis_box     observation_ref       schema_analysis_observation_input✅
+wms_ops_box          wms_system_box       —                     下游 ref: []                      ❌
+wms_requirement_box  wms_design_box       requirement_set_ref   schema_requirement_set_input    ✅
+wms_development_box  wms_testing_box      artifact_ref          schema_build_artifact_input     ✅
+wms_testing_box      wms_ops_box          artifact_ref          schema_ops_artifact_input       ✅
+wms_testing_box      wms_system_box       —                     下游 ref: []                      ❌
+wms_analysis_box     wms_system_box       —                     下游 ref: []                      ❌
+wms_analysis_box     wms_requirement_box  —                     下游 ref: []                      ❌
+-------------------------------------------------------------------------------------------------
+声明边 11 条：真通道 5，无通道 6
+  域内交接边（环上）: 5 条，真通道 5 条
+  投汇点边（归档）: 5 条，真通道 0 条
+  闭环反馈边: 1 条，真通道 0 条
+```
+
+**归档覆盖**：
+
+```
+=== 归档覆盖（投给汇点 wms_system_box）===
+  5/6 = 83.3%
+  漏掉的: ['wms_requirement_box']
+```
+
+> **注意**：这个 5/6 **不是 bug**——需求盒是**有意的例外**，理由写在
+> `boxes/wms_requirement/definition.py` 的注释里（§1.3）。
+> 它现在没有家；域声明的**豁免机制**就是它的家（§5.3）。
+
+**这次实测推翻的一条旧结论**：本文早先写的是「归档覆盖 5/6 = 需求盒漏了 1 份」。
+**错了**——需求盒是**主动不写**那条边的，理由就写在它的注释里。
+真正的代价不是「漏了一份」，而是**这条域级规则的例外没有声明可以安放**（§1.3）。
