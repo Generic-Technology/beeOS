@@ -48,8 +48,9 @@ flowchart TB
 
 ## 布局说明
 
-- **`docs/`** — 规格与设计稿（10 份）
+- **`docs/`** — 规格与设计稿（11 份）
   - `architecture-upgrade.md` — **盒子脚手架化**的定稿：协议 / 校验清单 / 迁移计划
+  - `domain-declaration.md` — **域声明**设计稿（尚未实现）：盒子之间关系的唯一事实源
   - `beebox-design.md` — 主设计稿（架构宣言 / 核心契约 / 执行语义 / 实现设计）
   - `beebox-definition-schema.md` — beeBox Definition 数据形状
   - `beebox-beeline-schema.md` — beeline / Operation 数据形状
