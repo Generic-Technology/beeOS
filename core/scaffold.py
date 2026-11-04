@@ -499,52 +499,25 @@ def assemble(
     )
     result_fields = {f.name for f in result_schema.fields} if result_schema else set()
 
-    for rule in declaration.acceptance:
-        if rule.metric not in result_fields:
-            problems.append(
-                f"判据 {rule.metric!r} 不在产出 schema "
-                f"{declaration.result_schema!r} 的字段里。"
-                f"产出里可用的字段：{sorted(result_fields)}——"
-                f"判据读不到值，会恒过或恒红"
-            )
-    if declaration.maturity == "live" and not declaration.acceptance:
-        problems.append(
-            "这只盒子是 live（腿已实现），却一条判据都没声明。"
-            "零判据会被判成「全过」——那是「看起来成功，其实什么也没验」的谎。"
-            "腿还没实现就写 maturity='skeleton'"
-        )
+    problems.extend(check_acceptance_metrics(
+        result_schema=declaration.result_schema,
+        result_fields=result_fields,
+        acceptance=declaration.acceptance,
+    ))
+    problems.extend(check_maturity(
+        maturity=declaration.maturity,
+        acceptance=declaration.acceptance,
+    ))
     checks.append("C8/C11 判据读得到值")
 
     # ---- 例外 ----
-    for rule in declaration.exceptions:
-        cond = rule.condition.strip()
-        parts = condition_parts(cond)
-        if not parts:
-            problems.append(
-                f"例外条件 {cond!r} 是空的——它永远不触发"
-            )
-            continue
-        for part in parts:
-            comparisons = condition_comparisons(part)
-            if not comparisons:
-                problems.append(
-                    f"例外条件 {cond!r} 里的 {part!r} 不是 `field op value` 三段式——"
-                    f"裸标识符永远不触发"
-                )
-            elif len(comparisons) > 1:
-                problems.append(
-                    f"例外条件 {cond!r} 里的 {part!r} 有 {len(comparisons)} 个比较符"
-                    f"（{comparisons}）——多半是漏了 AND。"
-                    f"硬跑下去会在比较时抛 TypeError，把整次 acceptance 评估掀翻"
-                )
-        for field in condition_fields(cond):
-            if field not in result_fields:
-                problems.append(
-                    f"例外条件 {cond!r} 会去读字段 {field!r}，"
-                    f"但它不在产出 schema {declaration.result_schema!r} 里"
-                    f"（可用字段：{sorted(result_fields)}）"
-                    f"→ 读到的永远是 None → 这条规则永远不触发"
-                )
+    # 同样归 `core/decl_checks.py`——**条件语法只有一份**（`core/conditions.py`），
+    # 判定也只有一份。这里和体检台跑同一段代码。
+    problems.extend(check_exception_conditions(
+        result_schema=declaration.result_schema,
+        result_fields=result_fields,
+        exceptions=declaration.exceptions,
+    ))
     checks.append("C9 例外条件真的能触发")
 
     # ---- 业务对象标识 ----
