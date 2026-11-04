@@ -1009,3 +1009,35 @@ receipt 产出字段（20 个）: merchant_name / receipt_no / receipt_date / re
 > Learning 域证明**规则不能只按环写**（§5.5）；
 > receipt 证明 §6.1 那个例子是**假想的**、§6.2 的「有意的独立」**站不住**；
 > 多域实测证明 §3.3 ③ 的「各写一份」是一个**没人踩过的坑**（§13 第 8 条）。
+
+### B3. 第三轮实测（2026-11-05）：**域分组 == 边的连通分量**？
+
+```
+=== 声明的域分组（placement.domain）===
+  Learning      4 只
+  WMS           7 只
+  (未归域)      1 只  [receipt_capture_box]
+
+=== 连通分量 A：按全部边（feeds_into + feedback_into）===
+  7 只 [wms_analysis, wms_development, wms_design, wms_ops, wms_requirement, wms_system, wms_testing]
+  4 只 [learning_chinese, learning_english, learning_growth, learning_math]
+  1 只 [receipt_capture]
+
+→ **完全一致**。域分组恰好就是边的连通分量（3 个分量）。
+```
+
+**但它只在「所有边都算」的意义下成立**。一旦只按「有数据流的边」（handoff + feedback，
+即排除 archive 边）算连通分量：
+
+```
+=== 按 handoff + feedback 算 ===
+  6 只 [wms_analysis, wms_development, wms_design, wms_ops, wms_requirement, wms_testing]
+  4 只 [learning_*]
+  1 只 [receipt_capture]
+  1 只 [wms_system]        ← 档案盒自己成为一个分量
+```
+
+**→ WMS 裂成了 6 + 1。** 因为档案盒**只被 archive 边连着**（5 条），
+而它**一条 handoff 边都没有**（它不收上游产出）。
+
+**这条实测把「域的成员是声明的还是推导的」变成了一个真问题**（§13 第 12 条）。
