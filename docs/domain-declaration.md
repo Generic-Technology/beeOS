@@ -107,7 +107,23 @@ learning_growth  → []
 
 > 这条需求反过来否定了「成员留在盒子上」。
 
-### 2.3 场图（接线视图）是派生层，不是事实源
+### 2.3 边是业务内容，算法不是
+
+「谁交给谁」是**关于这个领域的断言**，不是关于这只盒子的断言。
+
+盒子能说「我是 WMS 需求捕获盒，我产出需求集包」——那是**它自己的**业务；
+但「它交给设计盒」是 **WMS 这个领域**的业务。
+
+所以：
+
+| | 住哪 | 为什么 |
+|---|---|---|
+| **边**（`Edge`）| **`domains/<域>/`** | 含业务断言（「开发盒」「系统档案盒」是业务词）|
+| **接线算法**（`derive_wiring`）| **`core/`** | 零业务词；12 个域共用一份，放业务侧就是 12 份拷贝，必然漂 |
+
+**这正是「域」这个实体存在的意义**——它让「领域怎么流转」这个断言有了归属。
+
+### 2.4 场图（接线视图）是派生层，不是事实源
 
 `BeeBoxMap` 的 12 个字段**全部**从各盒子的 `placement` 派生，
 **没有一个字段只属于它自己**。
@@ -116,7 +132,10 @@ learning_growth  → []
 
 它只是**照片**。照片不拥有事实。
 
-### 2.4 runtime 不执行域声明
+> 改完之后，`WiringView` 里的**边本身也不在里面**——边在域声明里。
+> 它输出的是**拓扑结构**：汇点是谁、环序怎么排、形状是环还是放射。
+
+### 2.5 runtime 不执行域声明
 
 runtime 执行的是**一次履约**：一只盒子自己的 beeline + handler 表。
 
@@ -151,16 +170,52 @@ class DomainDeclaration(BaseModel):
     id: str                          # "wms"
     display_name: str
     members: list[str]               # 本域有哪些盒子（唯一一份成员表）
-    edges: list[Edge]                # 盒子之间怎么连
+    edges: list[Edge]                # 盒子之间怎么连（**业务事实**）
+
+class AssembledDomain(BaseModel):
+    """装好的域——与 ``AssembledBox`` 对称"""
+    declaration: DomainDeclaration   # 装好的域声明
+    wiring: WiringView               # 拓扑投影（派生，见 core/<wiring>.py）
+    rules_reading: list[Any] = []    # 域级规则读数（第二阶段才有）
+    report: AssemblyReport           # 装配期结论：装好了没、有什么问题
 ```
 
 **core 只定形状，不含业务词。** 具体值（`"wms_system"`、`"via=design_package_ref"`）
-在 `maps/<域>/` 侧填。
+在 `domains/<域>/` 侧填。
+
+**边是业务内容，算法不是** —— 这是本方案最容易含糊的一处：
+
+| | 是什么 | 含业务断言吗 | 住哪 |
+|---|---|---|---|
+| **边**（`Edge`）| 「WMS 域里设计盒交给开发盒」| **含** ——「开发盒」「系统档案盒」是业务词 | **`domains/<域>/`** |
+| **接线算法**（`derive_wiring`）| 「有 N 个汇点时画不出图」「环上相邻必须有交接边」| 不含 —— 零业务词 | **`core/`** |
+
+为什么边是业务内容：**「谁交给谁」是关于这个领域的断言，不是关于这只盒子的断言。**
+盒子能说「我是 WMS 需求捕获盒，我产出需求集包」——那是**它自己的**业务；
+但「它交给设计盒」是 **WMS 这个领域**的业务：需求捕获与设计之间那条交接，是领域定的。
+
+> 这正是「域」这个实体存在的意义——它让「领域怎么流转」这个断言有了归属。
+
+而接线算法必须留 core，理由与 `core/models.py` 的 `SchemaDef` 形状 +
+`runtime/contract.py` 的校验算法完全同构：
+
+```
+boxes/wms_design/schemas.py   ← schema_business_design_package（业务事实）
+core/models.py                ← SchemaDef（形状）
+runtime/contract.py           ← 校验算法（机制）
+
+domains/<域>/<domain>.py      ← Edge(...) / DomainDeclaration（业务事实）
+core/<domain>.py                ← DomainDeclaration 的形状 + assemble_domain（机制）
+core/<wiring>.py              ← 接线算法（机制）
+```
+
+**若接线算法住 `domains/`**，12 个域就要 12 份拷贝——必然漂。
+现在它在 `core/field_map.py` 已经是这个位置，改名只是让它更准。
 
 ### 3.2 域声明（业务侧，一份样例）
 
 ```python
-# maps/<wms>/<domain>.py（新建）
+# domains/<wms>/<domain>.py（新建）
 DOMAIN = DomainDeclaration(
     id="wms",
     display_name="WMS 仓储",
@@ -202,32 +257,53 @@ DOMAIN = DomainDeclaration(
 
 ---
 
-## 4. 派生层：场图怎么改
+## 4. 派生层：接线投影怎么改
 
-`core/field_map.py` 继续存在，**但输入变了**：
+**`core/field_map.py` 改名 `core/<wiring>.py`，继续存在，但输入变了**：
 
 | | 现在 | 之后 |
 |---|---|---|
-| 输入 | `Sequence[PlacementView]`（手工抄的视图）| `DomainDeclaration` + 成员盒子的 definition |
-| 事实源 | 各盒子的 `placement` | 域声明 |
-| 位置 | `core/field_map.py` | 不变（仍是 core 的派生层）|
+| 输入 | `Sequence[PlacementView]`（手工抄的视图）| `DomainDeclaration` 的 `members` + `edges` |
+| 事实源 | 各盒子的 `placement` | **域声明**（`domains/<域>/`）|
+| 位置 | `core/field_map.py` | `core/<wiring>.py`（仍是 core 的派生层）|
+| 输出 | `BeeBoxMap` | `WiringView`（`AssembledDomain` 的一个字段）|
 
 **它从「认 placement」改成「认域声明」——仍然不拥有事实。**
 
-命名建议（避免「Map」既指事实又指视图）：
+**为什么叫 `wiring` 而不是 `field_map`**：它派生的是**接线**，不是「场」。
+「场图」是那个**渲染出来的东西**（画布上那张图），不是这个**算法**。
+
+**`WiringView` 里没有边本身**——边在域声明里。它输出的是**拓扑结构**：
+汇点是谁、环序怎么排、形状是环还是放射、以及**边按 `kind` 分类后的分布**。
+
+命名对照（避免「Map」既指事实又指视图）：
 
 | 现在 | 之后 |
 |---|---|
-| `core/field_map.py` | `core/<wiring>.py`（或保留原名，但 docstring 写清它是派生层）|
+| `core/field_map.py` | **`core/<wiring>.py`** |
+| `derive_field_map()` | `derive_wiring()` |
+| `field_map_of_scope()` | `wiring_of_scope()` |
 | `BeeBoxMap` | `WiringView` |
+| `PlacementView` | `BoxFacts`（成员归属搬走后，它抄的就是「这只盒子的事实」）|
 | 前端 label `... · BeeBox Map` | `... · 场图` |
 | 域声明（新） | **域**（Domain）——唯一的事实源 |
+
+**改名牵连 5 个文件 + 1 个测试文件**：
+`kanban/trigger.py`(12 处) / `kanban/web.py`(7) / `scripts/new_box.py`(8) /
+`tests/test_learning_boxes.py`(3) / `tests/test_docs_match_code.py`(1) /
+`tests/test_field_map.py`(33 → 改名 `tests/<wiring>.py`)
+
+> 趁现在改最便宜——以后每次动这三个 import 点都是还债。
 
 ---
 
 ## 5. 装配期校验（域级）
 
-与 `core/scaffold.py` 的 C1–C12 同构，域级校验同样在装配期报错：
+与 `core/scaffold.py` 的 C1–C12 同构，域级校验同样在装配期报错。
+
+**判定机制共用一份**：这些校验应加成 `core/decl_checks.py` 里的
+`check_domain_*` 系列（那儿已经是「声明自洽判定的唯一真源，装配器与体检台共用一份」），
+**不在 `core/<domain>.py` 里另写一套判定**。
 
 | # | 校验 | 不这么做会怎样 |
 |---|---|---|
@@ -242,6 +318,9 @@ DOMAIN = DomainDeclaration(
 | D9 | 每只已注册盒子要么属于至少一个域，要么显式声明 `standalone` | 忘了归域 → 盒子不在任何域里，却没人知道 |
 
 **D3 是这套校验里最有价值的一条**——它把「声明了交接但没有通道」从**静默**变成**装配期就拒**。
+
+**D1–D9 与 C1–C12 的分工**：C* 验「一只盒子自不自洽」（core 不认识注册表，只查自己）；
+D* 验「一个域的结构对不对」（需要成员信息，由调用方从注册表收集后传入）。
 
 ---
 
@@ -287,7 +366,7 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 | 步 | 做什么 | 守什么 |
 |---|---|---|
 | 1 | `core/<domain>.py`：`DomainDeclaration` / `Edge` / `assemble_domain` | 新协议只有形状，零业务词 |
-| 2 | 建 `maps/<wms>/` `maps/<learning>/`（域声明 + 成员 + 边） | 边逐条对着现有 `feeds_into` 搬，**不新增不删除** |
+| 2 | 建 `domains/<wms>/` `domains/<learning>/`（域声明 + 成员 + 边） | 边逐条对着现有 `feeds_into` 搬，**不新增不删除** |
 | 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 |
 | 4 | `core/field_map.py` 改成吃域声明 | 派生层仍然不拥有事实 |
 | 5 | 看板改读新来源 | 画布上的虚线边界只是它的一张照片 |
@@ -330,7 +409,7 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 - **不让 runtime 执行域声明**——runtime 只跑单盒，域是两次履约之间的事
 - **不在域声明里写「什么形状」**——形状归下游 schema（各说一半，不重复）
 - **不手写「域接线表」**——域声明**就是**唯一真源，再写一份就是 `BOX_META` 当年的病
-- **不在 `maps/` 里放场图**——场图是 `core` 的派生产物；`maps/` 装的是**声明**
+- **不在 `domains/` 里放场图**——场图是 `core` 的派生产物；`domains/` 装的是**声明**
 - **不扫描目录发现域**——域是显式声明的（与盒子注册表同一条纪律）
 - **不把 `domain` 一词继续复用**——分组标签、DDD 领域本体、DDD 构件类型是三个东西
 
@@ -343,30 +422,46 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 | `placement.domain` | **退休** | 成员归属 → 域声明的 `members` |
 | `placement.feeds_into` | **退休** | 交接边 → 域声明的 `edges`（`kind=handoff`）|
 | `placement.feedback_into` | **退休** | 闭环边 → 域声明的 `edges`（`kind=feedback`）|
-| （新）| 域声明 `DomainDeclaration` | **唯一事实源** |
-| `BeeBoxMap` | `WiringView` | 派生视图 |
-| `core/field_map.py` | `core/<wiring>.py` | 派生算法 |
-| `boxes/wms_design/domain.py` | 视情况 → `maps/<wms>/<vocabulary>.py` | DDD 领域本体（**升格与否取决于是否被多只盒子需要**）|
+| （新）| 域声明 `DomainDeclaration` | **唯一事实源**（住在 `domains/<域>/`）|
+| （新）| 装配产物 `AssembledDomain` | 装好的域（与 `AssembledBox` 对称）|
+| `BeeBoxMap` | `WiringView` | 拓扑投影（派生）|
+| `core/field_map.py` | **`core/<wiring>.py`** | 接线算法（机制，零业务词）|
+| `derive_field_map()` | `derive_wiring()` | 同上 |
+| `field_map_of_scope()` | `wiring_of_scope()` | 同上 |
+| `PlacementView` | `BoxFacts` | 一只盒子的事实（域装配器与接线投影共用一份）|
+| `boxes/wms_design/domain.py` | 视情况 → `domains/<wms>/<vocabulary>.py` | DDD 领域本体（**升格与否取决于是否被多只盒子需要**）|
 | `domain_kind` | 保留 | DDD 构件类型（`entity`/`domain_service`/…）|
 | 前端 `· BeeBox Map` | `· 场图` | 画出来的那张照片 |
 
 ---
 
-## 12. 待定（需要人拍板）
+## 12. 目录与命名（已定，2026-11-05）
 
-1. **`maps/` 还是 `domains/`？** 目录名。它装的是「域声明」，不是「场图」——
-   叫 `maps/` 会让「Map」这个词同时指事实和视图。
-2. **域级规则（`rules`）第一版要不要有？** 现在一条都没有。
-   若第一条规则是「本域必须有且只有一只系统档案盒」，那它就是 `rules` 的样例。
-3. **`core/field_map.py` 改名吗？** 改名会让 `kanban/` `scripts/` `tests/` 三处 import 跟着改，
-   趁现在改比以后改便宜。
-4. **`standalone` 标记放哪？** 盒子自己的字段（`BoxDeclaration`），还是独立清单？
-5. **WMS 词表升格不升格？** 现在只被设计盒自己用 → 留在盒子里；
-   一旦开发盒/测试盒也要读，就升格到 `maps/<wms>/`。
+| 决定 | 内容 |
+|---|---|
+| **目录名** | **`domains/`** —— 装的是「域声明」，不是「场图」。叫 `maps/` 会让「Map」同时指事实和视图 |
+| **接线算法文件名** | **`core/<wiring>.py`** —— 它派生的是接线，不是「场」；「场图」是渲染出来的那张图 |
+| **域的装配产物名** | **`AssembledDomain`** —— 与 `AssembledBox` 对称 |
+| **边住哪** | **`domains/<域>/`**（业务事实）；**算法住 `core/`**（机制）|
 
 ---
 
-## 13. 实现时必须同时补的守卫
+## 13. 待定（需要人拍板）
+
+1. **域级规则（`rules`）第一版要不要有？** 现在一条都没有。
+   若第一条规则是「本域必须有且只有一只系统档案盒」，那它就是 `rules` 的样例。
+   **前提问题：域能测什么** —— 规则要能被机械判定，就得能引用**域级指标**
+   （汇点数 / 成员数 / 有通道的交接数 / 归档覆盖数）。
+2. **`standalone` 标记放哪？** 盒子自己的字段（`BoxDeclaration`），还是独立清单？
+3. **WMS 词表升格不升格？** 现在只被设计盒自己用 → 留在盒子里；
+   一旦开发盒/测试盒也要读，就升格到 `domains/<wms>/`。
+4. **旧协议的 `PlacementDef` 怎么退休？** 11 只盒子还在用旧的
+   `BeeBoxDefinition.placement: PlacementDef`，新协议已把字段摊平。
+   三个字段退休时，旧协议的那份要不要一起标退休？
+
+---
+
+## 14. 实现时必须同时补的守卫
 
 **这份稿子实现完成前，它描述的一切都还不存在。** 实现时必须同时上：
 
