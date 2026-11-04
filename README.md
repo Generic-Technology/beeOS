@@ -69,6 +69,7 @@ flowchart TB
     ExternalSystem（含 DAG 校验）
   - `metrics.py` — 指标计算契约
   - `conditions.py` — 例外条件语法的**唯一真源**（runtime 从这里取，不另写一份）
+  - `decl_checks.py` — 声明自洽判定的**唯一真源**（装配器与体检台共用一份）
   - `scaffold.py` — 装配器：按协议组装盒子，声明自相矛盾时**装配期就报错**
   - `field_map.py` — 场图：从各盒的 placement **派生**出域的接线图（纯函数）
 
@@ -109,6 +110,7 @@ flowchart TB
   - `resume.py` — 「等外部」的履约怎么回来（转人工后由人接回去）
   - `images.py` — 图片格式归一（HEIC → JPEG，模型接口才收得下）
   - `store.py` — TaskRunStore（JSONL 持久化 + 查询）
+  - `box_health.py` — 盒子体检台：接受声明作为入参，出每条检查的结论（三态）
   - `llm.py` — LLM 客户端（只管传输与解析，业务提示词由调用方给）
   - `README.md` — 运行时内部机制说明（状态机 / 恢复 / Queen 边界）
 
@@ -116,6 +118,15 @@ flowchart TB
   - `cli.py` — CLI 看板（`python -m kanban.cli`）
   - `web.py` — Web 看板（`python -m kanban.web`，HTTP server + HTML + JS）
   - `trigger.py` — 投料口（`BOX_REGISTRY` + `trigger_task`：校验 → 执行 → 验收 → 落盘）
+  - `catalog.py` — 把注册表里的材料攒成「一只盒子」（体检台的数据源）
+
+- **`workshop/`** — BeeBox Workshop：做 BeeBox 的工作台（与 `kanban/` 平级，
+  同一个服务、同一个端口，路径 `/workshop`）。第一版只做**体检台**：
+  把一只盒子声明得对不对摊开给人看，只读。
+  - `__init__.py` — 工作台包入口
+  - `views.py` — 体检台页面 + 体检数据（判定在 `runtime/box_health.py`，
+    守卫和页面读同一份）
+  - `README.md` — 工作台说明（它和看板的区别 / 三态 / 现在没有什么）
 
 - **`scripts/`** — 部署与校验
   - `deploy.sh` — 部署上线（同步 → 重启服务 → 线上自检）

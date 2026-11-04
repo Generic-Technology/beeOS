@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+from kanban.catalog import catalog_health
 from kanban.trigger import (
     ALL_DOMAINS_SCOPE,
     BOX_REGISTRY,
@@ -56,6 +57,7 @@ from kanban.trigger import (
 )
 from runtime.resume import ResumeError, ResumeNotFound, resume_waiting_run
 from runtime.store import TaskRunStore
+from workshop import health_summary, workshop_page
 
 
 def _single_text_field(schema) -> str:
@@ -4536,6 +4538,12 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/" or parsed.path == "/index.html":
             self._serve_html()
+        elif parsed.path == "/workshop" or parsed.path == "/workshop/":
+            # **BeeBox Workshop**（工作台）：盒子体检台，只读。
+            #
+            # 目录平级、进程不分开——同一个服务、同一个端口。
+            # 看板那边不放能改东西的入口，所以工作台单开一个路径。
+            self._serve_workshop()
         elif parsed.path == "/api/data":
             box_filter = (qs.get("box") or [None])[0] or None
             self._serve_json(box_filter, (qs.get("task") or [None])[0] or None)
@@ -4563,6 +4571,25 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
                 })
                 return
             self._send_json(200, record)
+        elif parsed.path == "/api/boxes/health":
+            # **整个目录的体检结论**——工作台体检台的数据源。
+            #
+            # 为什么接口在看板这边、工作台在另一个目录：
+            # 盒子是**看板这一层的资源**（注册表、作业路线、执行器都在这），
+            # 工作台只是它的一个视图。视图不该拥有资源。
+            self._send_json(200, catalog_health().to_dict())
+        elif parsed.path.startswith("/api/boxes/") and \
+                parsed.path.endswith("/health"):
+            # 单只盒子的体检结论
+            bid = unquote(parsed.path[len("/api/boxes/"):-len("/health")])
+            health = health_summary(bid)
+            if health is None:
+                self._send_json(404, {
+                    "error": f"unknown box: {bid!r}",
+                    "registered": sorted(BOX_REGISTRY),
+                })
+                return
+            self._send_json(200, health)
         elif parsed.path.startswith("/api/boxes/") and \
                 parsed.path.endswith("/artifacts"):
             # **产出的读取接口**——盒子作为独立 API 单元的另一半。
@@ -4781,6 +4808,19 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
 
     def _serve_html(self) -> None:
         body = HTML_PAGE.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_workshop(self) -> None:
+        """BeeBox Workshop 的只读页面
+
+        体检数据是**现算的**：判定读的是当下这只盒子的声明，
+        不是缓存的快照——快照会让人对着昨天的结论修今天的盒子。
+        """
+        body = workshop_page(self.store).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

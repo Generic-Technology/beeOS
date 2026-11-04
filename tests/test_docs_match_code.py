@@ -142,9 +142,20 @@ def test_md_referenced_paths_exist(md: Path) -> None:
     text = md.read_text(encoding="utf-8")
     bad: list[str] = []
     for lineno, line in enumerate(text.splitlines(), 1):
-        for token in PATH_TOKEN.findall(line):
+        for match in PATH_TOKEN.finditer(line):
+            token = match.group(0)
             if any(ch in token for ch in "*<>"):
                 continue  # 通配 / 占位符，不是真实路径
+            # **URL 路径不是仓内路径**。
+            #
+            # 这条守卫问的是「文档提到的**仓里那个文件**在不在」，
+            # 而 `/api/boxes/health` 是 HTTP 路径——它里面的 `boxes/health`
+            # 恰好长得像个仓内路径，于是被误报成「仓库里没有这个路径」。
+            #
+            # 豁免只给紧跟在 `api/` 后面的那一段：仓内路径从来不这么写，
+            # 而 HTTP 接口路径全这么写。所以这条豁免**不会放过真的坏路径**。
+            if line[: match.start()].endswith("api/"):
+                continue
             raw = token
             if raw.startswith(("./", "../")):
                 target = (md.parent / raw).resolve()

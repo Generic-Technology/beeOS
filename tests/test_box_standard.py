@@ -30,6 +30,7 @@ from kanban.trigger import (
     trigger_task,
 )
 from kanban.web import HTML_PAGE
+from runtime.box_health import STATUS_FAIL, STATUS_PASS, inspect_box
 from runtime.store import TaskRunStore
 from tests.conftest import stub_compliant_llm
 
@@ -46,6 +47,46 @@ RECEIPT = "receipt_capture_box"
 # 下面两条一致性测试压根没跑到它，归属没填也没人喊。
 # 「加一只新盒子要不要改测试」正是标准化的判据，不该由人记着。
 ALL_BOXES = sorted(BOX_REGISTRY)
+
+
+# ============================================================
+# 声明自洽类守卫：**判定归 runtime/box_health.py**
+# ============================================================
+#
+# 以前这些判定一条条写在这里。现在工作台（体检台）也要给人看同一批结论，
+# 照抄一遍就会出现两套口径——守卫说绿、页面说红，而且没人知道该信谁。
+#
+# 所以：**判定收进检查器，守卫和页面都调它**。一处判定，两处引用。
+#
+# 「没验到」不算通过：那是在给一件没验过的事发合格证。
+# 所以下面两个断言分开：一个要求「必须是绿」，一个要求「不许红」。
+
+
+def _health(box_id: str):
+    """这只盒子的体检结论"""
+    from kanban.catalog import box_inspection
+
+    inspection = box_inspection(box_id)
+    assert inspection is not None, f"{box_id} 没注册，攒不出体检材料"
+    return inspect_box(inspection)
+
+
+def _assert_pass(box_id: str, check_id: str) -> None:
+    """这条检查必须是绿的（不许红，也不许「没验到」）"""
+    health = _health(box_id)
+    check = next(c for c in health.checks if c.id == check_id)
+    assert check.status == STATUS_PASS, (
+        f"{box_id}: {check.title}——{check.status}\n{check.detail}"
+    )
+
+
+def _assert_not_fail(box_id: str, check_id: str) -> None:
+    """这条检查不许红（「没验到」不算红，但也不算过）"""
+    health = _health(box_id)
+    check = next(c for c in health.checks if c.id == check_id)
+    assert check.status != STATUS_FAIL, (
+        f"{box_id}: {check.title}\n{check.detail}"
+    )
 
 
 # ============================================================
@@ -203,29 +244,16 @@ class TestManifest:
 
 
 class TestDeclarationCoherence:
+    """五组件的声明必须自洽——**判定在 `runtime/box_health.py`**
+
+    这里只负责「把结论摆出来，红了就红」。
+    判定本身住在检查器里，因为工作台页面要给产品看同一批结论。
+    """
+
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_task_schemas_exist_and_beelines_are_pinned(self, box_id):
-        d = BOX_REGISTRY[box_id][0]()
-        assert d.result.result_schema in {s.id for s in d.schemas}
-        for t in d.task:
-            assert t.task_schema in {s.id for s in d.schemas}
-
-    @pytest.mark.parametrize("box_id", ALL_BOXES)
-    def test_every_acceptance_metric_has_a_value_in_result(self, box_id):
-        """acceptance 声明的每个 metric，产出 schema 里都得有对应字段
-
-        没有就意味着判据永远读不到值——要么恒判通过（假绿灯），
-        要么恒判失败。两种都是坏结果。
-        """
-        d = BOX_REGISTRY[box_id][0]()
-        result_schema = d.get_schema(d.result.result_schema)
-        fields = {f.name for f in result_schema.fields}
-        for rule in d.result.acceptance:
-            assert rule.metric in fields, f"{box_id}: {rule.metric} 不在产出 schema 里"
-
-    def test_result_schema_is_listed_in_the_manifest(self):
-        d = get_capture_definition()
-        assert box_manifest(CAPTURE)["produces"]["schema"] == d.result.result_schema
+        """投料和产出的形状都得是这只盒子声明过的"""
+        _assert_pass(box_id, "schemas_resolve")
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_beeline_only_names_schemas_the_box_declares(self, box_id):
@@ -235,15 +263,20 @@ class TestDeclarationCoherence:
         数据，拼出来的东西没有任何 schema 说它长什么样，也没有校验会响。
         「声明了却拿不到」的又一族。
         """
-        get_def, beeline_loaders = BOX_REGISTRY[box_id]
-        declared = {s.id for s in get_def().schemas}
-        for _beeline_id, load in beeline_loaders.items():
-            for op in load().operations:
-                for role, sid in (("input", op.input), ("output", op.output)):
-                    assert sid in declared, (
-                        f"{box_id}: beeline {load().id} 的 op "
-                        f"{op.op_id!r} {role} 指向未声明的 schema {sid!r}"
-                    )
+        _assert_pass(box_id, "beeline_schemas_resolve")
+
+    @pytest.mark.parametrize("box_id", ALL_BOXES)
+    def test_every_acceptance_metric_has_a_value_in_result(self, box_id):
+        """acceptance 声明的每个 metric，产出 schema 里都得有对应字段
+
+        没有就意味着判据永远读不到值——要么恒判通过（假绿灯），
+        要么恒判失败。两种都是坏结果。
+        """
+        _assert_pass(box_id, "acceptance_readable")
+
+    def test_result_schema_is_listed_in_the_manifest(self):
+        d = get_capture_definition()
+        assert box_manifest(CAPTURE)["produces"]["schema"] == d.result.result_schema
 
 
 class TestExamplePayloadsAreSubmittable:
@@ -260,21 +293,28 @@ class TestExamplePayloadsAreSubmittable:
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_the_example_payload_satisfies_the_task_schema(self, box_id):
-        from kanban.trigger import list_task_entries
-        from runtime.contract import validate_payload
+        _assert_pass(box_id, "example_submittable")
 
-        definition = BOX_REGISTRY[box_id][0]()
-        entries = list_task_entries(box_id)
-        for task in definition.task:
-            schema = definition.get_schema(task.task_schema)
-            entry = next(e for e in entries if e["task_type"] == task.type)
-            errors = validate_payload(
-                entry["sample_payload"], schema, schemas=definition.schemas,
-            )
-            assert not errors, (
-                f"{box_id}/{task.type} 的示例 payload 不满足 {task.task_schema}："
-                + "; ".join(errors[:5])
-            )
+
+class TestNoCheckIsRed:
+    """体检台上不能有红的检查项
+
+    上面那几条守卫各盯一个事实，失败时能说清是哪一条。
+    这条是**兜底**：体检台新增了一个检查项，可没有人拿它当守卫——
+    那条检查就没人验过它会不会一直绿。
+
+    （检查项清单和「能弄红」的 case 对不对得上，由
+    `tests/test_box_health.py::test_every_check_id_has_a_case_here` 管。）
+    """
+
+    @pytest.mark.parametrize("box_id", ALL_BOXES)
+    def test_no_check_is_red(self, box_id):
+        health = _health(box_id)
+        failed = [c for c in health.checks if c.status == STATUS_FAIL]
+        assert not failed, (
+            f"{box_id} 体检台上有红的检查项：\n"
+            + "\n".join(f"  - {c.title}：{c.detail}" for c in failed)
+        )
 
 
 class TestExceptionConditionsAreReachable:
@@ -305,35 +345,14 @@ class TestExceptionConditionsAreReachable:
     同一个条件还错了两处：小写 `and`（evaluator 只认大写）、
     字段名少个 `ed`、拿布尔去比空串。
 
-    现在守卫读 `runtime.acceptance.condition_parts / condition_fields`，
-    跟被验者是同一份解析。
+    现在判定住在 `runtime/box_health.py`，它用的是
+    `core/conditions.py` 那一份解析——跟被验者是同一份。
     """
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_condition_names_a_field_the_result_can_carry(self, box_id):
-        from runtime.acceptance import condition_fields, condition_parts
-
-        d = BOX_REGISTRY[box_id][0]()
-        fields = {f.name for f in d.get_schema(d.result.result_schema).fields}
-        for rule in d.result.exceptions:
-            cond = rule.condition.strip()
-            for part in condition_parts(cond):
-                ops = re.findall(r"(>=|<=|==|!=|>|<)", part)
-                assert ops, (
-                    f"{box_id}: exception {cond!r} 里的这一段 {part!r} 不是 "
-                    f"`field op value` 三段式——裸标识符永远不触发"
-                )
-                assert len(ops) == 1, (
-                    f"{box_id}: exception {cond!r} 里的这一段 {part!r} 有 "
-                    f"{len(ops)} 个比较符（{ops}）——多半是漏了 AND。"
-                    f"硬跑下去会在比较时抛 TypeError，把整次 acceptance 评估掀翻"
-                )
-            for field in condition_fields(cond):
-                assert field in fields, (
-                    f"{box_id}: exception {cond!r} 会去读字段 {field!r}，"
-                    f"但它不在产出 schema 里（可用字段：{sorted(fields)}）"
-                    f"→ result.get() 返回 None → 这条规则永远不触发"
-                )
+        """条件里去读的字段，产出 schema 里得真有那个名字"""
+        _assert_pass(box_id, "exceptions_readable")
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_every_condition_part_can_actually_be_read(self, box_id):
@@ -343,16 +362,7 @@ class TestExceptionConditionsAreReachable:
         第一段 False 就直接返回 False，后面那段读没读到值根本没人知道。
         所以「多段条件」比「单段条件」多一个静默失效的点。
         """
-        from runtime.acceptance import condition_fields, condition_parts
-
-        d = BOX_REGISTRY[box_id][0]()
-        for rule in d.result.exceptions:
-            parts = condition_parts(rule.condition)
-            read = condition_fields(rule.condition)
-            assert len(read) == len(parts), (
-                f"{box_id}: exception {rule.condition!r} 切成了 {len(parts)} 段，"
-                f"但只读 {len(read)} 个字段——有一段没有比较符"
-            )
+        _assert_pass(box_id, "exceptions_readable")
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_every_condition_can_actually_fire(self, box_id):
@@ -362,21 +372,9 @@ class TestExceptionConditionsAreReachable:
         或者比较符写反了，规则照样永远不响。
 
         这里反着验：给每条规则造一个**该触发**的产出，
-        断言 `_evaluate_condition` 真的返回 True。
-        造不出来 = 这条规则从写下来那天起就没响过。
+        断言求值器真的返回 True。造不出来 = 这条规则从写下来那天起就没响过。
         """
-        from runtime.acceptance import _evaluate_condition, condition_parts
-
-        d = BOX_REGISTRY[box_id][0]()
-        for rule in d.result.exceptions:
-            satisfying = {}
-            for part in condition_parts(rule.condition):
-                field, op, value = _split_comparison(part)
-                satisfying[field] = _value_satisfying(op, value)
-            assert _evaluate_condition(rule.condition, satisfying) is True, (
-                f"{box_id}: exception {rule.condition!r} 在一个本该触发的产出上"
-                f"（{satisfying}）没有触发——这条规则从来就没响过"
-            )
+        _assert_pass(box_id, "exceptions_fire")
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_condition_value_type_matches_the_field_type(self, box_id):
@@ -389,27 +387,7 @@ class TestExceptionConditionsAreReachable:
 
         已犯过：`next_requirement_seeded`（boolean）被拿去跟 `''` 比。
         """
-        from runtime.acceptance import condition_parts
-
-        d = BOX_REGISTRY[box_id][0]()
-        schema = d.get_schema(d.result.result_schema)
-        types = {f.name: f.type for f in schema.fields}
-
-        for rule in d.result.exceptions:
-            for part in condition_parts(rule.condition):
-                field, _op, value = _split_comparison(part)
-                if field not in types:
-                    continue  # 字段不存在由另一条守卫管
-                field_type = types[field]
-                literal_type = _literal_type(value)
-                if literal_type is None:
-                    continue  # 值不是字面量（引号里的自由文本等），不判
-                if not _types_compatible(field_type, literal_type):
-                    raise AssertionError(
-                        f"{box_id}: exception {rule.condition!r} 里 {field!r} "
-                        f"在产出 schema 里是 {field_type}，条件却拿它跟 "
-                        f"{literal_type} 类型的值比——这条规则永远不响"
-                    )
+        _assert_pass(box_id, "exception_value_types")
 
 
 def test_no_test_in_this_file_is_nested_inside_another_function():
@@ -499,17 +477,7 @@ class TestSkeletonIsHonest:
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_a_skeleton_box_declares_criteria_and_no_metrics(self, box_id):
         """骨架盒不能空声明判据（有则会被判全过），也不能声明没采集器的指标"""
-        d = BOX_REGISTRY[box_id][0]()
-        if d.result.maturity != "skeleton":
-            return
-        assert d.result.acceptance, (
-            f"{box_id}: 骨架盒零判据 = 会被判成全过 = 谎"
-        )
-        declared = [m for group in d.metrics.model_dump().values() for m in group]
-        assert not declared, (
-            f"{box_id}: 骨架盒没有产出，却声明了指标 {declared}——"
-            f"声明了却拿不到"
-        )
+        _assert_pass(box_id, "maturity_honest")
 
     def test_a_skeleton_box_actually_fails_its_criteria(self, tmp_path, monkeypatch):
         """跑一只骨架盒：必须真的 REJECTED，而且每条判据都红
@@ -763,12 +731,7 @@ class TestRegistryCoverage:
         漏填变成 `placement` 落回默认值——同样是三个空字段，
         这条按注册表逐只检查，照样能逮住。
         """
-        from kanban.trigger import box_meta
-
-        meta = box_meta(box_id)
-        for key in ("display_name", "value_stream", "role"):
-            assert meta.get(key), f"{box_id}: meta.{key} 是空的"
-        assert "feeds_into" in meta, f"{box_id}: 没声明 feeds_into（哪怕是空列表）"
+        _assert_pass(box_id, "placement_filled")
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_value_stream_has_a_kanban_color(self, box_id):
@@ -1246,68 +1209,7 @@ class TestRadialLayoutIsDerived:
             )
 
 
-def _split_comparison(part: str) -> tuple[str, str, str]:
-    """把 `field op value` 拆成三元组"""
-    m = re.search(r"(>=|<=|==|!=|>|<)", part)
-    assert m, f"{part!r} 不是三段式"
-    return (
-        part[: m.start()].strip(),
-        m.group(1),
-        part[m.end():].strip().strip("\"'"),
-    )
-
-
-def _value_satisfying(op: str, value: str) -> Any:
-    """造一个能让 `field op value` 成立的值"""
-    if value in ("true", "false"):
-        target = value == "true"
-        return target if op == "==" else (not target)
-    try:
-        number = float(value) if "." in value else int(value)
-    except (TypeError, ValueError):
-        return value
-    if op == ">":
-        return number + 1
-    if op == ">=":
-        return number
-    if op == "<":
-        return number - 1
-    if op == "<=":
-        return number
-    if op == "==":
-        return number
-    if op == "!=":
-        return number + 1
-    return number
-
-
-def _literal_type(value: str) -> str | None:
-    """字面量的类型；不是字面量（自由文本）时返回 None"""
-    if value in ("true", "false"):
-        return "boolean"
-    try:
-        int(value)
-        return "integer"
-    except (TypeError, ValueError):
-        pass
-    try:
-        float(value)
-        return "number"
-    except (TypeError, ValueError):
-        pass
-    return "string"
-
-
-def _types_compatible(field_type: str, literal_type: str) -> bool:
-    """产出字段的类型能不能跟条件里的字面量比"""
-    if field_type in ("object", "array", "enum") or field_type.startswith("ref:"):
-        return True  # 这几种类型从字面量看不出该比什么，放行
-    if field_type == "boolean":
-        return literal_type == "boolean"
-    if field_type == "integer":
-        return literal_type in ("integer", "number")
-    if field_type == "number":
-        return literal_type in ("integer", "number")
-    if field_type == "string":
-        return literal_type == "string"
-    return True
+# 注：这一组守卫以前自己带了一套条件解析的小工具
+# （_split_comparison / _value_satisfying / _literal_type / _types_compatible）。
+# 它们已经搬进 `runtime/box_health.py`——**判定住在检查器里**，
+# 守卫和工作台页面读同一份。两处各抄一份 = 两份事实 = 漂。
