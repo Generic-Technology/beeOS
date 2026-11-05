@@ -1,16 +1,19 @@
 # 域声明（Domain Declaration）：盒子之间关系的唯一事实源
 
-> **这是设计稿，尚未实现。** 本文定的是**目标形态**，代码还没改。
-> 实现以本文为准；实现未完成前，本文与代码不一致是**预期的**。
+> **已实现（2026-11-05）。** 本文是**决策与理由**的记录——
+> 里面的「现状」「实测」段落记的是**当时**的事实（§1、附录 A 都标了日期），
+> 读的时候按历史记录读，别当成现在的仓库状态。
 >
-> **状态**：v0.1 草稿 · 待实现
-> **日期**：2026-11-04
+> **状态**：v1.0 · 已实现（§7 的迁移步骤 1/2/4/5/6 已做，第 3 步待做）
+> **日期**：2026-11-04 定 · 2026-11-05 实现
 > **讨论背景**：BeeBox 标准化讨论（SOLID 分层 / 脚手架化 / 场图归属）
 > **相关**：[architecture-upgrade.md](./architecture-upgrade.md)（盒子脚手架化定稿）·
 > [beebox-design.md](./beebox-design.md)（主设计稿）· [beeline.md](./beeline.md)
 >
 > **路径写法约定**：本文里 `core/<domain>.py` 这种**尖括号包住名字**的写法，
-> 表示**计划中、尚未创建**的文件；不带尖括号的都是**现在真实存在**的路径。
+> 表示**计划中、尚未创建**的文件；不带尖括号的都是**真实存在**的路径。
+> 「改名对照表」里的旧名（`core/field_map.py` 等）是**历史记录**——
+> 仓库里已经没有了，文档守卫对此有专门豁免（且要求它**确实**不在仓库里）。
 
 ---
 
@@ -239,7 +242,7 @@ runtime 执行的是**一次履约**：一只盒子自己的 beeline + handler �
   `core.conditions` / `core.models`）
 - 域的形状（ring / star）对 runtime 无意义——一次履约只跑一只盒子
 
-**依赖方向允许 ≠ 必须使用。** `core/field_map.py` 现在就在 core 里，runtime 一样不碰它。
+**依赖方向允许 ≠ 必须使用。** `core/wiring.py` 现在就在 core 里，runtime 一样不碰它。
 
 ---
 
@@ -345,7 +348,7 @@ core/<wiring>.py              ← 接线算法（机制）
 ```
 
 **若接线算法住 `domains/`**，12 个域就要 12 份拷贝——必然漂。
-现在它在 `core/field_map.py` 已经是这个位置，改名只是让它更准。
+现在它在 `core/wiring.py` 已经是这个位置，改名只是让它更准。
 
 ### 3.2 域声明（业务侧，一份样例）
 
@@ -420,13 +423,30 @@ DOMAIN = DomainDeclaration(
 | `field_map_of_scope()` | `wiring_of_scope()` |
 | `BeeBoxMap` | `WiringView` |
 | `PlacementView` | `BoxFacts`（盒子归属搬走后，它抄的就是「这只盒子的事实」）|
-| 前端 label `... · BeeBox Map` | `... · 场图` |
+| 前端 label `... · BeeBox Map` | **不改**（见下）|
 | 域声明（新） | **域**（Domain）——唯一的事实源 |
 
-**改名牵连 5 个文件 + 1 个测试文件**：
-`kanban/trigger.py`(12 处) / `kanban/web.py`(7) / `scripts/new_box.py`(8) /
-`tests/test_learning_boxes.py`(3) / `tests/test_docs_match_code.py`(1) /
-`tests/test_field_map.py`(33 → 改名 `tests/<wiring>.py`)
+> **⚠️ 前端 label 这一行当初写错了（2026-11-05 实现时发现）**：
+> 初版写「`... · BeeBox Map` → `... · 场图`」。
+> **但看板早就有一条守卫明写「别再用自造的词『场』当标签」**——
+> 理由是：「活儿」「场」这类自造词业务方看不懂，
+> 而产品名（BeeBox）本来就在标题里出现过，是**现成的词**。
+>
+> 那是**先于本文的产品决策**，而且有守卫在守。
+> 所以这一行改成：**label 不动**。
+>
+> **教训**：改名的清单不能照着「新概念更准确」一路推——
+> 每一项都得问「**有没有别处已经拍过板的约束**」。
+> 名字准不准是次要的，**跟已拍板的东西打架是主要的**。
+
+**改名牵涉的文件**（都已改完）：
+`kanban/trigger.py` / `kanban/web.py` / `scripts/new_box.py` /
+`tests/test_learning_boxes.py` / `tests/test_docs_match_code.py` /
+`tests/test_field_map.py`（→ `tests/test_wiring.py`）
+
+> **「牵涉几处」那种数字不写进来**：它一改就过期，
+> 而过期的数字比没有数字更糟（读的人会拿它当依据）。
+> 要查就查仓库。
 
 > 趁现在改最便宜——以后每次动这三个 import 点都是还债。
 
@@ -577,8 +597,21 @@ D* 验「一个域的结构对不对」（需要盒子信息，由调用方从�
 > **换一种边类型，并没有补上归档动作。**
 > 「声明层」与「事实层」必须分开展示：**规则读数是声明层，
 > 「产物真的进了档案」是事实层，只能由运行记录证明。**
-| `all_handoff` | 环序上每只非汇点盒子都有 `handoff` 边接到下一环 | **5 / 5** | **新增的盒子忘了接进链** |
-| `each_handoff_has_channel` | 每条 `handoff` 边都有通道（D3a/b/c）| **5 / 5** | **声明了交接却走不通** |
+| `all_handoff` | 每只**非汇点**盒子都在交接链上（本域至少有一条 `handoff` 边，**入边或出边**）| WMS **6 / 6**、Learning **3 / 3** | **新增的盒子忘了接进链** |
+| `each_handoff_has_channel` | 每条 `handoff` 边都有通道（D3a/b/c）| WMS **8 / 8**、Learning **3 / 3** | **声明了交接却走不通** |
+
+> **⚠️ `all_handoff` 的判据在实现时改过（2026-11-05）**：
+> 初版写的是「**环序上**每只非汇点盒子都有 `handoff` 边接到下一环」。
+> 那是**按环写的**——可交接图**不一定是一条链**：
+> 真实的数据依赖图里有「抄近路」的那 3 条（需求→测试、设计→测试、开发→运维）。
+> 按环写会把它们判成「没接到下一环」。
+>
+> 改成「**在本域至少有一条交接边**（入边或出边）」：
+> - 仍能抓住「新加的盒子一条边都没有」（它不在任何交接边上）；
+> - 不挑链的**末端**（分析盒没有交接出边，它的出边是归档和闭环反馈——
+>   **要求出边会把合法结构判成错**）；
+> - **放射形状的域也适用**（三科各自直投成长记录，三只都在交接边上）——
+>   这跟 §5.5 的结论一致：**规则要挂在 `kind` 上，不要挂在「环/汇点」上**。
 
 **为什么规则里必须带「豁免」**：需求盒就是豁免——它**有意**不归档（§1.3）。
 而豁免的理由现在住在**需求盒文件头的注释里**（散文）。
@@ -652,9 +685,18 @@ growth 声明的接料形状 `schema_learning_subject_result` 是那 10 个字�
 
 | 规则 | ring 域（WMS） | star 域（Learning） |
 |---|---|---|
-| `all_archived` | 适用 | **不适用**——源盒的边是 handoff，不是 archive |
-| `all_handoff` | 适用（环序上接下一环）| **不适用**——**没有环序** |
-| `each_handoff_has_channel` | 适用 | **适用**（3/3 通过）|
+| `all_archived` | 适用（5/5）| **不适用**——源盒的边是 handoff，不是 archive |
+| `all_handoff` | 适用（6/6）| **适用**（3/3）——「源盒有没有交接边」，跟有没有环序无关 |
+| `each_handoff_has_channel` | 适用（8/8）| **适用**（3/3）|
+
+> **⚠️ 修正（2026-11-05，实现时）**：初版这里写 `all_handoff` 在 star 域
+> **不适用**，理由是「没有环序」。
+> 但改后的判据是「**在本域至少有一条交接边**」（见 §5.3 的修正框），
+> 它跟环序**无关**——三科各自直投成长记录，三只都真的有交接边。
+> 所以它在 star 域**适用而且通过（3/3）**。
+>
+> **这正是本节结论的兑现**：规则挂在 `kind`（有没有交接边）上，
+> 而不是挂在「环/汇点」这种拓扑位置上。
 
 > **「汇点」这个词盖了两种东西。**
 >
@@ -811,14 +853,19 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 > 迁移期两套协议并存是计划内的——控制手段同 `architecture-upgrade.md`：
 > 一只盒子不许混着写 / 走了新路径的必须真的在装配。
 
-| 步 | 做什么 | 守什么 |
-|---|---|---|
-| 1 | `core/<domain>.py`：`DomainDeclaration` / `Edge` / `assemble_domain` | 新协议只有形状，零业务词 |
-| 2 | 建 `domains/<wms>/` `domains/<learning>/`（域声明 + 盒子 + 边） | 边**按完整数据依赖图**搬（8 条，**不是 `feeds_into` 那 5 条**）——见 §1.6；并按 `kind` 分类 |
-| 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 |
-| 4 | `core/field_map.py` 改成吃域声明 | 派生层仍然不拥有事实 |
-| 5 | 看板改读新来源 | 画布上的虚线边界只是它的一张照片 |
-| 6 | 补 D1–D12 守卫 + 「域声明必须真的在装配」守卫 | 声明了却没人装 = 没迁移 |
+| 步 | 做什么 | 守什么 | 状态 |
+|---|---|---|---|
+| 1 | `core/<domain>.py`：`DomainDeclaration` / `Edge` / `assemble_domain` | 新协议只有形状，零业务词 | ✅ `core/domain.py` + `core/models.py` |
+| 2 | 建 `domains/<wms>/` `domains/<learning>/`（域声明 + 盒子 + 边） | 边**按完整数据依赖图**搬（8 条，**不是 `feeds_into` 那 5 条**）——见 §1.6；并按 `kind` 分类 | ✅ WMS 14 条边 + Learning 3 条 |
+| 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 | ⏳ **待做**（迁移期双写，由 `tests/test_domain_declaration.py` 钉住不矛盾）|
+| 4 | `core/wiring.py` 改成吃域声明 | 派生层仍然不拥有事实 | ✅ `core/wiring.py` |
+| 5 | 看板改读新来源 | 画布上的虚线边界只是它的一张照片 | ✅ `kanban/trigger.py` |
+| 6 | 补 D1–D12 守卫 + 「域声明必须真的在装配」守卫 | 声明了却没人装 = 没迁移 | ✅ `core/decl_checks.py` + `tests/test_domain_declaration.py` |
+
+> **第 3 步为什么还没做**：盒子还没全部迁到新协议（`BoxDeclaration`），
+> 摘掉旧字段会让看板读不到接线。**过渡期靠守卫钉住**：
+> 旧字段与域声明**不得矛盾**（`tests/test_domain_declaration.py`）——
+> 两份事实并存时，矛盾比漂更容易被发现。
 
 **第 2 步的真正活有两件：补齐真实依赖 + 按 `kind` 分类。**
 
@@ -1224,8 +1271,9 @@ reason      = ''          ← 没有原因
 
 `runtime/` 的 import 清单里，core 的部分只有三处：
 `core.beeline_models` / `core.conditions` / `core.models`。
-**没有 `core.field_map`。** 全仓搜 `field_map` / `placement` / `feeds_into` /
-`domain` / `BeeBoxMap`，`runtime/` 里只有一处，且是**注释**：
+**没有 `core.wiring`**（当时它叫 `core.field_map`）。
+全仓搜 `wiring` / `field_map` / `placement` / `feeds_into` /
+`domain` / `WiringView`，`runtime/` 里只有一处，且是**注释**：
 
 ```
 runtime/handoff.py:5:  `placement.feeds_into` 只是看板上的箭头，投料要人手工把上一只盒子的
@@ -1442,7 +1490,7 @@ receipt 产出字段（20 个）: merchant_name / receipt_no / receipt_date / re
    实际只产 4 个值。**把上游声明改精确，静态判定立刻成立**——
    这比给 `unknown` 加机制更根本（§5.6）。
 2. **那 5 条 `feeds_into=system_box` 的边运行时零作用** ——
-   `runtime/` 从不 import `core.field_map`、从不认 `feeds_into`。
+   `runtime/` 从不 import `core.wiring`、从不认 `feeds_into`。
    **它们是纯拓扑边**，被本文叫成了「归档」这个业务承诺（§1.7）。
 
 **审查给出的落地边界，本文采纳**（§0.2）：

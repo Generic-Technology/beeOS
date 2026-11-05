@@ -71,7 +71,14 @@ flowchart TB
   - `conditions.py` — 例外条件语法的**唯一真源**（runtime 从这里取，不另写一份）
   - `decl_checks.py` — 声明自洽判定的**唯一真源**（装配器与体检台共用一份）
   - `scaffold.py` — 装配器：按协议组装盒子，声明自相矛盾时**装配期就报错**
-  - `field_map.py` — 场图：从各盒的 placement **派生**出域的接线图（纯函数）
+  - `contract.py` — 「什么类型算兼容」的**唯一真源**（声明层兼容判定与运行时产物校验共用一份）
+  - `domain.py` — 域装配器：把域声明装成产物，域级声明不合法时**装配期就报错**
+  - `wiring.py` — 接线投影：从**域声明**派生出域的接线图（纯函数，不拥有事实）
+
+- **`domains/`** — 域声明（盒子之间关系的**唯一事实源**）
+  - `__init__.py` — 域注册表（**显式注册，不扫目录**）+ 编排层读边的入口
+  - `wms/domain.py` — WMS 域的声明：成员 + 边（按 `kind` 分三类）+ 域级规则
+  - `learning/domain.py` — 学习域的声明（放射形状，规则与 WMS 不同）
 
 - **`boxes/`** — 业务履约盒子（产品层）。**全部已注册**（清单见下表）
   - 每只盒子：`__init__.py` / `schemas.py` / `definition.py` / `runner.py`
@@ -141,7 +148,8 @@ flowchart TB
     `test_runtime_reliability.py` / `test_taskrun_states.py` /
     `test_box_standard.py` / `test_box_refs.py` / `test_box_naming.py` /
     `test_layering.py` / `test_intake_contract.py` / `test_metrics.py` /
-    `test_field_map.py` / `test_scaffold.py`（装配器协议的守卫）/
+    `test_wiring.py` / `test_scaffold.py`（装配器协议的守卫）/
+    `test_domain_declaration.py`（域声明的守卫）/
     `test_new_box_scaffold.py` / `test_subject_ref.py` /
     `test_work_item_attribution.py` / `test_op_trail.py` /
     `test_trail_matches_beeline.py` / `test_chain_script.py` /
