@@ -1876,6 +1876,30 @@ function currentScopeLayout(scopeLayouts) {{
   return {{ lay: lay, canRadial: !!(lay && lay.layout === 'radial') }};
 }}
 
+// ===== 范围 = 显示过滤，三块画面一起跟着 =====
+//
+// 「范围」这个轴控制的是「**看哪些盒子**」。以前它只管中间的地图：
+// 选 Learning 域，地图只剩 Learning 的盒子，左栏的任务列表和右栏的
+// 操作轨迹照旧列全平台——
+// 于是读者在「Learning 的地图」旁边读「WMS 的任务」「WMS 的轨迹」，
+// 两件事对不上，而且**没有任何东西提示他口径变了**。
+//
+// **域成员从服务端 payload 的 `domains` 取**——那份数据是从各盒自己的
+// `placement.domain` 派生的，前端不自己列名单（自己列 = 第二份真相）。
+//
+// 返回 null = 不筛（全部域）。筛选是**显示**口径：顶部的验收率分母
+// 仍是全平台的（见 applyDomainFilter 那段注释）。
+function scopeBoxIds(data) {{
+  if (_domainFilter === ALL_DOMAINS) return null;
+  const domains = (data && data.domains) || {{}};
+  return new Set(domains[_domainFilter] || []);
+}}
+
+// 范围的名字（给「这一栏是哪个范围」的说明用）
+function scopeLabel() {{
+  return _domainFilter === ALL_DOMAINS ? '全部域' : domainLabel(_domainFilter);
+}}
+
 // ===== 左栏 = 任务（任务）=====
 //
 // 左栏回答「现在有哪些任务在飞」，中间的 BeeBox Map 回答「盒子和接线长什么样」。
@@ -1890,10 +1914,20 @@ function currentScopeLayout(scopeLayouts) {{
 // 怎么样），放在任务列表里就变成了「任务旁边一列盒子的状态」——
 // 同一个信息放在两个地方，迟早不一致。
 function renderTaskList(data) {{
-  const tasks = data.tasks || [];
+  const allTasks = data.tasks || [];
   // **单盒视图：只列这只盒子参与过的任务**（服务端已经按这个口径过滤了）。
   // 盒子页的读者在问「这只盒子干过哪些活儿」——给他全平台的清单是在答非所问。
   const boxFilter = data.box_filter || '';
+  // **范围也过滤**：选中 Learning 域，左栏就该只列 Learning 的任务。
+  // 以前范围只管中间的地图，左栏照旧列全平台——
+  // 读者在「Learning 的地图」旁边读「WMS 的任务」，两件事对不上。
+  //
+  // 任务跟域的关系是「**这件任务牵过的盒子里有没有这个域的**」：
+  // 一件任务可以牵跨域的盒子，它只要沾到这个域的盒子，就归这个域看。
+  const scope = scopeBoxIds(data);
+  const tasks = scope
+    ? allTasks.filter(t => (t.boxes || []).some(b => scope.has(b.box_id)))
+    : allTasks;
   // 列表长了页面就长：只列最近的一批，**并写清楚还剩多少**。
   // 静默截断 = 读者以为就这些任务；写清楚「还有 N 件没列」才是诚实。
   const LIMIT = 12;
@@ -1901,12 +1935,20 @@ function renderTaskList(data) {{
   html += '<div class="side-group">';
   html += '<div class="side-group-label">任务列表'
     + (boxFilter ? '<span class="side-group-sub">这只盒子参与过的</span>' : '')
+    + (scope && !boxFilter
+        ? '<span class="side-group-sub">' + esc(scopeLabel()) + ' 域牵到的</span>'
+        : '')
     + '</div><div class="side-list">';
   if (!tasks.length) {{
     if (boxFilter) {{
       html += '<div class="rail-empty">这只盒子还没参与过任何任务。'
         + '只有带工作项号的运行才算任务——没带工作项号的运行是'
         + '「这只盒子跑过什么」，不归成任务。</div>';
+    }} else if (scope) {{
+      html += '<div class="rail-empty">' + esc(scopeLabel())
+        + ' 域里还没有带工作项号的运行记录。'
+        + '没有工作项的运行（某只盒子自己跑过什么）不进这一栏——'
+        + '那是「盒子跑过什么」，不是「哪件任务」。</div>';
     }} else {{
       html += '<div class="rail-empty">还没有带工作项号的运行记录。'
         + '没有工作项的运行（某只盒子自己跑过什么）不进这一栏——'
@@ -2020,16 +2062,28 @@ const LEGACY_OP_IDS = {{
 }};
 
 function renderRail(data) {{
-  const trails = data.op_trails || [];
+  const allTrails = data.op_trails || [];
+  // **范围也过滤**：右栏给的是「这些盒子最近一次履约的 op 顺序」，
+  // 范围既然换了「看哪些盒子」，这一栏就该跟着换。
+  // 以前它照旧列全平台——Learning 的地图旁边挂着 WMS 的轨迹。
+  const scope = scopeBoxIds(data);
+  const trails = scope
+    ? allTrails.filter(t => scope.has(t.box_id))
+    : allTrails;
   let html = '<div class="rail-title">操作轨迹</div>';
   // 口径跟着「选中的任务」走，说清楚这一栏给的是**哪一次**运行。
   html += '<div class="rail-sub">'
+    + (scope
+      ? scopeLabel() + ' 域里，'
+      : '')
     + (_task
       ? '这件任务里每只盒子最近一次履约的 op 执行顺序'
       : '每只盒子最近一次履约的 op 执行顺序')
     + '</div>';
   if (!trails.length) {{
-    html += '<div class="rail-empty">还没有运行记录。触发一次履约，'
+    html += '<div class="rail-empty">'
+      + (scope ? esc(scopeLabel()) + ' 域里' : '')
+      + '还没有运行记录。触发一次履约，'
       + '这里就会列出每个 op 的执行痕迹。</div>';
     return html;
   }}
