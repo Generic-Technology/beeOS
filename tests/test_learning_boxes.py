@@ -20,7 +20,7 @@ import pytest
 
 from kanban.trigger import (
     BOX_REGISTRY,
-    domain_field_map,
+    domain_wiring,
     trigger_task,
 )
 from runtime.store import TaskRunStore
@@ -117,7 +117,7 @@ class TestTheShapesStayCompatible:
 class TestTheLearningDomainIsAStar:
     def test_the_archive_is_the_only_sink(self):
         """成长记录盒是这个域**唯一**的汇点"""
-        m = domain_field_map("Learning")
+        m = domain_wiring("Learning")
         assert m.center == GROWTH_BOX, f"汇点算成了 {m.center}"
         assert m.shape == "star", (
             f"学习域的形状是 {m.shape}——三科之间没有交接，它该是放射"
@@ -125,7 +125,7 @@ class TestTheLearningDomainIsAStar:
         assert m.handoffs == (), "放射形状里不该有交接边"
 
     def test_every_subject_feeds_the_archive(self):
-        m = domain_field_map("Learning")
+        m = domain_wiring("Learning")
         for box_id in SUBJECT_BOXES:
             feeds = _definition(box_id).placement.feeds_into
             assert list(feeds) == [GROWTH_BOX], (

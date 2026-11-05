@@ -44,7 +44,7 @@ SELF = Path(__file__).resolve()
 SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", "vendor", "dist", "build", ".pytest_cache"}
 
 # 文档里提到的路径，只有这些前缀算「仓库内路径」——别的（如 logs/、flows/）不管
-PATH_PREFIXES = ("boxes", "runtime", "core", "kanban", "tests", "docs", "scripts", "beelines")
+PATH_PREFIXES = ("boxes", "runtime", "core", "kanban", "tests", "docs", "scripts", "domains")
 
 # 改名前 / 已删除的名字：文档里再出现就是在骗人
 RETIRED_NAMES = (
@@ -92,6 +92,26 @@ HISTORICAL_DOCS = {
 
 # 已经搬走 / 拆掉的模块名：import 它 = 文档在教人一条走不通的路
 RETIRED_MODULES = ("beelines",)
+
+# **已经退休的路径**：允许文档把它当历史记录提（「改名前叫什么」），
+# 但仓库里必须**确实没有**这个路径。
+#
+# **为什么需要它**：设计稿里的「改名对照表」必须写得出旧名，
+# 而旧名已经不在仓库里了——不许提的话，文档就只能把对照表删掉，
+# 决策的理由也就跟着没了。
+#
+# **为什么这条豁免不是漏洞**：豁免的前提是「它真的退休了」。
+# 仓库里要是又出现了这个路径，说明旧名复活了——
+# 那时文档里的「改名前」就分不清说的是哪一次，
+# 而「旧名不许回代码」正是这套纪律要防的事。
+RETIRED_PATHS = {
+    "core/field_map.py",
+    "tests/test_field_map.py",
+}
+# 退休的**测试文件名**（裸文件名形式）
+RETIRED_TEST_FILES = {
+    "test_field_map.py",
+}
 
 # 路径 token：允许前缀目录 / 相对路径 / 通配
 PATH_TOKEN = re.compile(
@@ -157,6 +177,15 @@ def test_md_referenced_paths_exist(md: Path) -> None:
             if line[: match.start()].endswith("api/"):
                 continue
             raw = token
+            if raw in RETIRED_PATHS:
+                # 退休路径：**它必须真的不在仓库里了**。
+                # 在的话就是旧名复活——文档里的「改名前」会指错人。
+                assert not (ROOT / raw).exists(), (
+                    f"{_rel(md)}:{lineno}: {raw} 是退休路径，"
+                    f"但它又出现在仓库里了——旧名复活了，"
+                    f"文档里的「改名前」就分不清说的是哪一次"
+                )
+                continue
             if raw.startswith(("./", "../")):
                 target = (md.parent / raw).resolve()
             else:
@@ -173,6 +202,13 @@ def test_md_referenced_test_files_exist(md: Path) -> None:
     bad: list[str] = []
     for lineno, line in enumerate(text.splitlines(), 1):
         for name in set(TEST_FILE_TOKEN.findall(line)):
+            if name in RETIRED_TEST_FILES:
+                # 退休的测试文件名：它必须真的不在 tests/ 下了（见 RETIRED_PATHS）
+                assert not (ROOT / "tests" / name).exists(), (
+                    f"{_rel(md)}:{lineno}: {name} 是退休的测试文件名，"
+                    f"但它又出现在 tests/ 下了——旧名复活了"
+                )
+                continue
             if not (ROOT / "tests" / name).exists():
                 bad.append(f"{_rel(md)}:{lineno}: 文档提到测试文件 {name} —— tests/ 下没有")
     assert not bad, "\n".join(bad)
@@ -538,7 +574,7 @@ def test_box_readme_counts_match_definition(box_dir: str) -> None:
 # 所以反过来：**README 列了就必须存在，实际有就必须列上**。
 # 加文件忘了写进 README → 清单守卫红（提醒补一句）。
 
-_LISTED_DIRS = ("core/", "runtime/", "scripts/", "docs/")
+_LISTED_DIRS = ("core/", "runtime/", "scripts/", "docs/", "domains/")
 
 # 清单行：`- \`xxx.py\` — 说明`（要求后面是破折号或行尾）
 # 不写成「段内所有反引号」：段里可能有「见 `runtime/models.py`」这种行内引用，

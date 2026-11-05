@@ -1,72 +1,89 @@
-"""守卫：Map（BeeBox Map）是从 placement 派生的结构，不是手写的表
+"""守卫：接线投影（Wiring View）是从**域声明**派生的结构，不是手写的表
 
 为什么要有这一组：
-- 「一个域的 Map」是真实存在的东西——它有名字之后，很多话才说得通
-  （这件任务在Map上走了哪几步）。但**它不能是一张人手维护的表**：
-  各盒的 placement（domain + feeds_into + feedback_into）已经是唯一事实源，
-  再写一张域接线表就是第二份事实，必然漂，而且漂了不报错。
+- 「一个域的接线」是真实存在的东西——它有名字之后，很多话才说得通
+  （这件任务在域上走了哪几步）。但**它不能是一张人手维护的表**：
+  域声明（成员 + 边）已经是唯一事实源，再写一张域接线表就是第二份事实，
+  必然漂，而且漂了不报错。
 - 所以守三件事：
-  ① Map的每条边都能追到某只盒子的 placement（派生，不是抄）；
-  ② Map画不出来时**说清楚为什么**（跨域 / 没有汇点 / 汇点不唯一 / 成环）；
-  ③ Map是一个**结构**：能被 API 读出来，不只是画布上的一张照片。
+  ① 接线的每条边都能追到域声明里的某条边（派生，不是抄）；
+  ② 画不出来时**说清楚为什么**（跨域 / 没有汇点 / 汇点不唯一 / 成环）；
+  ③ 它是一个**结构**：能被 API 读出来，不只是画布上的一张照片。
+
+**边按 `kind` 分三类**（这是 2026-11-05 的实测结论）：
+`handoff` 进链、`archive` 决定汇点但不是交接、`feedback` 是闭环反馈。
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from core.field_map import (
-    BeeBoxMap,
-    PlacementView,
-    derive_field_map,
-    field_map_of_scope,
+from core.wiring import (
+    ARCHIVE,
+    FEEDBACK,
+    HANDOFF,
+    WiringView,
+    derive_wiring,
+    wiring_of_scope,
 )
 from kanban.trigger import (
     BOX_REGISTRY,
-    domain_field_map,
-    placement_views,
-    scope_field_map,
+    domain_wiring,
+    scope_wiring,
     scope_layout,
 )
+from domains import DOMAIN_REGISTRY
 
 
-def _p(box_id: str, domain: str = "WMS", feeds=(), feedback=()) -> PlacementView:
-    return PlacementView(
-        box_id=box_id, domain=domain,
-        feeds_into=tuple(feeds), feedback_into=tuple(feedback),
-    )
+def _e(src: str, dst: str, kind: str = HANDOFF) -> tuple[str, str, str]:
+    return (src, dst, kind)
+
+
+def _derive(boxes, edges, domain: str = "WMS") -> WiringView:
+    return derive_wiring(domain, boxes, edges)
 
 
 # ---------- 派生，不是抄 ----------
 
-def test_the_edges_come_from_the_placements():
-    """改一只盒子的 placement，Map的边跟着变
+def test_the_edges_come_from_the_declaration():
+    """改一条边，接线的边跟着变
 
-    这条是「派生」二字的机械证据：Map不是另抄了一份表，
-    它读的就是 placement。
+    这条是「派生」二字的机械证据：接线不是另抄了一份表，
+    它读的就是域声明。
     """
-    base = [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["c"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ]
-    m = derive_field_map("WMS", base)
+    base_boxes = ["a", "b", "c", "d"]
+    base = [_e("a", "b"), _e("b", "c"), _e("c", "d", ARCHIVE)]
+    m = _derive(base_boxes, base)
     assert m.center == "d", "唯一汇点是 d"
-    # 指向汇点的那条边是**累积**（产出进档案），不是交接——
+    # 指向汇点的那条边是**归档归属**，不是交接——
     # 混成一条就看不出「流水线」和「记账」是两件事。
     assert m.handoffs == (("a", "b"), ("b", "c"))
     assert m.feeds_center == ("c",)
 
-    # 把 a 的下游从 b 改成 c：Map的边必须跟着变
-    changed = [
-        _p("a", feeds=["c"]),
-        _p("b", feeds=["c"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ]
-    m2 = derive_field_map("WMS", changed)
+    # 把 a 的下游从 b 改成 c：接线的边必须跟着变
+    changed = [_e("a", "c"), _e("b", "c"), _e("c", "d", ARCHIVE)]
+    m2 = _derive(base_boxes, changed)
     assert m2.handoffs == (("a", "c"), ("b", "c"))
     assert m2.handoffs != m.handoffs
+
+
+def test_the_archive_edge_decides_the_center_but_is_not_a_handoff():
+    """**归档边决定谁是汇点，但它不是交接**
+
+    这是 2026-11-05 实测逼出来的区分：
+    档案盒（`wms_system_box`）**一条交接边都没有**——
+    它只被 5 条归档边连着。
+    如果归档边不计入度数，汇点会从「档案盒」变成「链条末端那只」，整张图就错了。
+    但它**不是交接**——把它算进链，就是在暗示「这两只有交接关系」。
+    """
+    boxes = ["a", "b", "c", "sink"]
+    m = _derive(boxes, [
+        _e("a", "b"),
+        _e("b", "c"),
+        _e("c", "sink", ARCHIVE),
+    ])
+    assert m.center == "sink", "汇点是被归档的那只"
+    assert m.handoffs == (("a", "b"), ("b", "c")), "归档边不是交接"
+    assert m.feeds_center == ("c",)
 
 
 def test_the_feedback_edge_is_kept_out_of_the_handoff_chain():
@@ -75,67 +92,65 @@ def test_the_feedback_edge_is_kept_out_of_the_handoff_chain():
     混进交接链的话拓扑排序遇到环，会静默按原顺序收尾——
     环序变任意，图照常渲染，只是结构是错的。
     """
-    m = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["c"], feedback=["a"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ])
+    m = _derive(
+        ["a", "b", "c", "d"],
+        [
+            _e("a", "b"),
+            _e("b", "c"),
+            _e("b", "a", FEEDBACK),
+            _e("c", "d", ARCHIVE),
+        ],
+    )
     assert m.feedback == (("b", "a"),)
     assert ("b", "a") not in m.handoffs, "反馈边混进交接链了"
     assert m.center == "d"
     assert m.ring == ("a", "b", "c"), "闭环那条边摘掉后，主干的环序排得出来"
 
 
-def test_the_field_map_carries_no_hardcoded_box_names():
-    """Map模块里不许出现任何一只盒子的名字
+def test_the_wiring_module_carries_no_hardcoded_box_names():
+    """接线模块里不许出现任何一只盒子的名字
 
-    出现 = 有人把业务事实写进了内核。Map只认 placement。
+    出现 = 有人把业务事实写进了内核。接线只认协议。
     """
-    src = (Path(__file__).resolve().parent.parent / "core" / "field_map.py").read_text()
+    src = (Path(__file__).resolve().parent.parent / "core" / "wiring.py").read_text()
     for box_id in BOX_REGISTRY:
-        assert box_id not in src, f"core/field_map.py 里写死了 {box_id}"
-    assert "wms_" not in src, "core/field_map.py 里出现了具体域/盒子的名字"
+        assert box_id not in src, f"core/wiring.py 里写死了 {box_id}"
+    assert "wms_" not in src, "core/wiring.py 里出现了具体域/盒子的名字"
 
 
 # ---------- 画不出来时要说清楚 ----------
 
-def test_a_scope_spanning_two_domains_has_no_field_map():
-    """跨域 → 没有Map，但要把原因写出来
+def test_a_scope_spanning_two_domains_has_no_wiring():
+    """跨域 → 没有接线图，但要把原因写出来
 
     硬凑一个汇点等于替业务声明一条没人声明过的拓扑。
     """
-    views = {
-        "a": _p("a", domain="WMS", feeds=["b"]),
-        "b": _p("b", domain="WMS"),
-        "c": _p("c", domain="OPS", feeds=["d"]),
-        "d": _p("d", domain="OPS"),
+    wirings = {
+        "WMS": _derive(["a", "b"], [_e("a", "b")]),
+        "OPS": _derive(["c", "d"], [_e("c", "d")]),
     }
-    m = field_map_of_scope("全部域", {"WMS": ["a", "b"], "OPS": ["c", "d"]}, views)
+    m = wiring_of_scope("全部域", {"WMS": ["a", "b"], "OPS": ["c", "d"]}, wirings)
     assert m.center is None
     assert not m.drawable
     assert "多个域" in m.reason
     assert m.reason_code == "cross_domain"
-    # 盒子还是列出来：「这个范围里有哪几只盒子」是事实，缺的只是 Map
+    # 盒子还是列出来：「这个范围里有哪几只盒子」是事实，缺的只是图
     assert set(m.boxes) == {"a", "b", "c", "d"}
 
 
 def test_no_sink_and_many_sinks_are_reported_differently():
     """没有汇点和汇点不唯一，是两回事，原因要分开写"""
-    no_sink = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["c"]),
-        _p("c", feeds=["a"]),
-    ])
+    no_sink = _derive(
+        ["a", "b", "c"],
+        [_e("a", "b"), _e("b", "c"), _e("c", "a")],
+    )
     assert no_sink.center is None
     assert "没有汇点" in no_sink.reason
 
-    two_sinks = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b"),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ])
+    two_sinks = _derive(
+        ["a", "b", "c", "d"],
+        [_e("a", "b"), _e("c", "d")],
+    )
     assert two_sinks.center is None
     assert "汇点" in two_sinks.reason
 
@@ -146,16 +161,13 @@ def test_a_cyclic_handoff_chain_is_reported_not_guessed():
     不猜：静默按原顺序收尾的话，图上只是一个顺序不对的环，
     看不出哪里声明错了。
     """
-    # a↔b 互相交接（闭环），c→d 是主干，d 是汇点
-    m = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["a"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ])
+    m = _derive(
+        ["a", "b", "c", "d"],
+        [_e("a", "b"), _e("b", "a"), _e("c", "d", ARCHIVE)],
+    )
     assert not m.drawable
     assert "成环" in m.reason
-    assert "feedback_into" in m.reason, "要说清闭环那条边该声明成什么"
+    assert "feedback" in m.reason, "要说清闭环那条边该声明成什么"
     assert "a" in m.reason and "b" in m.reason, "要点名是哪几只成环"
 
 
@@ -167,14 +179,15 @@ def test_a_branched_domain_is_not_drawn_as_a_ring():
     而看板画出来的是「环」，读者会以为相邻就是相连。
     **画出来的是一张撒谎的图**，所以这里不画。
     """
-    # a→b→c→d 是主干（d 是汇点）；x 从 b 那里分叉出去（也投给 c）
-    m = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["c"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-        _p("x", feeds=["c"]),
-    ])
+    m = _derive(
+        ["a", "b", "c", "d", "x"],
+        [
+            _e("a", "b"),
+            _e("b", "c"),
+            _e("c", "d", ARCHIVE),
+            _e("x", "c"),
+        ],
+    )
     assert not m.drawable
     assert "不是一条链" in m.reason
     assert "x" in m.reason or "b" in m.reason, "要点名是哪一对没交接"
@@ -182,12 +195,10 @@ def test_a_branched_domain_is_not_drawn_as_a_ring():
 
 def test_a_proper_chain_is_still_drawn():
     """**一条真正的链照旧画得出来**（这条新判断不许误伤）"""
-    m = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["c"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ])
+    m = _derive(
+        ["a", "b", "c", "d"],
+        [_e("a", "b"), _e("b", "c"), _e("c", "d", ARCHIVE)],
+    )
     assert m.drawable, m.reason
     assert m.center == "d"
     assert m.reason == ""
@@ -203,44 +214,35 @@ def test_the_verdict_is_machine_readable_not_just_a_sentence():
 
     所以判定码必须是**结构化**的：脚手架读它，不读那句人话。
     """
-    ok = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["c"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ])
+    ok = _derive(
+        ["a", "b", "c", "d"],
+        [_e("a", "b"), _e("b", "c"), _e("c", "d", ARCHIVE)],
+    )
     assert ok.reason_code == "ok"
 
     # **新域的第一只盒子**：域还小，不是接线坏了
-    small = derive_field_map("QA", [_p("only_one")])
+    small = _derive(["only_one"], [], domain="QA")
     assert not small.drawable
     assert small.reason_code == "too_small", (
         f"一只盒子的域该判 too_small，实际 {small.reason_code}"
     )
 
-    branched = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["c"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-        _p("x", feeds=["c"]),
-    ])
+    branched = _derive(
+        ["a", "b", "c", "d", "x"],
+        [_e("a", "b"), _e("b", "c"), _e("c", "d", ARCHIVE), _e("x", "c")],
+    )
     assert branched.reason_code == "not_a_chain"
 
-    cyclic = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["a"]),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ])
+    cyclic = _derive(
+        ["a", "b", "c", "d"],
+        [_e("a", "b"), _e("b", "a"), _e("c", "d", ARCHIVE)],
+    )
     assert cyclic.reason_code == "cycle"
 
-    two_sinks = derive_field_map("WMS", [
-        _p("a", feeds=["b"]),
-        _p("b"),
-        _p("c", feeds=["d"]),
-        _p("d"),
-    ])
+    two_sinks = _derive(
+        ["a", "b", "c", "d"],
+        [_e("a", "b"), _e("c", "d")],
+    )
     assert two_sinks.reason_code == "multiple_sinks"
 
     # 判定码和 reason 要**对得上**：有话才需要码。
@@ -265,12 +267,15 @@ def test_a_star_domain_is_drawn_as_a_fan_not_as_a_ring():
     放射里源盒**不能摆在环上相邻的位置**——环上「相邻 = 有交接」
     是环的前提，在放射里摆成环就是在暗示不存在的接线关系。
     """
-    m = derive_field_map("Learning", [
-        _p("math_box", domain="Learning", feeds=["growth_box"]),
-        _p("chinese_box", domain="Learning", feeds=["growth_box"]),
-        _p("english_box", domain="Learning", feeds=["growth_box"]),
-        _p("growth_box", domain="Learning"),
-    ])
+    m = _derive(
+        ["math_box", "chinese_box", "english_box", "growth_box"],
+        [
+            _e("math_box", "growth_box"),
+            _e("chinese_box", "growth_box"),
+            _e("english_box", "growth_box"),
+        ],
+        domain="Learning",
+    )
     assert m.center == "growth_box"
     assert m.shape == "star"
     assert m.reason == "", f"放射形状不该有 reason：{m.reason}"
@@ -287,11 +292,11 @@ def test_a_star_domain_with_an_isolated_box_is_refused():
     它既不投汇点、也不交接给谁 —— 那不是放射，是接错了。
     放过它 = 它的产出落在虚空里，而图上看不出来。
     """
-    m = derive_field_map("Learning", [
-        _p("math_box", domain="Learning", feeds=["growth_box"]),
-        _p("growth_box", domain="Learning"),
-        _p("lost_box", domain="Learning"),
-    ])
+    m = _derive(
+        ["math_box", "growth_box", "lost_box"],
+        [_e("math_box", "growth_box")],
+        domain="Learning",
+    )
     assert not m.drawable
     assert m.reason_code == "isolated_box"
     assert "lost_box" in m.reason, "要点名是哪一只接空了"
@@ -304,13 +309,15 @@ def test_two_independent_chains_are_still_refused():
     放射的前提是「域内**一条交接边都没有**」。
     只要有交接边，环序相邻就必须真的有交接——否则画出来的是撒谎的环。
     """
-    m = derive_field_map("Learning", [
-        _p("a", feeds=["b"]),
-        _p("b", feeds=["hub"]),
-        _p("x", feeds=["y"]),
-        _p("y", feeds=["hub"]),
-        _p("hub"),
-    ])
+    m = _derive(
+        ["a", "b", "x", "y", "hub"],
+        [
+            _e("a", "b"),
+            _e("b", "hub"),
+            _e("x", "y"),
+            _e("y", "hub"),
+        ],
+    )
     assert m.center == "hub"
     assert m.shape == "", "有交接边就不该判成放射"
     assert m.reason_code == "not_a_chain"
@@ -355,27 +362,24 @@ def test_the_star_layout_does_not_put_the_sources_on_a_ring():
 
 # ---------- 它是一个结构，不只是一张图 ----------
 
-def test_the_registered_domains_all_have_a_field_map():
-    """每个真域都推得出Map，盒子的集合 == 该域的盒子集合"""
-    views = placement_views()
-    domains = {v.domain for v in views.values()}
-    assert domains, "注册表里一个域都没有"
-    for domain in domains:
-        m = domain_field_map(domain)
-        expected = {b for b, v in views.items() if v.domain == domain}
-        assert set(m.boxes) == expected
-        assert m.domain == domain
-        if len(expected) >= 3:
-            assert m.drawable, f"{domain} 域推不出Map：{m.reason}"
+def test_the_registered_domains_all_have_a_wiring():
+    """每个域都推得出接线，盒子的集合 == 域声明的盒子集合"""
+    assert DOMAIN_REGISTRY, "一个域都没有声明"
+    for domain_id, declaration in DOMAIN_REGISTRY.items():
+        m = domain_wiring(domain_id)
+        assert set(m.boxes) == set(declaration.boxes)
+        assert m.domain == domain_id
+        if len(declaration.boxes) >= 3:
+            assert m.drawable, f"{domain_id} 域推不出接线：{m.reason}"
 
 
-def test_the_board_layout_is_the_same_map():
-    """看板用的布局 == Map（同一份事实，不是两份推导）
+def test_the_board_layout_is_the_same_wiring():
+    """看板用的布局 == 接线（同一份事实，不是两份推导）
 
-    两边各推一次的话，改了 placement 其中一边会忘改——
+    两边各推一次的话，改了域声明其中一边会忘改——
     而看板上看不出来。
     """
-    m = domain_field_map("WMS")
+    m = domain_wiring("WMS")
     lay = scope_layout("WMS")
     assert lay["center"] == m.center
     assert list(lay["ring"]) == list(m.ring)
@@ -383,17 +387,17 @@ def test_the_board_layout_is_the_same_map():
     assert lay["layout"] == ("radial" if m.drawable else "flat")
 
 
-def test_the_map_is_readable_as_a_structure(tmp_path: Path):
-    """Map能被程序读出来（不是只能看图）"""
-    from kanban.web import field_maps_payload
+def test_the_wiring_is_readable_as_a_structure(tmp_path: Path):
+    """接线能被程序读出来（不是只能看图）"""
+    from kanban.web import wirings_payload
 
-    payload = field_maps_payload()
-    assert "maps" in payload and payload["maps"], "没有各域的Map"
+    payload = wirings_payload()
+    assert "maps" in payload and payload["maps"], "没有各域的接线"
     wms = payload["maps"]["WMS"]
     assert wms["center"]
     assert wms["handoffs"], "WMS 域的交接边不该是空的"
     assert wms["drawable"] is True
-    # 跨域范围也有一条结论：没有Map + 原因
+    # 跨域范围也有一条结论：没有图 + 原因
     assert payload["scope_all"]["drawable"] is False
     assert payload["scope_all"]["reason"]
 
@@ -425,14 +429,14 @@ def test_the_radial_canvas_uses_the_vertical_centre():
 
 
 def test_the_field_boundary_is_drawn_and_follows_the_cards():
-    """BeeBox Map 的边界（虚线）要画出来，而且跟着卡片走
+    """域边界的虚线要画出来，而且跟着卡片走
 
     边界写死位置的话，环上多一只盒子，它就骑在框线上。
     """
     import kanban.web as W
 
     page = W.HTML_PAGE
-    assert 'class="edge-field"' in page, "BeeBox Map 的边界没画"
+    assert 'class="edge-field"' in page, "域边界没画"
     assert "fieldHalfX" in page and "fieldHalfY" in page, (
         "边界必须由卡片位置算出来，不能写死"
     )

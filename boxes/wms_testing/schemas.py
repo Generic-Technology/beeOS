@@ -264,7 +264,18 @@ TEST_REPORT_SCHEMA = SchemaDef(
                      FieldDef(name="wms_kind", type="string"),
                      FieldDef(name="statement", type="string", required=False),
                      FieldDef(name="evidence", type="string", required=False),
-                     FieldDef(name="outcome", type="string"),
+                     # **这里原来声明成 plain string**——
+                     # 跟 `TEST_OBSERVATION_SCHEMA`（同一份东西的独立声明）
+                     # 不一致，而**宽的那份会让下游判不出**：
+                     # 运维盒把 outcome 收窄成 enum（4 值），
+                     # 而上游说「任意字符串」→ 声明层兼容判定只能给 **unknown**
+                     # （判不出上游会不会产出下游不接的值）。
+                     # **声明要跟实际一致**：测试盒只产那 4 个值。
+                     FieldDef(
+                         name="outcome",
+                         type="enum",
+                         values=["pass", "fail", "not_applicable", "indeterminate"],
+                     ),
                      FieldDef(name="summary", type="string"),
                      FieldDef(name="details", type="object", required=False,
                               properties=OBSERVATION_DETAIL_PROPERTIES),

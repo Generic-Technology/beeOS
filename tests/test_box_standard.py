@@ -21,6 +21,7 @@ import pytest
 
 from boxes.wms_design import get_definition as get_design_definition
 from boxes.wms_requirement import get_definition as get_capture_definition
+from core.models import EdgeKind
 from kanban.trigger import (
     BOX_REGISTRY,
     TriggerError,
@@ -36,6 +37,29 @@ from tests.conftest import stub_compliant_llm
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 KANBAN_DIR = REPO / "kanban"
+
+
+def _arc_min_distance(gap: float, h: float, length: float) -> float:
+    """一条「朝外鼓的二次贝塞尔弧」离圆心最近有多远
+
+    前端 `handoffCurve` 画的弧：端点 a、b 的中点是 m（离圆心 `gap`），
+    控制点在 m 的法线方向再往外 2h 处。
+
+    弧上一点可写成 `m + length·(t-1/2)·u + 4h·t(1-t)·n`
+    （u 是弦的方向，n 是朝外的法线）。它的模平方是
+
+        f(s) = (gap + h - 4h·s)² + length²·s,   s = (t-1/2)² ∈ [0, 1/4]
+
+    这是**关于 s 的凸二次**，最小值能解析地算出来——
+    **不是拿样例采样出来的**（采样只能证明「存在」一个点离得远）。
+    """
+    a = gap + h
+    s_star = (8 * h * a - length * length) / (32 * h * h)
+    if s_star <= 0:
+        return a
+    if s_star >= 0.25:
+        return math.hypot(gap, length / 2)
+    return math.sqrt(a * a - (length * length - 8 * h * a) ** 2 / (64 * h * h))
 
 
 CAPTURE = "wms_requirement_box"
@@ -882,6 +906,21 @@ class TestRadialLayoutIsDerived:
 
         return box_domains(registered_box_ids())
 
+    @staticmethod
+    def _edges(domain: str):
+        """域声明里的边（`from, to, kind`）——**接线的唯一事实源**
+
+        以前这里读各盒自己的 `placement.feeds_into`。
+        现在接线事实住在域声明里（`domains/<域>/`），
+        盒子上的旧字段是迁移期的双写，不是真源。
+        """
+        from domains import DOMAIN_REGISTRY
+
+        declaration = DOMAIN_REGISTRY.get(domain)
+        if declaration is None:
+            return []
+        return [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges]
+
     def test_the_center_is_the_unique_sink_not_a_named_box(self):
         """圆心 = 域内唯一汇点（出度 0 且入度 > 0），与它是谁无关"""
         from kanban.trigger import domain_layout
@@ -898,17 +937,18 @@ class TestRadialLayoutIsDerived:
 
             center = lay["center"]
             assert center in lay["boxes"]
+            edges = self._edges(domain)
             # 中心必须是「只被投、不投人」的那只：它在所有边里只出现在终点位置
-            sources = {b for b in lay["boxes"]
-                       for t in BOX_REGISTRY[b][0]().placement.feeds_into}
-            fed_by = {b for b in lay["boxes"]
-                      if center in BOX_REGISTRY[b][0]().placement.feeds_into}
+            sources = {b for (b, t, _k) in edges if t in set(lay["boxes"])}
+            fed_by = {b for (b, t, _k) in edges if t == center}
             assert center not in sources, f"{center} 是圆心，却还投给别人"
             assert fed_by, f"{center} 是圆心，却没有任何盒子投给它"
 
             # 域内如果有第二个汇点，中心就不该被选出来
-            others = [b for b in lay["boxes"] if b != center
-                      and not BOX_REGISTRY[b][0]().placement.feeds_into]
+            # （出度 0 = 它不投给任何人。闭环边也算出边——
+            #  分析盒有 feedback 边，所以它不是终点。）
+            out = {b for (b, _t, _k) in edges}
+            others = [b for b in lay["boxes"] if b != center and b not in out]
             assert not others, (
                 f"{domain!r} 有第二个汇点 {others}，中心不唯一，应该退回平铺"
             )
@@ -918,18 +958,21 @@ class TestRadialLayoutIsDerived:
 
         漏画一条边 = 看板上「谁跟谁有关系」少了一条，而布局看上去是完整的。
         分类错一条 = 把「交给下一只验」画成「并进档案」，两件事的读法相反。
+
+        **闭环边也算一条已声明的边**——它画成环上的那条虚线，
+        漏画它 = 「这一轮的结论回到起点」这条关系在图上不见了。
         """
         from kanban.trigger import domain_layout
 
         for domain in self._domains():
             lay = domain_layout(domain)
             declared = {
-                (b, t) for b in lay["boxes"]
-                for t in BOX_REGISTRY[b][0]().placement.feeds_into
+                (b, t) for (b, t, _k) in self._edges(domain)
                 if t in set(lay["boxes"])
             }
             drawn = {tuple(e) for e in lay["handoffs"]} | {
                 (s, lay["center"]) for s in lay["feeds_center"]}
+            drawn |= {tuple(e) for e in lay["feedback"]}
             if lay["layout"] != "radial":
                 assert not drawn, f"{domain!r} 退回平铺却还报了边"
                 continue
@@ -963,10 +1006,9 @@ class TestRadialLayoutIsDerived:
                 # **放射**：源盒各自直投汇点，之间没有交接。
                 # 验的是「每只都真的投过去了」——
                 # 少一只 = 它的产出没落进档案，而图上看不出来。
-                not_fed = [
-                    b for b in ring
-                    if lay["center"] not in BOX_REGISTRY[b][0]().placement.feeds_into
-                ]
+                to_center = {b for (b, t, _k) in self._edges(domain)
+                             if t == lay["center"]}
+                not_fed = [b for b in ring if b not in to_center]
                 assert not not_fed, (
                     f"{domain!r}: 这些盒子没投给汇点：{not_fed}"
                 )
@@ -975,16 +1017,31 @@ class TestRadialLayoutIsDerived:
                 )
                 continue
 
-            seen = set()
+            # **环上相邻 ⇒ 有交接边**（相邻就是在暗示这两只之间有交接，
+            #  没有交接却摆在相邻位置 = 一张撒谎的图）
             for i in range(len(ring) - 1):
                 pair = (ring[i], ring[i + 1])
                 assert pair in handoffs, (
                     f"{domain!r}: 环上第 {i}→{i + 1} 位 {pair} 之间没有交接边"
                 )
-                seen.add(pair)
-            assert len(seen) == len(handoffs), (
-                f"{domain!r}: 有交接边没画在环上相邻位置"
-            )
+
+            # **环序是交接图的拓扑序**：有交接的两只，
+            # 环上的先后必须跟交接方向一致。
+            #
+            # **为什么不是「每条交接边都相邻」**：域的交接图**不一定是一条链**——
+            # 真实的数据依赖图里有「抄近路」的那几条
+            # （需求→测试、设计→测试、开发→运维），
+            # 它们在环上跨着位，画成弦（净空不够时画弧）。
+            # 要求「每条边都相邻」等于**逼着人把真实依赖藏起来**。
+            # 该守的是「相邻的不撒谎」+「顺序不倒过来」，
+            # 而「一条边都不能漏画」由另一条守卫管。
+            pos = {b: i for i, b in enumerate(ring)}
+            for (s, d) in handoffs:
+                if s in pos and d in pos:
+                    assert pos[s] < pos[d], (
+                        f"{domain!r}: 交接边 {s} → {d} 的方向跟环序相反"
+                        f"（{s} 在第 {pos[s]} 位，{d} 在第 {pos[d]} 位）"
+                    )
 
     @staticmethod
     def _page_const(name):
@@ -992,27 +1049,76 @@ class TestRadialLayoutIsDerived:
         assert m, f"看板前端里找不到常量 {name}——净空守卫跟着它一起瞎了"
         return float(m.group(1))
 
+    @staticmethod
+    def _radial_edges(lay):
+        """复刻前端的环上几何，逐条交接边算出它离圆心最近有多远
+
+        **必须跟前端同一套几何**（环上位置、卡片出口点、弧的鼓法）——
+        守卫自己抄一份形状比较，那就会是第二份事实：前端改了弧的算法，
+        守卫还在按老算法算，**绿着说明不了任何事**。
+
+        返回 `[(from, to, 净空)]`。
+        """
+        ring = lay["ring"]
+        n = len(ring)
+        if n < 2:
+            return []
+
+        card_w = TestRadialLayoutIsDerived._page_const("RADIAL_CARD_W")
+        card_h = TestRadialLayoutIsDerived._page_const("RADIAL_CARD_H")
+        gap = TestRadialLayoutIsDerived._page_const("RADIAL_GAP")
+        slack = TestRadialLayoutIsDerived._page_const("RADIAL_CHORD_SLACK")
+        r_factor = TestRadialLayoutIsDerived._page_const("RADIAL_R_FACTOR")
+        need = TestRadialLayoutIsDerived._page_const("RADIAL_CENTER_CLEAR")
+        arc_slack = TestRadialLayoutIsDerived._page_const("RADIAL_ARC_SLACK")
+
+        # 前端：R = max(横向弦长下限, 卡高 × RADIAL_R_FACTOR)
+        R = max((card_w + gap) / 2 / math.sin(math.pi / n) + slack,
+                card_h * r_factor)
+        step = 2 * math.pi / n
+        pos = {}
+        for i, bid in enumerate(ring):
+            ang = -math.pi / 2 + i * step
+            pos[bid] = (R * math.cos(ang), R * math.sin(ang))
+
+        def rect_exit(p, u):
+            tx = math.inf if abs(u[0]) < 1e-6 else (card_w / 2) / abs(u[0])
+            ty = math.inf if abs(u[1]) < 1e-6 else (card_h / 2) / abs(u[1])
+            t = min(tx, ty)
+            return (p[0] + u[0] * t, p[1] + u[1] * t)
+
+        out = []
+        for (s, d) in lay["handoffs"]:
+            p1, p2 = pos[s], pos[d]
+            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+            L = math.hypot(dx, dy) or 1
+            u = (dx / L, dy / L)
+            a = rect_exit(p1, u)
+            b = rect_exit(p2, (-u[0], -u[1]))
+            mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+            chord_gap = math.hypot(mx, my)      # 弦到圆心的距离
+            seg_len = math.hypot(b[0] - a[0], b[1] - a[1])
+            if chord_gap >= need:
+                # 直线：最近点就在弦的中点（垂足落在弦上）
+                out.append((s, d, chord_gap))
+                continue
+            # 弧：朝外鼓 h
+            h = max(arc_slack, need - chord_gap + arc_slack)
+            out.append((s, d, _arc_min_distance(chord_gap, h, seg_len)))
+        return out
+
     def test_a_handoff_chord_always_clears_the_centre_card(self):
-        """交接边画直线之后，得证明它不会斜穿过中心那张卡
+        """交接边（直线或弧）离圆心要够远，不能从中心那张卡上斜穿过去
 
-        鼓出去的弧碰不到中心是显然的，直线不是：弦的中点离圆心只有
-        R·cos(π/n)，而 R 由卡宽和数量顶住、cos(π/n) 随盒子变多往 1 靠。
-        哪天真出现一个盒子更多的域，弦就可能从中心卡的角上斜穿过去——
-        看板上只是一条线压住了汇点的名字，不会有任何东西报错。
+        鼓出去的弧碰不到中心是显然的，直线不是：弦到圆心的距离
+        随两只盒子在环上差多少角度而变，哪天真出现一条差半圈的交接边，
+        它就会从中心卡的角上斜穿过去——看板上只是一条线压住了汇点的名字，
+        不会有任何东西会报错。
 
-        这是可证的，所以不靠盯：净空 = R·cos(π/n)，
-        必须大于中心卡的半对角线，还得多留一点余量。
-
-        依赖另一条守卫：交接边只画在环上**相邻**两只之间（弦正好跨 2π/n）。
-        要是哪天允许跨位连线，这个算式就得跟着改。
+        这是可证的，所以不靠盯：净空能算出来，
+        必须大于中心卡的半对角线（那是中心卡伸出去最远的那个角）。
         """
         from kanban.trigger import domain_layout
-
-        card_w = self._page_const("RADIAL_CARD_W")
-        card_h = self._page_const("RADIAL_CARD_H")
-        gap = self._page_const("RADIAL_GAP")
-        slack = self._page_const("RADIAL_CHORD_SLACK")
-        r_factor = self._page_const("RADIAL_R_FACTOR")
 
         # 立方体尺寸必须从 compactCubeHtml 里取，不能在整页里正则第一个 --cw：
         # 单盒视图用的是另一只更大的立方体，抓错了就变成拿错尺寸在算净空，
@@ -1031,31 +1137,30 @@ class TestRadialLayoutIsDerived:
         )
         half_diag = math.hypot(cube_w * center_scale / 2, cube_h * center_scale / 2)
 
+        checked = 0
         for domain in self._domains():
             lay = domain_layout(domain)
             if lay["layout"] != "radial":
                 continue
-            n = len(lay["ring"])
-            R = max((card_w + gap) / 2 / math.sin(math.pi / n) + slack,
-                    card_h * r_factor)
-            clear = R * math.cos(math.pi / n)
-            assert clear > half_diag + 24, (
-                f"{domain!r}: 环上 {n} 只，交接弦离圆心只剩 {clear:.0f}px，"
-                f"中心卡半对角线 {half_diag:.0f}px——直线会斜穿过汇点那张卡。"
-                f"要么把环撑大（RADIAL_R_FACTOR / RADIAL_GAP），"
-                f"要么把中心卡缩小（radial-center 的 scale）"
-            )
+            for (s, d, clearance) in self._radial_edges(lay):
+                checked += 1
+                assert clearance > half_diag + 24, (
+                    f"{domain!r}: 交接边 {s} → {d} 离圆心只剩 {clearance:.0f}px，"
+                    f"中心卡半对角线 {half_diag:.0f}px——那条线会斜穿过汇点那张卡。"
+                    f"要么把环撑大（RADIAL_R_FACTOR / RADIAL_GAP），"
+                    f"要么把中心卡缩小（radial-center 的 scale），"
+                    f"要么让那条边改画朝外鼓的弧（handoffCurve）"
+                )
+        assert checked, "一个域的交接边都没算到——这条守卫没在守任何东西"
 
     def test_the_main_chain_is_never_cyclic(self):
-        """feeds_into 组成的**主干必须无环**——有环就是有人把闭环声明错了
+        """域声明的交接边组成的**主干必须无环**——有环就是有人把闭环声明错了
 
-        这是给「静默降级」上的一道闸。闭环那条边如果被写进
-        `feeds_into`，拓扑排序就遇到环，于是 `order_boxes_by_flow`
-        按原顺序收尾：**不报错、不变红**，环上顺序变成任意的，
-        看板照常渲染，只是结构是错的。
+        这是给「静默降级」上的一道闸。闭环那条边如果被声明成 `handoff`，
+        拓扑排序就遇到环，于是按原顺序静默收尾：**不报错、不变红**，
+        环上顺序变成任意的，看板照常渲染，只是结构是错的。
 
-        所以：主干无环是**可证的**，就证它。反馈边不进 `feeds_into`，
-        这条才成立。
+        所以：主干无环是**可证的**，就证它。反馈边不进主干，这条才成立。
         """
         from kanban.trigger import domain_layout
 
@@ -1066,8 +1171,7 @@ class TestRadialLayoutIsDerived:
             # 退回平铺只允许两种原因：盒子太少 / 中心不唯一
             assert "成环" not in lay["reason"], (
                 f"{domain!r} 的交接边成环了（{lay['reason']}）——"
-                f"闭环那条边应该声明成 feedback_into，"
-                f"不是 feeds_into"
+                f"闭环那条边应该声明成 feedback，不是 handoff"
             )
 
     def test_a_declared_cycle_falls_back_to_flat_and_says_why(self):
@@ -1076,38 +1180,41 @@ class TestRadialLayoutIsDerived:
         守住「不猜」：成环时不能硬排一个顺序——硬排出来的东西看着
         像个正常的环，看不出哪里声明错了。而 reason 里必须点名，
         否则「这个域退化成平的」和「这个域本来没有中心」长得一样。
-        """
-        from kanban.trigger import BOX_REGISTRY, domain_layout, registered_box_ids
 
-        target = next(
-            (b for b in BOX_REGISTRY
-             if BOX_REGISTRY[b][0]().placement.feedback_into
-             and BOX_REGISTRY[b][0]().placement.domain),
+        **改的是域声明**（接线的唯一事实源）——不是某只盒子上的旧字段：
+        看板现在读的是域声明，改旧字段什么都不会发生，
+        那这条守卫就成了一条**永远绿着的空守卫**。
+        """
+        from domains import DOMAIN_REGISTRY
+        from kanban.trigger import domain_layout
+
+        declaration = next(
+            (d for d in DOMAIN_REGISTRY.values()
+             if any(e.kind.value == "feedback" for e in d.edges)),
             None,
         )
-        assert target, "没有声明过反馈边的盒子，这条守卫无从验证"
-        definition = BOX_REGISTRY[target][0]()
-        placement = definition.placement
-        saved_f, saved_b = list(placement.feeds_into), list(placement.feedback_into)
+        assert declaration, "没有声明过反馈边的域，这条守卫无从验证"
+
+        edge = next(e for e in declaration.edges if e.kind.value == "feedback")
+        saved = edge.kind
         try:
-            # 模拟「有人把反馈边顺手写进了 feeds_into」
-            placement.feeds_into = saved_f + saved_b
-            placement.feedback_into = []
-            lay = domain_layout(placement.domain)
+            # 模拟「有人把闭环边写成了交接」
+            edge.kind = EdgeKind.handoff
+            lay = domain_layout(declaration.id)
             assert lay["layout"] == "flat", (
-                f"{placement.domain!r}: 交接边成环却还画环——"
+                f"{declaration.id!r}: 交接边成环却还画环——"
                 f"环序是排不出来的，硬排等于编一个"
             )
             assert "成环" in lay["reason"]
-            for bid in saved_b:
+            for bid in (edge.from_box, edge.to_box):
                 assert bid in lay["reason"], (
                     f"成环的 reason 里没点名 {bid}——"
                     f"看板上就只是一个顺序不对的环，看不出哪里声明错了"
                 )
         finally:
-            placement.feeds_into, placement.feedback_into = saved_f, saved_b
+            edge.kind = saved
         # 还原之后必须恢复正常，证明这条守卫没改坏接线
-        assert domain_layout(placement.domain)["layout"] == "radial"
+        assert domain_layout(declaration.id)["layout"] == "radial"
 
     def test_feedback_closes_the_ring_and_lands_on_the_head(self):
         """反馈边必须首尾相接：环上的末位回到首位
