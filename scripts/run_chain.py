@@ -17,14 +17,14 @@ scripts/run_chain.py —— 跑一条真需求走完 WMS 链
 
 ## 接力在哪，手工投在哪
 
-| 段 | 通道 | 为什么 |
-|---|---|---|
-| 需求盒 → 设计盒 | 接力 ✓ | `requirement_set_ref`（设计盒声明的形状，需求集的产出整个接过来） |
-| 设计盒 → 开发盒 | 接力 ✓ | `design_package_ref` |
-| 开发盒 → 测试盒 | 接力 ✓ | `artifact_ref`（**不再是手工常量**） |
-| 需求盒/设计盒 → 测试盒 | 接力 ✓ | `requirement_ref` / `expectation_ref` |
-| 测试盒 + 开发盒 → 运维盒 | 接力 ✓ | `verification_ref` / `artifact_ref` |
-| 运维盒 → 分析盒 | 接力 ✓ | `observation_ref`（生产上的确定结论优先） |
+**接力通道来自域声明**（`domains/wms/domain.py`）——
+脚本用 `handoff_payload("WMS", <下游盒子>, {上游盒子: task_run_id})` 去问，
+**不再自己抄一份「来源 + 目标字段」**。
+
+抄的那份是第二份事实：域声明改了、脚本没改，运行时才发现接不上
+（或者更糟：接上了，但接错了对象）。
+通道名本身（`requirement_set_ref` / `verification_ref` / …）
+是**域声明里的业务事实**，这里不再列一遍——列一遍就会漂。
 
 **运维盒读的是生产**，测试盒跑的是验证实例——两个盒子读的不是同一个地方，
 所以观测里必须带着「我测的是哪个实例」（`measured_base_url` / `measured_mode`）。
@@ -60,6 +60,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from kanban.trigger import trigger_task  # noqa: E402
 from runtime.store import TaskRunStore  # noqa: E402
 from boxes.wms_testing.probes import SCENARIOS  # noqa: E402
+from domains import handoff_payload  # noqa: E402
 
 
 DEFAULT_VERIFY_BASE_URL = "http://127.0.0.1:8081/api/v1"
@@ -488,7 +489,9 @@ def main() -> int:
 
     # ---- 2) 设计盒（需求集**接力**过来）----
     design = trigger_task("wms_design_box", "handle_design_request", {}, store,
-                          handoff={"requirement_set_ref": cap["task_run_id"]},
+                          handoff=handoff_payload(
+                              "WMS", "wms_design_box",
+                              {"wms_requirement_box": cap["task_run_id"]}),
                           chain_ref=chain_ref, chain_kind=chain_kind)
     expectations = _require_result("设计盒", design, store).get("expectations", [])
 
@@ -501,7 +504,9 @@ def main() -> int:
         "dev_task_id": f"dev_{cap['task_run_id'][:8]}",
         "commit_range": commit_range,
         "target_env": "verification",
-    }, store, handoff={"design_package_ref": design["task_run_id"]},
+    }, store, handoff=handoff_payload(
+        "WMS", "wms_development_box",
+        {"wms_design_box": design["task_run_id"]}),
         chain_ref=chain_ref, chain_kind=chain_kind)
     dev_result = _require_result("开发盒", dev, store)
 
@@ -520,11 +525,14 @@ def main() -> int:
         # 写死一个的话，新登记的场景永远不会被跑到，
         # 而「没跑到」和「没通过」在报告上长得一样。
         "scenarios": sorted(SCENARIOS.keys()),
-    }, store, handoff={
-        "requirement_ref": cap["task_run_id"],
-        "expectation_ref": design["task_run_id"],
-        "artifact_ref": dev["task_run_id"],
-    }, chain_ref=chain_ref, chain_kind=chain_kind)
+    }, store, handoff=handoff_payload(
+        "WMS", "wms_testing_box",
+        {
+            "wms_requirement_box": cap["task_run_id"],
+            "wms_design_box": design["task_run_id"],
+            "wms_development_box": dev["task_run_id"],
+        },
+    ), chain_ref=chain_ref, chain_kind=chain_kind)
 
     # ---- 5) 运维盒（真读生产 + 真核对上游）----
     change_request = _build_change_request(dev_result, expectations)
@@ -537,10 +545,13 @@ def main() -> int:
         "rollback_target": rollback_target,
         "target_base_url": prod_url,
         "target_mode": "production",
-    }, store, handoff={
-        "verification_ref": test["task_run_id"],
-        "artifact_ref": dev["task_run_id"],
-    }, chain_ref=chain_ref, chain_kind=chain_kind)
+    }, store, handoff=handoff_payload(
+        "WMS", "wms_ops_box",
+        {
+            "wms_testing_box": test["task_run_id"],
+            "wms_development_box": dev["task_run_id"],
+        },
+    ), chain_ref=chain_ref, chain_kind=chain_kind)
     ops_result = _require_result("运维盒", ops, store)
 
     # ---- 6) 分析盒（观测接力：运维盒合并后的那一份）----
@@ -549,7 +560,9 @@ def main() -> int:
         "requirement_ref": pkg["set_id"],
         "expected_metrics": expectations,
         "observed_window": "now",
-    }, store, handoff={"observation_ref": ops["task_run_id"]},
+    }, store, handoff=handoff_payload(
+        "WMS", "wms_analysis_box",
+        {"wms_ops_box": ops["task_run_id"]}),
         chain_ref=chain_ref, chain_kind=chain_kind)
     ares = _require_result("分析盒", analysis, store)
 

@@ -49,8 +49,11 @@ measure / __init__）+ 在 `kanban/trigger.py` 注册 3 处 + 根 README 加一�
 不是「谁接错了」。所以脚手架只拒绝**真的坏了**的接线
 （分叉、成环、冒出第二个终点、哪都不接的孤岛），域还小不算。
 
-接线合法性问的是看板自己那套场图推导（`core/field_map.py`），
+接线合法性问的是看板自己那套场图推导（`core/wiring.py`），
 脚手架不抄一份拓扑规则。
+
+**接线的依据是域声明**（`domains/<域>/domain.py`）——
+接线事实只有一份，脚手架不再自己维护一张「假想接线表」。
 
 ## 两种接线形状
 
@@ -95,7 +98,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -106,7 +109,7 @@ TRIGGER_PATH = REPO_ROOT / "kanban" / "trigger.py"
 ROOT_README = REPO_ROOT / "README.md"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
-# 场图的判定码里，**哪些算「接线坏了」**（`core/field_map.py` 给的）。
+# 场图的判定码里，**哪些算「接线坏了」**（`core/wiring.py` 给的）。
 #
 # 另一半是**正常状态**：
 #   `too_small` —— 域还小（新域的第一只盒子就在这儿）
@@ -299,9 +302,13 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
     返回 `(判定码, 人话原因)`。
 
     **为什么不自己写一套拓扑规则**：规则已经在
-    `core/field_map.py` 里了（唯一汇点、环要成链、交接不能成环）。
+    `core/wiring.py` 里了（唯一汇点、环要成链、交接不能成环）。
     脚手架再抄一份，那份必然跟真的那份漂——而漂了的后果是
     「看板拓扑悄悄坏掉」。
+
+    **为什么不自己维护一张「假想接线表」**：接线事实只有一份——
+    域声明（`domains/<域>/domain.py`）。脚手架拿它做**加法**：
+    把新盒子加进去，再问一遍画不画得出来。
 
     **为什么拿「判定码」而不是人话**：场图有两种「画不出来」——
     **接线坏了**（分叉、成环、两个汇点）和**这个域还太小**
@@ -315,32 +322,47 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
     一次就把 9 条真守卫跑红了（第二个汇点 → 圆心算不出来）。
     """
     try:
-        from core.field_map import PlacementView, derive_field_map
-        from kanban.trigger import (
-            order_boxes_by_flow,
-            placement_views,
-            registered_box_ids,
-        )
+        from core.wiring import derive_wiring
+        from domains import DOMAIN_REGISTRY
     except Exception:  # noqa: BLE001 - 仓外生成时不校验
         return "ok", ""
 
-    views = dict(placement_views())
-    if spec.insert_after and spec.insert_after in views:
-        # 上游那只盒子的下游改成新盒子（插入链中）
-        views[spec.insert_after] = replace(
-            views[spec.insert_after], feeds_into=(spec.box_id,),
-        )
-    ids = [
-        b for b in order_boxes_by_flow(registered_box_ids())
-        if views[b].domain == spec.domain
-    ]
-    placements = [views[b] for b in ids]
-    placements.append(PlacementView(
-        box_id=spec.box_id,
-        domain=spec.domain,
-        feeds_into=tuple(spec.feeds_into),
-    ))
-    m = derive_field_map(spec.domain, placements)
+    declaration = DOMAIN_REGISTRY.get(spec.domain)
+    if declaration is None:
+        # **新域**：域里还没有接线。
+        # 「域还小」不是「接线坏了」——接一个新域的第一只盒子本来就该被允许。
+        return "too_small", f"域 {spec.domain!r} 还不存在"
+
+    edges = [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges]
+    base = derive_wiring(declaration.id, declaration.boxes, edges)
+    center = base.center
+
+    if spec.insert_after:
+        # **接手上游的交接那一段**：上游 → 新盒子 → 原来的下游。
+        # 上游的**归档**边留着（它仍然往档案里投）——
+        # 整段换掉 = 把归档边也删了 → 档案盒收不到上游的产出。
+        upstream = spec.insert_after
+        handed_off = [
+            (s, t) for (s, t, k) in edges if s == upstream and k == "handoff"
+        ]
+        edges = [(s, t, k) for (s, t, k) in edges if (s, t) not in handed_off]
+        edges.append((upstream, spec.box_id, "handoff"))
+        edges += [(spec.box_id, t, "handoff") for (_s, t) in handed_off]
+    else:
+        # **自己开一条链**：它投给谁。
+        # 投给汇点（档案盒）= **归档**边；投给别的盒子 = **交接**边。
+        for target in spec.feeds_into:
+            kind = "archive" if target == center else "handoff"
+            edges.append((spec.box_id, target, kind))
+
+    # 域里有 `all_archived` 规则 → 新盒子也要往汇点投一份。
+    # **规则说了算**，不是脚手架猜的（域没这条规则时，它就不归档）。
+    if center and any(r.kind.value == "all_archived" for r in declaration.rules):
+        if not any(s == spec.box_id and t == center for (s, t, _k) in edges):
+            edges.append((spec.box_id, center, "archive"))
+
+    boxes = list(declaration.boxes) + [spec.box_id]
+    m = derive_wiring(spec.domain, boxes, edges)
     return m.reason_code, m.reason
 
 
@@ -1126,7 +1148,7 @@ def _rewire_upstream(spec: BoxSpec, path: Path) -> str:
     整个列表换掉 = 把归档边也删了 → 档案盒收不到这只盒子的产出。
 
     **哪些是归档边**：域的汇点（center）就是。
-    从注册表现推（`domain_field_map`），不写死「wms_system_box」这种名字。
+    从注册表现推（`domain_wiring`），不写死「wms_system_box」这种名字。
     """
     upstream = spec.insert_after
     if not path.exists():
@@ -1135,8 +1157,8 @@ def _rewire_upstream(spec: BoxSpec, path: Path) -> str:
             f"请手工把它的 feeds_into 改成 [{spec.box_id!r}]"
         )
     try:
-        from kanban.trigger import BOX_REGISTRY, domain_field_map
-        center = domain_field_map(spec.domain).center
+        from kanban.trigger import BOX_REGISTRY, domain_wiring
+        center = domain_wiring(spec.domain).center
         old_targets = list(BOX_REGISTRY[upstream][0]().placement.feeds_into)
     except Exception:  # noqa: BLE001 - 仓外生成时不查
         center = None

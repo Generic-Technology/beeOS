@@ -45,12 +45,12 @@ from kanban.trigger import (
     box_maturity,
     box_meta,
     declared_beeline_ops,
-    domain_field_map,
+    domain_wiring,
     list_task_entries,
     order_boxes_by_flow,
     registered_box_ids,
     resolve_text_intake,
-    scope_field_map,
+    scope_wiring,
     scope_layout,
     structure_business_text_with_llm,
     trigger_task,
@@ -171,22 +171,23 @@ def _collect_tasks(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return tasks
 
 
-def field_maps_payload() -> dict[str, Any]:
-    """各域的 **BeeBox Map**（结构化，可被程序调用，不只是画布上的一张图）
+def wirings_payload() -> dict[str, Any]:
+    """各域的 **接线投影**（结构化，可被程序调用，不只是画布上的一张图）
 
-    Map 是从各盒 placement **派生**的（见 core/field_map.py）。
+    接线投影是从**域声明**派生的（见 `core/wiring.py`）——
+    盒子之间关系的唯一事实源住在 `domains/<域>/`，这里只是它的一张照片。
     这里给的是它的结构化形状：哪些盒子在这个域里、边是什么类型、谁是汇点。
 
-    「全部域」也给一条结论：跨域**没有 Map**，附带一句能读懂的原因——
+    「全部域」也给一条结论：跨域**没有接线图**，附带一句能读懂的原因——
     不给的话，读者会以为「全部域」那张图缺了。
     """
     scopes = box_domains(registered_box_ids())
     return {
         "maps": {
-            domain: domain_field_map(domain).to_dict()
+            domain: domain_wiring(domain).to_dict()
             for domain in sorted(scopes)
         },
-        "scope_all": scope_field_map(ALL_DOMAINS_SCOPE).to_dict(),
+        "scope_all": scope_wiring(ALL_DOMAINS_SCOPE).to_dict(),
     }
 
 
@@ -2734,6 +2735,19 @@ const STAR_GAP = 70;
 const RADIAL_R_FACTOR = 1.9;
 // 弦长算够之后再加这么一点富余，免得两张卡刚好贴上
 const RADIAL_CHORD_SLACK = 26;
+// **交接边离圆心的最小净空**。
+//
+// 域的交接图**不一定是一条链**——真实的数据依赖图里有「抄近路」的那几条
+// （需求→测试、设计→测试、开发→运维）。其中「需求→测试」在六只盒子的环上
+// 正好**隔着半圈**：直线画过去，它会从汇点那张卡上**穿过去**——
+// 看板上就成了「需求盒连着测试盒，中间夹着档案盒」，读起来像三只串在一起。
+//
+// 所以直线的净空不够时，那条边改画**朝外鼓的弧**（鼓出去离圆心更远）。
+// 这个常数是**净空的下限**；真正的下限是中心卡的对角线半径，
+// 守卫（tests/test_box_standard.py）照着前端的同一套几何算。
+const RADIAL_CENTER_CLEAR = 110;
+// 弧鼓出去时额外留的余量
+const RADIAL_ARC_SLACK = 18;
 const RADIAL_PAD = 30;
 // BeeBox Map 边界离卡片多远
 const FIELD_PAD = 26;
@@ -2746,6 +2760,35 @@ function rectExit(cx, cy, ux, uy, hw, hh) {{
   const ty = Math.abs(uy) < 1e-6 ? Infinity : hh / Math.abs(uy);
   const t = Math.min(tx, ty);
   return {{ x: cx + ux * t, y: cy + uy * t }};
+}}
+
+// 这条交接边该画弧吗？——先算直线的净空，不够就朝外鼓一个弧
+//
+// **净空 = 这条边离圆心最近有多远**。它必须大于中心卡的对角线半径，
+// 否则那条线会从中心卡上斜穿过去（线上压着汇点的名字，看板上很难看，
+// 而且**没有任何东西会报错**——图照常渲染）。
+//
+// **弧一律朝外鼓**：鼓出去的那一段离圆心更远，净空只会变大。
+// 鼓多高由「差多少净空」决定，不是拍脑袋定的常数。
+//
+// 返回 null = 画直线；返回一个控制点 = 画二次贝塞尔弧。
+function handoffCurve(a, b) {{
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const L = Math.hypot(dx, dy) || 1;
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  const gap = Math.hypot(mx, my);          // 弦到圆心的距离
+  if (gap >= RADIAL_CENTER_CLEAR) return null;   // 直线够安全
+  // 垂直于弦、指向远离圆心的那一侧
+  let nx = -dy / L, ny = dx / L;
+  if (mx * nx + my * ny < 0) {{ nx = -nx; ny = -ny; }}
+  // 鼓多高：差多少补多少，再留一点余量
+  const h = Math.max(RADIAL_ARC_SLACK,
+                     RADIAL_CENTER_CLEAR - gap + RADIAL_ARC_SLACK);
+  return {{
+    cx: mx + 2 * h * nx, cy: my + 2 * h * ny,   // 控制点
+    ax: mx + h * nx, ay: my + h * ny,           // 弧最鼓的那一点（画布要装得下）
+    h: h, gap: gap,
+  }};
 }}
 
 function polar(cx, cy, r, a) {{
@@ -2802,7 +2845,7 @@ function renderRadial(layout, stats) {{
 
   // ---- 先算点，再画线，最后从实际画出来的坐标倒推画布尺寸 ----
   //
-  // 交接边画**直线**，不画弧。
+  // 交接边**默认画直线**——但净空不够时改画**朝外鼓的弧**。
   //
   // 走过弯路：弧挂在一条估出来的同心圆 ROUT 上，而卡片是**矩形**，
   // 终点落点跟角度走，角度一变就飘到矩形角外的空处，角度再极端一点
@@ -2811,9 +2854,16 @@ function renderRadial(layout, stats) {{
   // 那段弧会被读成「走了远路」——而交接本来就发生在两只盒子之间，
   // 这里根本没有远路可走。
   //
-  // 直线还有个好处是**可证**：弦的中点离圆心正好 R·cos(π/n)，
+  // **现在为什么又要弧**：域的交接图**不一定是一条链**。
+  // 真实的数据依赖图里有「抄近路」的那几条（需求→测试、设计→测试、开发→运维），
+  // 其中「需求→测试」在六只盒子的环上正好**隔着半圈**——
+  // 直线画过去会从汇点那张卡上穿过去，看板上就成了
+  // 「需求盒连着测试盒，中间夹着档案盒」，读起来像三只串在一起。
+  //
+  // 直线的好处仍然是**可证**：弦到圆心的距离能算出来，
   // 所以「会不会斜穿过中心那张卡」是个能算的问题，不用靠眼睛盯。
-  // （tests 里有对应守卫：弦到中心的净空必须大于中心卡的半对角线。）
+  // 弧的净空同样能算（见 handoffCurve）——
+  // tests 里有对应守卫：每条交接边到中心的净空必须大于中心卡的半对角线。
   const handoffLines = [];
   for (const [s, d] of layout.handoffs) {{
     if (!pos[s] || !pos[d]) continue;
@@ -2822,10 +2872,13 @@ function renderRadial(layout, stats) {{
     const len = Math.hypot(dx, dy) || 1;
     // 从这张卡的边框出发，落在那张卡的边框上：不管两张在环上差多少角度，
     // 读出来都是「这张交出去、那张接进来」，不会悬在半空
+    const p0 = rectExit(a.x, a.y, dx / len, dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2);
+    const p1 = rectExit(b.x, b.y, -dx / len, -dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2);
     handoffLines.push({{
       from: s, to: d,
-      a: rectExit(a.x, a.y, dx / len, dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2),
-      b: rectExit(b.x, b.y, -dx / len, -dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2),
+      a: p0, b: p1,
+      // 净空不够就改画弧（见 handoffCurve）
+      curve: handoffCurve(p0, p1),
     }});
   }}
   // ---- 累积边：沿射线，两端各裁一次 ----
@@ -2877,6 +2930,10 @@ function renderRadial(layout, stats) {{
     spanY = Math.max(spanY, Math.abs(p.y) + 20);
   }};
   for (const l of handoffLines) {{ fitEdge(l.a); fitEdge(l.b); }}
+  // 弧最鼓的那一点也要装进画布——不然它会被裁掉（而且裁得看不出是哪儿错了）
+  for (const l of handoffLines) {{
+    if (l.curve) fitEdge({{ x: l.curve.ax, y: l.curve.ay }});
+  }}
   for (const l of feedbackLines) {{ fitEdge(l.a); fitEdge(l.b); }}
   if (center) {{
     spanX = Math.max(spanX, RADIAL_CARD_W / 2);
@@ -2918,11 +2975,21 @@ function renderRadial(layout, stats) {{
     + '<text class="field-label" x="' + (cx - fieldHalfX + 14).toFixed(1) + '"'
     + ' y="' + (cy - fieldHalfY + 20).toFixed(1) + '">' + fieldLabel + '</text>');
   for (const l of handoffLines) {{
-    edges.push(
-      '<line data-from="' + esc(l.from) + '" data-to="' + esc(l.to) + '"' +
-      ' x1="' + (cx + l.a.x).toFixed(1) + '" y1="' + (cy + l.a.y).toFixed(1) + '"' +
-      ' x2="' + (cx + l.b.x).toFixed(1) + '" y2="' + (cy + l.b.y).toFixed(1) + '"' +
-      ' class="edge edge-handoff" marker-end="url(#arrow-handoff)"/>');
+    if (l.curve) {{
+      // **弧**：净空不够时画朝外鼓的二次贝塞尔（直线会从汇点卡上穿过去）
+      edges.push(
+        '<path data-from="' + esc(l.from) + '" data-to="' + esc(l.to) + '"' +
+        ' d="M ' + (cx + l.a.x).toFixed(1) + ' ' + (cy + l.a.y).toFixed(1) +
+        ' Q ' + (cx + l.curve.cx).toFixed(1) + ' ' + (cy + l.curve.cy).toFixed(1) +
+        ' ' + (cx + l.b.x).toFixed(1) + ' ' + (cy + l.b.y).toFixed(1) + '"' +
+        ' class="edge edge-handoff" marker-end="url(#arrow-handoff)"/>');
+    }} else {{
+      edges.push(
+        '<line data-from="' + esc(l.from) + '" data-to="' + esc(l.to) + '"' +
+        ' x1="' + (cx + l.a.x).toFixed(1) + '" y1="' + (cy + l.a.y).toFixed(1) + '"' +
+        ' x2="' + (cx + l.b.x).toFixed(1) + '" y2="' + (cy + l.b.y).toFixed(1) + '"' +
+        ' class="edge edge-handoff" marker-end="url(#arrow-handoff)"/>');
+    }}
   }}
   for (const l of feedLines) {{
     edges.push(
@@ -4605,7 +4672,7 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
             # BeeBox Map：各域的接线结构。
             # 画布上那张图是它的一张照片——这个接口给的是**结构本身**，
             # 别的程序要读「WMS 域有哪些盒子、谁交给谁」时不用去解析 SVG。
-            self._send_json(200, field_maps_payload())
+            self._send_json(200, wirings_payload())
         elif parsed.path == "/api/boxes":
             # 目录：所有已注册盒子 + 各自的 API 面
             self._send_json(200, {

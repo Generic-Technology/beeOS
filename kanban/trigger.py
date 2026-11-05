@@ -71,13 +71,10 @@ from boxes.learning_english.runner import RUNNER as LEARNING_ENGLISH_RUNNER
 from boxes.learning_english import get_definition as get_learning_english_definition
 from core import metrics as core_metrics
 from core.beeline_models import Beeline
-from core.field_map import (
-    BeeBoxMap,
-    PlacementView,
-    derive_field_map,
-    field_map_of_scope,
-)
-from core.models import BeeBoxDefinition, FieldDef, SchemaDef
+from core.domain import AssembledDomain, assemble_domain
+from core.models import BeeBoxDefinition, BoxFacts, DomainDeclaration, FieldDef, SchemaDef
+from core.wiring import WiringView, wiring_of_scope
+from domains import DOMAIN_REGISTRY, STANDALONE_BOXES
 from core.beeline_models import Beeline
 from runtime import BeelineExecutor, create_task_run, evaluate_acceptance
 from runtime.acceptance import apply_acceptance_to_run
@@ -264,26 +261,39 @@ def declared_beeline_ops(box_id: str, beeline_id: str | None = None) -> list[str
 
 
 def box_domains(box_ids: Iterable[str]) -> dict[str, list[str]]:
-    """按 domain 分组盒子（域成员从各盒 placement 派生，不另立域表）
+    """按域分组盒子——**成员来自域声明**（唯一事实源）
 
-    **为什么没有一张「域 → 成员」的表**：它会跟各盒自己的 domain 声明
-    漂。BOX_META 教训的同一个形状——两边各写一遍，改了一边另一边悄悄
-    过时，而没有任何东西会报错。所以域成员是**算出来的**。
+    域成员住在 `domains/<域>/` 的声明里（`DomainDeclaration.boxes`）。
+    **不再从各盒自己的 `placement.domain` 派生**——
+    那是迁移期的旧事实源，两边并存必然漂。
 
-    `""`（没声明 domain）单独归到「未归域」，不假装它属于某个域。
+    `""`（不在任何域里）单独归到「未归域」，不假装它属于某个域。
     """
+    wanted = set(box_ids)
     groups: dict[str, list[str]] = {}
-    for bid in box_ids:
-        entry = BOX_REGISTRY.get(bid)
-        domain = entry[0]().placement.domain if entry else ""
-        groups.setdefault(domain, []).append(bid)
+    for domain_id, declaration in DOMAIN_REGISTRY.items():
+        members = [b for b in declaration.boxes if b in wanted]
+        if members:
+            groups[domain_id] = members
+    # 没进任何域的盒子（包括显式独立的）归到「未归域」
+    unassigned = [b for b in box_ids if b not in _all_domain_members()]
+    if unassigned:
+        groups[""] = sorted(unassigned)
     return {k: groups[k] for k in sorted(groups)}
+
+
+def _all_domain_members() -> set[str]:
+    """全部域声明里的盒子（并集）"""
+    out: set[str] = set()
+    for declaration in DOMAIN_REGISTRY.values():
+        out.update(declaration.boxes)
+    return out
 
 
 def domain_layout(domain: str) -> dict[str, Any]:
     """一个域的布局：谁在圆心、环上什么顺序、有哪两类边
 
-    **全部从各盒 placement.feeds_into 推导，没有域表、没有写死的中心。**
+    **全部从域声明推导，没有域表、没有写死的中心。**
 
     平铺的看板把接线扔了：读者看不出哪只是终点、哪两只之间有交接。
     这些信息服务端早就算出来了，画出来等于把已有的东西用上。
@@ -299,8 +309,11 @@ def domain_layout(domain: str) -> dict[str, Any]:
       其余域内边是**交接**（交出去让下一只验）。混成一条就看不出
       「流水线」和「记账」是两件事。
     - **环序**：交接边的拓扑序，同层按 box_id 字母序（稳定）。
+
+    **依据是域声明，不是各盒自己的 `placement`**——
+    接线事实只有一份（`domains/<域>/`）。
     """
-    return _layout_from_map(domain_field_map(domain))
+    return _layout_from_map(domain_wiring(domain))
 
 
 # 「全部域」哨兵，与前端 ALL_DOMAINS 一致。
@@ -318,40 +331,66 @@ ALL_DOMAINS_SCOPE = "__all__"
 # 所以Map永远从 placement 推；想让Map变，就去改那只盒子。
 
 
-def placement_views() -> dict[str, PlacementView]:
-    """注册表里每只盒子的 **Map 相关视图**（域 + 接线）"""
-    views: dict[str, PlacementView] = {}
+def box_facts() -> dict[str, BoxFacts]:
+    """注册表里每只盒子的**事实**（域装配器要的那些）
+
+    **core 不认识注册表，也不认识任何一只盒子**——
+    由这里把盒子抄成 `BoxFacts` 再交给域装配器。
+    """
+    facts: dict[str, BoxFacts] = {}
     for bid in registered_box_ids():
-        p = BOX_REGISTRY[bid][0]().placement
-        views[bid] = PlacementView(
+        d = BOX_REGISTRY[bid][0]()
+        facts[bid] = BoxFacts(
             box_id=bid,
-            domain=p.domain or "",
-            feeds_into=tuple(p.feeds_into),
-            feedback_into=tuple(p.feedback_into),
+            task_types=tuple(t.type for t in d.task),
+            task_schemas={t.type: t.task_schema for t in d.task},
+            result_schema=d.result.result_schema,
+            schemas={s.id: s for s in d.schemas},
         )
-    return views
+    return facts
 
 
-def domain_field_map(domain: str) -> BeeBoxMap:
-    """一个域的**Map**：这个域里有哪些盒子、谁交给谁、谁是汇点"""
-    views = placement_views()
-    ids = [b for b in order_boxes_by_flow(registered_box_ids())
-           if views[b].domain == domain]
-    return derive_field_map(domain, [views[b] for b in ids])
+def domain_assemblies() -> dict[str, AssembledDomain]:
+    """把每个域**装配一遍**——装配期就报错
+
+    域声明是手写的（成员 + 边 + 规则），手写就会写错；
+    而域声明错了的代价特别大：**看板照常渲染**，图看起来完全正常。
+    所以这里当场拒。
+    """
+    facts = box_facts()
+    return {
+        domain_id: assemble_domain(declaration, facts)
+        for domain_id, declaration in DOMAIN_REGISTRY.items()
+    }
 
 
-def scope_field_map(scope: str) -> BeeBoxMap:
-    """一个**范围**的Map。横跨多个域 → 没有Map，给一句能读懂的原因。"""
+def domain_wiring(domain: str) -> WiringView:
+    """一个域的接线投影——**从域声明派生**"""
+    assemblies = domain_assemblies()
+    assembled = assemblies.get(domain)
+    if assembled is None:
+        return WiringView(
+            domain=domain,
+            reason=f"没有这个域：{domain}",
+            reason_code="empty",
+        )
+    return assembled.wiring
+
+
+def scope_wiring(scope: str) -> WiringView:
+    """一个**范围**的接线投影。横跨多个域 → 没有图，给一句能读懂的原因。"""
     if scope == ALL_DOMAINS_SCOPE:
-        views = placement_views()
-        scopes: dict[str, list[str]] = {}
-        for b in order_boxes_by_flow(registered_box_ids()):
-            scopes.setdefault(views[b].domain, []).append(b)
-        return field_map_of_scope(scope, scopes, views)
-    return domain_field_map(scope)
+        assemblies = domain_assemblies()
+        scopes = {
+            domain_id: list(a.declaration.boxes)
+            for domain_id, a in assemblies.items()
+        }
+        wirings = {domain_id: a.wiring for domain_id, a in assemblies.items()}
+        return wiring_of_scope(scope, scopes, wirings)
+    return domain_wiring(scope)
 
 
-def _layout_from_map(m: BeeBoxMap) -> dict[str, Any]:
+def _layout_from_map(m: WiringView) -> dict[str, Any]:
     """Map → 看板的布局 dict（形状不变，只是多了一个来源）
 
     **`shape` 告诉前端这是哪种形状**：
@@ -385,24 +424,28 @@ def scope_layout(scope: str) -> dict[str, Any]:
     multi_domain 那段，域内唯一汇点的规则跨了几条互不相干的流水线之后
     就不成立了，硬凑一个中心等于替业务声明一条不存在的拓扑。
     """
-    return _layout_from_map(scope_field_map(scope))
+    return _layout_from_map(scope_wiring(scope))
 
 
 def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     """按业务流向排盒子：产出方在前，消费方在后（需求捕获 → 业务建模）
 
-    顺序从各盒 definition.placement.feeds_into 推导，
-    不按 box_id 字母序也不按注册顺序。
+    顺序从**域声明的边**推导，不按 box_id 字母序也不按注册顺序。
     字母序会把 wms_design_box 排在 wms_requirement_box 前面，
     而实际流程正好相反；注册顺序则只是开发历史的偶然（谁先加谁在前）。
 
     稳定：同一层内保持传入顺序（Kahn 分层取出，不做字典序重排）。
 
-    **只排 feeds_into，不排 feedback_into**：闭环的边塞进线性列表就成环，
+    **只排 `handoff` 与 `archive`，不排 `feedback`**：闭环的边塞进线性列表就成环，
     而成环时本函数会**静默**收尾成任意顺序。这个列表答的是
     「按流水线顺序排一遍」，而流水线是线性的——闭环不在这个问题里。
     闭环由 `domain_layout` 单独处理：反馈边画成环上闭环，不参与排序。
-    兜底：feeds_into 声明成环时不抛错，剩下的按传入顺序收尾——看板不能白屏。
+    兜底：边声明成环时不抛错，剩下的按传入顺序收尾——看板不能白屏。
+
+    **`archive` 边要算进来**：它是「这一环的产物进档案」——
+    档案盒（域的汇点）是这条流的**终点**，名册上它该排在最后。
+    只算交接边的话，档案盒没有任何交接入边，会被排到第一层，
+    名册就成了「档案盒、需求盒、设计盒……」——**顺序反了，而且没人会报错**。
 
     **入参先 sorted**：本函数的结果不该依赖调用方传进来的迭代顺序。
     `registered_box_ids()` 返回的是 set，而 Python 的字符串哈希按进程
@@ -413,14 +456,17 @@ def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     """
     ids = sorted(box_ids)
     # preds[b] = 哪些盒子把产出投给 b（b 的上游）
+    #
+    # **依据是域声明的边**，不是各盒自己的 `placement.feeds_into`——
+    # 域声明才是唯一事实源。而且它比 `feeds_into` **多 3 条真实交接**
+    # （需求→测试、设计→测试、开发→运维），所以这个顺序更接近真实流水线。
     preds: dict[str, set[str]] = {b: set() for b in ids}
-    for src in ids:
-        entry = BOX_REGISTRY.get(src)
-        if entry is None:
-            continue
-        for dst in entry[0]().placement.feeds_into:
-            if dst in preds:
-                preds[dst].add(src)
+    for declaration in DOMAIN_REGISTRY.values():
+        for edge in declaration.edges:
+            if edge.kind.value == "feedback":
+                continue  # 闭环会把线性列表变成环
+            if edge.from_box in preds and edge.to_box in preds:
+                preds[edge.to_box].add(edge.from_box)
 
     ordered: list[str] = []
     placed: set[str] = set()
