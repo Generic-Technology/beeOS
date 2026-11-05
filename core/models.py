@@ -8,7 +8,9 @@ core.models - beeBox Definition 顶层数据结构
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Literal, Mapping, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -532,3 +534,171 @@ class BeeBoxDefinition(BaseModel):
             if t.type == task_type:
                 return t
         return None
+
+# ============================================================
+# 域声明（Domain Declaration）
+#
+# **盒子之间关系的唯一事实源。**
+#
+# 这部分类型住 `core/models.py`，因为它们是「盒子和域共用的公共类型」——
+# 盒子协议（`BeeBoxDefinition` / `BoxDeclaration`）和域协议
+# （`DomainDeclaration`）都要用同一批形状类（`SchemaDef` / `FieldDef`），
+# 装在一个模块里，依赖是单向的（域 → 盒子，不反向）。
+#
+# **域声明住在 `domains/<域>/`**——那才是业务事实的地方；
+# 这里只定形状，不含任何业务词。
+# ============================================================
+
+
+class EdgeKind(str, Enum):
+    """一条边是什么性质
+
+    - `handoff` —— **数据交接**：产出交出去给下游验（**必须有通道**）
+    - `archive` —— **归档归属**：这一环的产物进档案（档案盒是去线上读的，
+      不收上游产出，所以**没有通道**）
+    - `feedback` —— **闭环反馈**：上一轮结论回到起点变成新一轮输入
+    """
+
+    handoff = "handoff"
+    archive = "archive"
+    feedback = "feedback"
+
+
+class Edge(BaseModel):
+    """域里的一条边
+
+    **判重键是「完整通道标识」**（`from_box` / `to_box` / `to_task` / `via` / `kind`），
+    **不是 `(from, to, kind)`**——同一个来源可以填下游的**两个不同字段**，
+    那是两条合法通道，在 `(from, to, kind)` 上却是同一条边。
+    """
+
+    model_config = _FORBID_EXTRA
+
+    from_box: str = Field(description="上游盒子")
+    to_box: str = Field(description="下游盒子")
+    kind: EdgeKind = Field(description="这条边是什么性质")
+
+    # **目标 task**：下游有多个 task 时，指明接的是哪一个入口。
+    # 单 task 的盒子**可以省略**（唯一推断）——但协议里必须有这个位置，
+    # 否则多 task 盒子来了，这条边就指不到具体入口。
+    to_task: Optional[str] = Field(default=None, description="下游的哪个 task 入口")
+
+    # **通道**：仅 handoff 有意义——下游投料里的哪个 `ref:` 字段。
+    # 与 `no_channel` **互斥**（D12：反馈边可能本来就没通道）。
+    via: Optional[str] = Field(default=None, description="下游投料里的哪个 ref 字段")
+    no_channel: bool = Field(default=False, description="显式声明「这条边没有数据通道」")
+
+    # 跨域入口边：from_box 在本域之外。
+    external: bool = Field(default=False, description="from_box 在本域之外")
+
+    @property
+    def channel_key(self) -> tuple[str, str, str, str, str]:
+        """判重键：完整通道标识"""
+        return (
+            self.from_box,
+            self.to_box,
+            self.to_task or "",
+            self.via or "",
+            self.kind.value,
+        )
+
+
+class RuleKind(str, Enum):
+    """域级规则的种类——**全都是「完备性规则」**
+
+    约束的是「**应该被声明、但可能还没被声明**的东西」，
+    而不是「已经声明的东西的对不对」——后者是 `decl_checks` 的活。
+    """
+
+    #: 除豁免外，每只非汇点成员都要有一条 archive 边指向汇点
+    all_archived = "all_archived"
+    #: 环上每只非汇点成员都要接到下一环
+    all_handoff = "all_handoff"
+    #: 每条 handoff 边都要有能走通的通道
+    each_handoff_has_channel = "each_handoff_has_channel"
+
+
+class RuleExemption(BaseModel):
+    """一条规则的豁免/禁止
+
+    **要能表达「禁止」，不只「允许不做」**——
+    「需求盒不得归档」是业务上的**禁止**，
+    写成「允许豁免」就拦不住有人给它补一条归档边（D15）。
+    """
+
+    model_config = _FORBID_EXTRA
+
+    box_id: str = Field(description="被豁免/禁止的盒子")
+    reason: str = Field(description="**为什么**——结构化，不放注释里")
+    mode: Literal["may", "must"] = Field(
+        default="may",
+        description="may=可以不做；must=不得做",
+    )
+
+
+class Rule(BaseModel):
+    """一条域级规则"""
+
+    model_config = _FORBID_EXTRA
+
+    kind: RuleKind = Field(description="规则种类")
+    exemptions: list[RuleExemption] = Field(default_factory=list, description="豁免/禁止")
+
+
+class DomainDeclaration(BaseModel):
+    """一个域的声明——**盒子之间关系的唯一事实源**
+
+    **成员是声明的，不是推导的**（见 `docs/domain-declaration.md` §12.1）：
+    「档案盒属于 WMS 域」是**业务判断**，靠接线推不出来。
+    """
+
+    model_config = _FORBID_EXTRA
+
+    id: str = Field(description="域唯一标识")
+    display_name: str = Field(description="给人看的名字")
+    boxes: list[str] = Field(default_factory=list, description="本域有哪些盒子（唯一一份）")
+    edges: list[Edge] = Field(default_factory=list, description="盒子之间怎么连（业务事实）")
+    rules: list[Rule] = Field(default_factory=list, description="域级完备性规则（业务断言）")
+
+
+@dataclass(frozen=True)
+class BoxFacts:
+    """一只盒子的事实（域装配器与接线投影共用一份）
+
+    **只抄跟域声明有关的那几项**——这样 `core` 不必认识任何一只盒子，
+    也不必认识注册表：注册表在 `kanban/trigger.py`，由它把盒子抄成这个
+    视图再交给域装配器。
+    """
+
+    box_id: str
+    #: 这只盒子有几个 task 入口（`to_task` 要在这里校验）
+    task_types: tuple[str, ...] = ()
+    #: task 类型 → 投料 schema id
+    task_schemas: Mapping[str, str] = field(default_factory=dict)
+    #: 产出 schema id
+    result_schema: str = ""
+    #: 这只盒子声明的全部 schema（id → 定义）
+    schemas: Mapping[str, "SchemaDef"] = field(default_factory=dict)
+
+    def task_schema_id(self, task_type: str | None) -> str | None:
+        """某个 task 入口的投料 schema id
+
+        `task_type` 为 None 时：**唯一推断**——只有一只 task 时能推出来，
+        多只 task 时推不出来（得显式写 `to_task`）。
+        """
+        if not self.task_schemas:
+            return None
+        if task_type is not None:
+            return self.task_schemas.get(task_type)
+        if len(self.task_schemas) == 1:
+            return next(iter(self.task_schemas.values()))
+        return None
+
+    def task_schema(self, task_type: str | None = None) -> Optional["SchemaDef"]:
+        """某个 task 入口的投料形状"""
+        sid = self.task_schema_id(task_type)
+        return self.schemas.get(sid) if sid else None
+
+    def result_schema_def(self) -> Optional["SchemaDef"]:
+        """产出形状"""
+        return self.schemas.get(self.result_schema) if self.result_schema else None

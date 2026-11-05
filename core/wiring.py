@@ -1,57 +1,64 @@
-"""core/field_map.py —— BeeBox Map（场图）
+"""core.wiring.py —— 接线投影（Wiring View）
 
-**一个域的 Map**：这个域里有哪些盒子、谁交给谁、谁的产出汇进档案（汇点）、
+**一个域的接线长什么样**：域里有哪些盒子、谁交给谁、谁的产出汇进档案（汇点）、
 哪条边是上一轮结论变成下一轮输入（闭环反馈）。
 
 ## 为什么它是**派生**的，不是一张手写的表
 
-这个域的接线事实**已经有一份了**——每只盒子自己的 `definition.placement`
-（`feeds_into` / `feedback_into` / `domain`）。那是唯一的事实源，
-住在盒子里面：换掉看板，这只盒子照样知道自己接谁。
-
-再手写一张「WMS 接线表」或「WMS Map」，就是**第二份事实**。两份必然漂，而且漂了
+接线事实已经有一份了——**域声明**（`domains/<域>/`）。
+再手写一张「WMS 接线表」就是**第二份事实**，两份必然漂，而且漂了
 **没有任何东西会报错**——图照常渲染，只是有一只盒子接错了对象。
-所以Map 只能是**从 placement 推出来的视图**：改一只盒子的接线，
-Map自己跟着变；想让Map变，就去改那只盒子。
+所以投影只能是**从域声明推出来的视图**：改一条边，接线自己跟着变。
 
-## 跨域没有 Map
+## 边按 `kind` 分三类，只有一类进链
 
-「全部域」不是一个域的 Map：各域的流水线互不相干，硬凑一个汇点等于
-替业务声明一条没人声明过的拓扑。所以跨域时**不给Map**，给的是
+| kind | 进度数计算 | 进链（环序）| 含义 |
+|---|---|---|---|
+| `handoff` | ✅ | ✅ | **数据交接**：产出交出去给下游验 |
+| `archive` | ✅ | ❌ | **归档归属**：这一环的产物进档案（档案盒是去线上读的，不收上游产出）|
+| `feedback` | ✅ | ❌ | **闭环反馈**：上一轮结论回到起点变成新一轮输入 |
+
+**为什么 `archive` 进度数、不进链**：
+汇点（圆心）就是**被归档的那只盒子**——它之所以是圆心，正因为大家把产物投给它。
+所以归档边**必须**计入度数，否则圆心会变成链条末端那只（实测：会从「档案盒」变成
+「分析盒」），整张图就错了。
+但它**不是交接**：链上相邻 = 有交接是环的前提，把归档边算进链，
+就是在暗示「这两只有交接关系」——**那是一张撒谎的图**。
+
+**闭环反馈边为什么不进拓扑排序**：闭环那条边一旦混进主干，
+排序就遇到环，于是按原顺序静默收尾——环序变任意，图照常渲染，只是结构是错的。
+摘出来，主干就永远无环。
+
+## 跨域没有接线图
+
+「全部域」不是一个域的图：各域的流水线互不相干，硬凑一个汇点等于
+替业务声明一条没人声明过的拓扑。所以跨域时**不给图**，给的是
 一句能读懂的原因（`reason`），而不是一张勉强画出来的图。
 
 ## 它是**结构**，不只是图
 
-Map是可以被程序读的东西：哪些盒子在这个域的 Map 里、它们之间的边是什么类型、
+接线是可以被程序读的东西：哪些盒子在这个域的图里、它们之间的边是什么类型、
 谁是汇点。画布上的虚线边界只是它的一张照片。
+
+**本模块不含任何业务知识**：它只认协议（边的三元组），不认识任何一只盒子。
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Sequence
 
-
-@dataclass(frozen=True)
-class PlacementView:
-    """一只盒子在这个域的 Map 里的位置和接线
-
-    **只抄 placement 里跟 Map 有关的那几项**——这样 `core` 不必认识
-    任何一只盒子，也不必认识注册表：注册表在 `kanban/trigger.py`，
-    由它把 placement 抄成这个视图再交给这里推导。
-    """
-
-    box_id: str
-    domain: str
-    feeds_into: tuple[str, ...] = ()
-    feedback_into: tuple[str, ...] = ()
+# 边的类别（字符串常量，避免与业务协议耦合）
+HANDOFF = "handoff"
+ARCHIVE = "archive"
+FEEDBACK = "feedback"
 
 
 @dataclass(frozen=True)
-class BeeBoxMap:
-    """一个域的 BeeBox Map
+class WiringView:
+    """一个域的接线投影
 
-    `reason` 为空 = Map成立；非空 = **画不出来**，原因写在这里。
+    `reason` 为空 = 图成立；非空 = **画不出来**，原因写在这里。
     跨域、没有汇点、汇点不唯一、交接成环——四种情况各有各的原因，
     不合并成一个「画不出来」。
 
@@ -74,9 +81,6 @@ class BeeBoxMap:
     - 接线坏了（`no_sink` / `multiple_sinks` / `cycle` / `not_a_chain`）
       → 谁接谁真的不对，必须有人来改
     - 域还小（`too_small` / `empty`）→ 接线没错，只是盒子还不够多
-
-    脚手架要靠这个区分：接一个**新域**的第一只盒子时，域里就一只，
-    画不出环是**正常的**（域才刚开），不该因此拒绝。
     """
 
     domain: str
@@ -94,7 +98,7 @@ class BeeBoxMap:
 
     @property
     def drawable(self) -> bool:
-        """Map画不画得出来（有没有汇点、环序排不排得出来）"""
+        """图画不画得出来（有没有汇点、环序排不排得出来）"""
         return self.center is not None and not self.reason
 
     def to_dict(self) -> dict:
@@ -121,7 +125,7 @@ def _broken_adjacency(
 
     **为什么要有这个判断**：拓扑排序对**分叉**的域照样能排出一个顺序
     （那是个合法的拓扑序），但顺序里相邻的两只可能根本没有交接边。
-    看板画出来的是环，读者会以为相邻就是相连——**那是撒谎**。
+    看板画出来的是环，读者会以为相邻就是相连——**那是撒谎的**。
     """
     edges = set(handoffs)
     for i in range(len(ring) - 1):
@@ -131,11 +135,13 @@ def _broken_adjacency(
     return None
 
 
-def _topo_within(ids: Sequence[str], edges: Sequence[tuple[str, str]]) -> tuple[list[str], list[str]]:
+def _topo_within(
+    ids: Sequence[str], edges: Sequence[tuple[str, str]],
+) -> tuple[list[str], list[str]]:
     """ids 内部的拓扑排序；返回 (有序结果, 卡在环上的节点)
 
     遇到环**必须被看见**：成环只有一个原因，就是有人把闭环的边声明成了
-    feeds_into，而那会让环序变成任意的。这里返回卡住的那几个节点，
+    handoff，而那会让环序变成任意的。这里返回卡住的那几个节点，
     交给调用方把原因写进 reason——不静默按原顺序收尾。
     """
     inside = set(ids)
@@ -156,38 +162,41 @@ def _topo_within(ids: Sequence[str], edges: Sequence[tuple[str, str]]) -> tuple[
     return ordered, []
 
 
-def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBoxMap:
-    """从各盒的 placement 推导出这个域的 BeeBox Map
+def derive_wiring(
+    domain: str,
+    boxes: Sequence[str],
+    edges: Sequence[tuple[str, str, str]],
+) -> WiringView:
+    """从域声明推导出这个域的接线投影
 
-    **纯函数**：只吃 placement，不认识注册表、不认识任何一只盒子。
-    这样它能被看板、API、将来产出Map的盒子共用同一份推导。
+    **纯函数**：只吃（域名、盒子清单、边清单），不认识注册表、不认识任何一只盒子。
+    这样它能被看板、API、将来产出图的盒子共用同一份推导。
+
+    Args:
+        domain: 域 id
+        boxes: 本域的盒子清单
+        edges: `(from, to, kind)` 三元组；kind 是 `handoff` / `archive` / `feedback`
     """
-    ids = [p.box_id for p in placements]
+    ids = list(boxes)
     idset = set(ids)
 
-    edges = [
-        (b, t)
-        for p in placements
-        for t in p.feeds_into
-        if t in idset
-        for b in (p.box_id,)
-    ]
-    # 反馈边**不进**拓扑排序：闭环那条边一旦混进 feeds_into，
-    # 排序就遇到环，于是按原顺序静默收尾——环序变任意，看板照常渲染，
-    # 只是结构是错的。摘出来，主干就永远无环。
-    feedback = [
-        (p.box_id, t)
-        for p in placements
-        for t in p.feedback_into
+    # **悬空边在这里被丢弃**——指向不在本域的盒子（除非显式声明为外部边）。
+    # 装配期的校验会先把这事挑出来（见 `core/decl_checks.py`），
+    # 所以这里的「丢弃」不会静默：**装配期就拒了**。
+    flow = [
+        (b, t, kind)
+        for (b, t, kind) in edges
         if t in idset
     ]
+
+    # 交接边：进链的那部分
+    chain_edges = [(b, t) for (b, t, k) in flow if k == HANDOFF]
+    # 闭环反馈边：**不进**拓扑排序（见模块文档）
+    feedback = [(b, t) for (b, t, k) in flow if k == FEEDBACK]
 
     indeg: dict[str, int] = {b: 0 for b in ids}
     outdeg: dict[str, int] = {b: 0 for b in ids}
-    for src, dst in edges:
-        outdeg[src] += 1
-        indeg[dst] += 1
-    for src, dst in feedback:
+    for src, dst, _kind in flow:
         outdeg[src] += 1
         indeg[dst] += 1
 
@@ -195,12 +204,16 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
     center = sinks[0] if len(sinks) == 1 else None
 
     ring = [b for b in ids if b != center] if center else list(ids)
-    handoffs = tuple((s, d) for s, d in edges if d != center)
-    feeds_center = tuple(s for s, d in edges if d == center)
+    # **链上相邻 = 有交接**：只有 handoff 边算交接。
+    # 归档边虽然计入度数（它决定谁是圆心），但它**不是交接**，
+    # 把它算进链，就是在暗示「这两只有交接关系」——撒谎的图。
+    handoffs = tuple((s, d) for (s, d) in chain_edges if d != center)
+    # 直投汇点的：handoff 也算（Learning 域三只学科盒 → 成长记录就是这么接的）
+    feeds_center = tuple(s for (s, d, k) in flow if d == center and k in (HANDOFF, ARCHIVE))
 
     # 环序 = 交接边的拓扑序。中心摘掉——它是汇点，让它参与排序
     # 会把整环的深度都压平。
-    ordered, cyclic = _topo_within(ring, edges)
+    ordered, cyclic = _topo_within(ring, chain_edges)
 
     reason = ""
     reason_code = "ok"
@@ -217,12 +230,12 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
             reason = "域内有 " + str(len(sinks)) + " 个汇点，中心不唯一：" + "、".join(sinks)
             reason_code = "multiple_sinks"
     elif cyclic:
-        # 闭环的边声明成 feeds_into 了。主干因此成环，环序排不出来。
+        # 闭环的边声明成 handoff 了。主干因此成环，环序排不出来。
         # 不猜：把是哪几只说清楚——不然图上就只是一个顺序不对的环，
         # 看不出哪里声明错了。
         reason = (
             "域内交接边成环（" + "、".join(cyclic) + "）——"
-            "闭环那条边应该声明成 feedback_into，不是 feeds_into"
+            "闭环那条边应该声明成 feedback，不是 handoff"
         )
         reason_code = "cycle"
     elif not handoffs:
@@ -270,7 +283,7 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
         else:
             shape = "ring"
 
-    return BeeBoxMap(
+    return WiringView(
         domain=domain,
         boxes=tuple(ids),
         center=center,
@@ -284,14 +297,14 @@ def derive_field_map(domain: str, placements: Sequence[PlacementView]) -> BeeBox
     )
 
 
-def field_map_of_scope(
+def wiring_of_scope(
     scope: str,
     scopes: dict[str, list[str]],
-    placements: dict[str, PlacementView],
-) -> BeeBoxMap:
-    """一个**范围**（可能横跨多个域）的 Map
+    wirings: dict[str, WiringView],
+) -> WiringView:
+    """一个**范围**（可能横跨多个域）的接线投影
 
-    横跨多个域时**没有Map**：各域流水线互不相干，硬凑一个中心等于
+    横跨多个域时**没有图**：各域流水线互不相干，硬凑一个中心等于
     替业务声明一条不存在的拓扑。给的是一句能读懂的原因。
     """
     domains = [d for d in scopes if d in scopes and scopes[d]]
@@ -299,10 +312,10 @@ def field_map_of_scope(
         every: list[str] = []
         for d in domains:
             every.extend(scopes[d])
-        return BeeBoxMap(
+        return WiringView(
             domain=scope,
             # 盒子还是列出来——「这个范围里有哪几只盒子」是事实，
-            # 缺的只是**Map**（共同汇点 + 接线）。
+            # 缺的只是**图**（共同汇点 + 接线）。
             boxes=tuple(every),
             reason=(
                 "范围横跨多个域，各域流水线互不相干，没有共同汇点——"
@@ -311,11 +324,10 @@ def field_map_of_scope(
             reason_code="cross_domain",
         )
     if not domains:
-        return BeeBoxMap(
+        return WiringView(
             domain=scope, reason="这个范围里没有盒子", reason_code="empty",
         )
     domain = domains[0]
-    ids = scopes[domain]
-    return derive_field_map(
-        domain, [placements[b] for b in ids if b in placements]
+    return wirings.get(domain) or WiringView(
+        domain=domain, reason="这个域还没装配", reason_code="empty",
     )

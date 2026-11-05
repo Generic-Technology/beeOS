@@ -35,10 +35,24 @@ core.decl_checks - 声明自洽性的**唯一判定处**
 
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Mapping, Optional, Sequence
 
 from core.conditions import condition_comparisons, condition_fields, condition_parts
-from core.models import AcceptanceRule, ExceptionRule, SchemaDef
+from core.contract import (
+    INCOMPATIBLE,
+    UNKNOWN,
+    check_schema_compatibility,
+)
+from core.models import (
+    AcceptanceRule,
+    BoxFacts,
+    DomainDeclaration,
+    Edge,
+    EdgeKind,
+    ExceptionRule,
+    RuleKind,
+    SchemaDef,
+)
 
 
 def schema_ids_of(schemas: Sequence[SchemaDef]) -> set[str]:
@@ -186,6 +200,67 @@ def check_exception_conditions(
     return problems
 
 
+def check_subject_ref(
+    *,
+    result_schema: str,
+    result_fields: Iterable[str],
+    task_fields: Iterable[str],
+    subject_ref_field: Optional[str] = None,
+    subject_ref_from_result: Optional[str] = None,
+    subject_ref_subfield: Optional[str] = None,
+    subject_kind: Optional[str] = None,
+) -> list[str]:
+    """业务对象标识拿得到吗
+
+    **这只盒子的履约归不到哪个工作单元**，全看这几条声明：
+    标识从投料里取、从产出里取、还是从对象里取——说错一个，
+    这条记录就在归档里凭空消失（「声明了却拿不到」那族病）。
+
+    ## 为什么「从产出里取」必须验产出 schema 里真有那个键
+
+    `subject_ref_from_result` 说「产出里的哪个键是我造出来的对象的号」。
+    产出 schema 里没有这个键 → 运行时跑完取不到 →
+    **这次履约被拒**（契约被破了，当场报错，不静默降级成空）。
+
+    所以这不只是「少了个号」，而是「这只盒子跑一次就废一次」。
+    装配期就该拦住。
+
+    已犯过（2026-11-05）：学习域 4 只盒子的产出里明明有 `record_id`
+    （required=True，「同一件事重记还是同一个号」），却**没声明**
+    `subject_ref_from_result`——于是记录归不到任何工作单元，
+    任务列表里看不见它们，看板上只剩「这只盒子跑过 N 次」。
+    那是「明明产出里有，却没声明，所以拿不到」。
+    """
+    fields = set(result_fields)
+    task = set(task_fields)
+    problems: list[str] = []
+
+    if subject_ref_from_result and subject_ref_from_result not in fields:
+        problems.append(
+            f"subject_ref_from_result={subject_ref_from_result!r} "
+            f"不在产出 schema {result_schema!r} 里"
+            f"（可用字段：{sorted(fields)}）——"
+            f"声明了却拿不到：跑完取不到这个键，这次履约会被当场拒绝"
+        )
+    if subject_ref_field and subject_ref_field not in task:
+        problems.append(
+            f"subject_ref_field={subject_ref_field!r} 不在投料 schema 里"
+            f"（可用字段：{sorted(task)}）——"
+            f"声明了却拿不到，归档时这条履约记录归不到任何工作单元"
+        )
+    if subject_ref_subfield and not subject_ref_field:
+        problems.append(
+            "声明了 subject_ref_subfield 却没有 subject_ref_field——"
+            "从哪个对象里取，总得先说清是哪个对象"
+        )
+    if (subject_ref_field or subject_ref_from_result) and not subject_kind:
+        problems.append(
+            "声明了 subject_ref_field / subject_ref_from_result 却没有 subject_kind——"
+            "「它关于哪一类业务对象」不能靠猜"
+        )
+    return problems
+
+
 def check_maturity(
     *,
     maturity: str,
@@ -243,4 +318,253 @@ def check_skeleton_is_honest(
         problems.append(
             f"骨架盒没有产出，却声明了指标 {names}——声明了却拿不到"
         )
+    return problems
+
+
+# ============================================================
+# 域级校验（D1–D15）
+#
+# 盒子级判的是「一只盒子自不自洽」（C1–C12），
+# 域级判的是「**一个域的结构对不对**」（D1–D15）。
+#
+# **域级要更多信息**（别的盒子声明了什么），所以由调用方
+# （注册表 / 装配器）把信息收集好传进来——core 仍然不认识任何一只盒子。
+#
+# **判定分三层**（见 `docs/domain-declaration.md` §5.7）：
+#   ① 声明合法性（D1–D4 / D7–D8 / D10 / D12 / D14–D15）← 本模块
+#   ② 域业务规则（rules）                                 ← `core/domain.py`
+#   ③ 展示适用性（汇点唯一 / 环上相邻有交接）              ← `core/wiring.py`
+#
+# **D5（汇点唯一）不在 ①**：那是**画图**的要求，不是**声明合法**的要求。
+# ============================================================
+
+
+def check_domain_boxes(
+    declaration: DomainDeclaration,
+    boxes: Mapping[str, BoxFacts],
+) -> list[str]:
+    """D1 + 「孤岛必须显式点名」
+
+    **D1**：域声明里写的盒子，都得真实存在。
+    **孤岛**：域里的盒子在本域一条边都没有 → 要么是「加进域忘了接边」，
+    要么是「它业务上就是独立的」——**后者必须显式点名**，
+    否则「加进域忘了接边」会静默通过。
+    """
+    problems: list[str] = []
+    member_ids = set(declaration.boxes)
+
+    for box_id in declaration.boxes:
+        if box_id not in boxes:
+            problems.append(
+                f"D1 域 {declaration.id!r} 的成员 {box_id!r} 不在注册表里——"
+                f"域声明写了一个不存在的盒子"
+            )
+
+    # 孤岛：在本域里既不是任何边的上游，也不是任何边的下游
+    touched: set[str] = set()
+    for e in declaration.edges:
+        touched.add(e.from_box)
+        touched.add(e.to_box)
+    # 被规则显式点名的盒子算「说过了」
+    named: set[str] = {
+        ex.box_id for rule in declaration.rules for ex in rule.exemptions
+    }
+    for box_id in declaration.boxes:
+        if box_id not in touched and box_id not in named:
+            problems.append(
+                f"孤岛：域 {declaration.id!r} 的成员 {box_id!r} 在本域一条边都没有。"
+                f"要么给它接上边，要么在某条规则的豁免里**显式点名**"
+                f"（不能静默地孤着——那分不清是「忘了接边」还是「它就是独立的」）"
+            )
+    return problems
+
+
+def check_domain_edges(
+    declaration: DomainDeclaration,
+    boxes: Mapping[str, BoxFacts],
+) -> list[str]:
+    """D2 / D7 / D8 / D10 / D12 —— 边本身的合法性"""
+    problems: list[str] = []
+    member_ids = set(declaration.boxes)
+
+    # D8：判重键 = 完整通道标识，**不是 (from, to, kind)**
+    seen: dict[tuple[str, str, str, str, str], Edge] = {}
+    for e in declaration.edges:
+        key = e.channel_key
+        if key in seen:
+            problems.append(
+                f"D8 重复的边：{e.from_box!r} → {e.to_box!r}"
+                f"（to_task={e.to_task!r} via={e.via!r} kind={e.kind.value!r}）"
+                f"与前面那条重复"
+            )
+        else:
+            seen[key] = e
+
+    for e in declaration.edges:
+        # D2 / D10：边的两端
+        if not e.external and e.from_box not in member_ids:
+            problems.append(
+                f"D2 边 {e.from_box!r} → {e.to_box!r}：上游 {e.from_box!r} 不在本域 "
+                f"{declaration.id!r} 的成员里（要么加进成员，要么声明 external=True）"
+            )
+        if e.to_box not in member_ids:
+            problems.append(
+                f"D2 边 {e.from_box!r} → {e.to_box!r}：下游 {e.to_box!r} 不在本域 "
+                f"{declaration.id!r} 的成员里"
+            )
+
+        # D7：归档边**不是交接**，所以不许带通道
+        if e.kind == EdgeKind.archive and e.via:
+            problems.append(
+                f"D7 归档边 {e.from_box!r} → {e.to_box!r} 带了 via={e.via!r}——"
+                f"归档归属不是数据交接，不该有通道"
+            )
+
+        # D12：要么有通道，要么显式声明没有
+        if e.via and e.no_channel:
+            problems.append(
+                f"D12 边 {e.from_box!r} → {e.to_box!r} 同时写了 via={e.via!r} "
+                f"和 no_channel=True——两者互斥"
+            )
+        elif not e.via and not e.no_channel and e.kind != EdgeKind.archive:
+            problems.append(
+                f"D12 边 {e.from_box!r} → {e.to_box!r}（{e.kind.value}）"
+                f"既没有 via 也没写 no_channel——"
+                f"「这条边通不通」要显式说出来，不能靠沉默"
+            )
+
+        # to_task 要指得到
+        facts = boxes.get(e.to_box)
+        if facts is not None and e.to_task:
+            if e.to_task not in facts.task_types:
+                problems.append(
+                    f"边 {e.from_box!r} → {e.to_box!r} 的 to_task={e.to_task!r} "
+                    f"不是 {e.to_box!r} 的 task 入口（它有：{list(facts.task_types)}）"
+                )
+        if facts is not None and not e.to_task and len(facts.task_types) > 1:
+            problems.append(
+                f"边 {e.from_box!r} → {e.to_box!r} 没写 to_task，"
+                f"而 {e.to_box!r} 有多个 task 入口（{list(facts.task_types)}）——"
+                f"指不到具体入口"
+            )
+    return problems
+
+
+def check_domain_channels(
+    declaration: DomainDeclaration,
+    boxes: Mapping[str, BoxFacts],
+) -> list[str]:
+    """D3a / D3b / D3c —— 每条 handoff 边都要有一条真能走通的通道
+
+    **D3c 用的是「声明层兼容判定」**（`core.contract.check_schema_compatibility`），
+    不是「拿一份样例去试」——后者只能证明「**存在**一个合规产出能过」，
+    不能证明「**所有**合规产出都能过」（`docs/domain-declaration.md` §5.6）。
+    """
+    problems: list[str] = []
+    for e in declaration.edges:
+        if e.kind != EdgeKind.handoff:
+            continue
+        if not e.via:
+            continue  # D12 已经报过
+
+        down = boxes.get(e.to_box)
+        up = boxes.get(e.from_box)
+        if down is None or up is None:
+            continue  # D1 已经报过
+
+        # D3a：via 必须是下游投料里的 `ref:` 字段
+        task_schema = down.task_schema(e.to_task)
+        if task_schema is None:
+            problems.append(
+                f"D3a 边 {e.from_box!r} → {e.to_box!r}："
+                f"拿不到 {e.to_box!r} 的投料形状（to_task={e.to_task!r}）"
+            )
+            continue
+        field = next((f for f in task_schema.fields if f.name == e.via), None)
+        if field is None:
+            problems.append(
+                f"D3a 边 {e.from_box!r} → {e.to_box!r}：via={e.via!r} 不在 "
+                f"{e.to_box!r} 的投料 {task_schema.id!r} 里"
+                f"（现有字段：{[f.name for f in task_schema.fields]}）"
+            )
+            continue
+        if not field.type.startswith("ref:"):
+            problems.append(
+                f"D3a 边 {e.from_box!r} → {e.to_box!r}：via={e.via!r} 的类型是 "
+                f"{field.type!r}，不是 ref:——交接通道必须是 ref 字段"
+            )
+            continue
+
+        # D3b：ref 指向的形状要在**下游自己的** schemas 里能解析
+        target_id = field.type[4:]
+        target = down.schemas.get(target_id)
+        if target is None:
+            problems.append(
+                f"D3b 边 {e.from_box!r} → {e.to_box!r}：via={e.via!r} 指向 "
+                f"{target_id!r}，但 {e.to_box!r} 自己没声明这个 schema"
+            )
+            continue
+
+        # D3c：声明层兼容判定
+        out = up.result_schema_def()
+        if out is None:
+            continue  # 上游的产出形状缺失，是盒子级的问题
+        compat = check_schema_compatibility(
+            out,
+            target,
+            upstream_schemas=up.schemas,
+            downstream_schemas=down.schemas,
+        )
+        if compat.status == INCOMPATIBLE:
+            problems.append(
+                f"D3c 边 {e.from_box!r} → {e.to_box!r}（via={e.via!r}）："
+                f"上游的产出形状**喂不进**下游声明的接料形状——{compat.reason}"
+            )
+        elif compat.status == UNKNOWN:
+            problems.append(
+                f"D3c 边 {e.from_box!r} → {e.to_box!r}（via={e.via!r}）判不出来"
+                f"（unknown）：{compat.reason}。"
+                f"**去把上游的声明改精确**——上游说得越含糊，这块空白越大"
+            )
+    return problems
+
+
+def check_domain_rules(
+    declaration: DomainDeclaration,
+    boxes: Mapping[str, BoxFacts],
+) -> list[str]:
+    """D14 / D15 —— 豁免机制本身要合法"""
+    problems: list[str] = []
+    member_ids = set(declaration.boxes)
+
+    for rule in declaration.rules:
+        for ex in rule.exemptions:
+            # D14：豁免的盒子得在这个域里
+            if ex.box_id not in member_ids:
+                problems.append(
+                    f"D14 规则 {rule.kind.value!r} 的豁免点名了 {ex.box_id!r}，"
+                    f"但它不在域 {declaration.id!r} 的成员里"
+                )
+            if not ex.reason.strip():
+                problems.append(
+                    f"D14 规则 {rule.kind.value!r} 对 {ex.box_id!r} 的豁免没写理由——"
+                    f"「为什么豁免」要能被人读出来"
+                )
+            # D15：must = 不得有对应的边
+            if ex.mode == "must":
+                forbidden = {
+                    RuleKind.all_archived: EdgeKind.archive,
+                    RuleKind.all_handoff: EdgeKind.handoff,
+                }.get(rule.kind)
+                if forbidden is not None:
+                    bad = [
+                        e for e in declaration.edges
+                        if e.from_box == ex.box_id and e.kind == forbidden
+                    ]
+                    for e in bad:
+                        problems.append(
+                            f"D15 规则 {rule.kind.value!r} 声明 {ex.box_id!r} "
+                            f"**不得**有 {forbidden.value} 边"
+                            f"（实际有：{e.from_box!r} → {e.to_box!r}）"
+                        )
     return problems
