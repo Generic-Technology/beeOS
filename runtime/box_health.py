@@ -49,6 +49,7 @@ from core.decl_checks import (
     check_op_schema_refs,
     check_schema_refs,
     check_skeleton_is_honest,
+    check_subject_ref,
     result_field_types,
     schema_ids_of,
 )
@@ -360,7 +361,17 @@ def inspect_box(inspection: BoxInspection) -> BoxHealth:
         _placement_problems(d),
     ))
 
-    # ---- 9 声明的指标有人算吗 ----
+    # ---- 9 业务对象标识拿得到吗 ----
+    checks.append(_verdict(
+        "subject_ref_resolvable",
+        "业务对象标识拿得到",
+        "这只盒子的履约归不到哪个工作单元，全看这几条声明："
+        "标识从投料里取还是从产出里取。说不清 = 这条记录在归档里凭空消失，"
+        "任务列表里也看不见它。",
+        _subject_ref_problems(d),
+    ))
+
+    # ---- 10 声明的指标有人算吗 ----
     checks.append(_verdict(
         "metrics_wired",
         "声明的指标有人算",
@@ -371,7 +382,7 @@ def inspect_box(inspection: BoxInspection) -> BoxHealth:
         missing_note="没给指标采集算法表，这一项验不了",
     ))
 
-    # ---- 10 有执行器吗 ----
+    # ---- 11 有执行器吗 ----
     checks.append(_verdict(
         "runner_present",
         "有执行器",
@@ -541,6 +552,28 @@ def _placement_problems(d: BeeBoxDefinition) -> list[str]:
     for key in ("display_name", "value_stream", "role"):
         if not getattr(p, key, ""):
             problems.append(f"归属字段 {key} 是空的——跟没声明一样")
+    return problems
+
+
+def _subject_ref_problems(d: BeeBoxDefinition) -> list[str]:
+    """业务对象标识拿得到吗（每个 task 各判一遍）"""
+    problems: list[str] = []
+    for task in d.task:
+        schema = d.get_schema(task.task_schema)
+        task_fields = {f.name for f in schema.fields} if schema else set()
+        result_schema = d.get_schema(d.result.result_schema)
+        result_fields = (
+            {f.name for f in result_schema.fields} if result_schema else set()
+        )
+        problems.extend(check_subject_ref(
+            result_schema=d.result.result_schema,
+            result_fields=result_fields,
+            task_fields=task_fields,
+            subject_ref_field=task.subject_ref_field,
+            subject_ref_from_result=task.subject_ref_from_result,
+            subject_ref_subfield=task.subject_ref_subfield,
+            subject_kind=task.subject_kind,
+        ))
     return problems
 
 

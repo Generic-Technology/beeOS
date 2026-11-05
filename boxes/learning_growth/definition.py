@@ -64,6 +64,11 @@ DECLARATION = BoxDeclaration(
     # ---- 投料入口（Intent）----
     task_type="run_growth",
     task_schema="schema_learning_growth_input",
+    # **沿用上游的号**：档案里的号和学科盒的号是同一个，
+    # 所以两边认领同一个 record_id → 归档里它们是**一件任务**
+    # （一件任务牵过 2 只盒子），不是两件不相干的事。
+    subject_ref_from_result="record_id",
+    subject_kind="learning_record",
     task_trigger=(
         "一次学科练习记完之后\n"
         "OR 想看成长档案时补录一条"

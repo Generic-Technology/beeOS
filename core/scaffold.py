@@ -63,6 +63,7 @@ from core.decl_checks import (
     check_maturity,
     check_op_schema_refs,
     check_schema_refs,
+    check_subject_ref,
 )
 from core.models import (
     AcceptanceRule,
@@ -543,29 +544,20 @@ def assemble(
     checks.append("C9 例外条件真的能触发")
 
     # ---- 业务对象标识 ----
-    if declaration.subject_ref_field:
-        task_schema = next(
-            (s for s in schemas if s.id == declaration.task_schema), None
-        )
-        task_fields = {f.name for f in task_schema.fields} if task_schema else set()
-        if declaration.subject_ref_field not in task_fields:
-            problems.append(
-                f"subject_ref_field={declaration.subject_ref_field!r} "
-                f"不在投料 schema {declaration.task_schema!r} 里"
-                f"（可用字段：{sorted(task_fields)}）——"
-                f"声明了却拿不到，归档时这条履约记录归不到任何工作单元"
-            )
-    if declaration.subject_ref_subfield and not declaration.subject_ref_field:
-        problems.append(
-            "声明了 subject_ref_subfield 却没有 subject_ref_field——"
-            "从哪个对象里取，总得先说清是哪个对象"
-        )
-    if (declaration.subject_ref_field or declaration.subject_ref_from_result) \
-            and not declaration.subject_kind:
-        problems.append(
-            "声明了 subject_ref_field / subject_ref_from_result 却没有 subject_kind——"
-            "「它关于哪一类业务对象」不能靠猜"
-        )
+    # 判定归 `core/decl_checks.py`（与体检台共用一份）。
+    task_schema = next(
+        (s for s in schemas if s.id == declaration.task_schema), None
+    )
+    task_fields = {f.name for f in task_schema.fields} if task_schema else set()
+    problems.extend(check_subject_ref(
+        result_schema=declaration.result_schema,
+        result_fields=result_fields,
+        task_fields=task_fields,
+        subject_ref_field=declaration.subject_ref_field,
+        subject_ref_from_result=declaration.subject_ref_from_result,
+        subject_ref_subfield=declaration.subject_ref_subfield,
+        subject_kind=declaration.subject_kind,
+    ))
     checks.append("C12 业务对象标识拿得到")
 
     # ---- 接线 ----

@@ -292,6 +292,18 @@ class TestEveryCheckCanGoRed:
         ))
         assert _status(_inspection(definition), "placement_filled") == STATUS_FAIL
 
+    def test_subject_ref_resolvable(self):
+        """声明了产出里根本没有的键 → 认领不到，记录归不到工作单元"""
+        definition = _definition(task=[TaskDef(
+            type="do_sample",
+            task_schema="schema_sample_in",
+            beeline_id="beeline_sample",
+            beeline_version=1,
+            subject_ref_from_result="no_such_key",
+            subject_kind="sample",
+        )])
+        assert _status(_inspection(definition), "subject_ref_resolvable") == STATUS_FAIL
+
     def test_metrics_wired(self):
         """声明了指标却没有采集算法 → 看板上那个数字是空的"""
         definition = _definition(metrics=MetricsDef(quality=[{

@@ -63,6 +63,14 @@ DECLARATION = BoxDeclaration(
     # ---- 投料入口（Intent）----
     task_type="run_chinese",
     task_schema="schema_learning_chinese_input",
+    # **认领自己造出来的那个号**：产出里的 record_id 就是「这次学习事件」
+    # 的唯一号（从内容推导，同一件事重记还是同一个号）。
+    #
+    # 不认领的话，这条履约在归档里归不到任何工作单元——
+    # 任务列表按工作项归拢，于是这只盒子只剩「跑过 N 次」，
+    # 读者看不到「哪件任务」。**明明产出里有，却没声明，所以拿不到。**
+    subject_ref_from_result="record_id",
+    subject_kind="learning_record",
     task_trigger="记一次语文练习：阅读理解、作文、背诵",
 
     # ---- 产出契约（Contract）----
