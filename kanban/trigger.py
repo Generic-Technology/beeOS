@@ -785,6 +785,25 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
         "photo": _TINY_JPEG_DATA_URL,
         "merchant_hint": "测试便利店（示例）",
     },
+
+    ("learning_growth_box", "run_growth"): {
+        # **成长记录**：孩子的一次表现，记进成长档案。
+        # `mastery` 是掌握度（0~1），`source_kind` 说清这一条是
+        # **看到的**（observed）还是**家里口述的**（reported）——
+        # 两者在档案里不是一回事：混在一起，半年后分不清哪些是看见的、
+        # 哪些是听说的（那是「分不清的档案 = 看着完整，其实不能当依据」）。
+        "subject_result": {
+            "record_id": "grw_demo_001",
+            "subject": "小车",
+            "activity": "口算练习 20 题",
+            "observed_at": "2026-11-01T16:30",
+            "mastery": 0.85,
+            "evidence": "练习本 P12",
+            "source_kind": "observed",
+            "detail": "20 题对 17 题，错的都是两位数进位",
+            "notes": "下周复习进位",
+        },
+    },
 }
 
 
