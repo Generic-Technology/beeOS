@@ -469,7 +469,23 @@ def _sample_field(field: FieldDef, schemas: Any = None) -> Any:
         # 由盒子的核对跳如实报错（那张图里本来就没有分数）。
         return _TINY_JPEG_DATA_URL
     if field.type == "string":
-        return ""
+        # **空串不是示例值**（2026-11-05 改）
+        #
+        # 以前这里给空串，于是**兜底生成**的示例投料必被拒：
+        # - 契约闸拒（必填字段不许空）
+        # - 更早一步就拒：`subject_ref_field` 必须能取出**非空 id 串**，
+        #   空串 = 「这次履约归不到任何工作单元」，intake 直接不收
+        #
+        # 当时没被发现，是因为**有手写示例的那几只盒子**（学习域 3 只 +
+        # 设计盒）都绕过了这一层；没手写示例的 4 只 WMS 盒
+        # （analysis / development / ops / testing）全靠兜底生成，
+        # 于是在看板上「填入示例」给的是一份**投出去就报错**的东西。
+        #
+        # 给一个非空、带字段名的值：至少**投得出去**，
+        # 而且一眼看得出这是示例（`demo-xxx`）。
+        # 内容合不合适是**业务**的事——那由手写的 `_EXAMPLE_PAYLOADS` 管，
+        # 兜底生成只负责「不投不出去」。
+        return f"demo-{field.name}"
     if field.type == "integer":
         return 0
     if field.type == "number":
@@ -936,75 +952,38 @@ def box_context(
     }
 
 
-def trigger_task(
+def check_intake(
+    *,
     box_id: str,
     task_type: str,
+    task: TaskDef,
     payload: dict[str, Any],
-    store: TaskRunStore,
-    originator: str = "kanban.web",
+    schema: SchemaDef,
+    definition: BeeBoxDefinition,
     handoff: Optional[dict[str, str]] = None,
-    chain_ref: Optional[str] = None,
-    chain_kind: Optional[str] = None,
-) -> dict[str, Any]:
-    """触发 1 次履约：校验 → 执行 → 验收 → 落盘
+    get_run: Optional[Callable[[str], Any]] = None,
+) -> tuple[dict[str, Any], Optional[str], Optional[str]]:
+    """投料进履约之前的**两道闸**：接力 + 结构契约 + 业务对象标识
 
-    Args:
-        box_id: beeBox id（必须在 BOX_REGISTRY 注册）
-        task_type: task 类型（必须在 definition.task 注册）
-        payload: task 输入（按 task_schema 形状）
-        store: TaskRunStore（追加履约记录）
-        originator: 触发源标识
-        handoff: {投料字段名: 上游 task_run_id}——把上游盒子的产出接到
-            投料的 `ref:` 字段上（盒间接力）。见 runtime/handoff.py。
-        chain_ref / chain_kind: 这次履约**属于哪条链**（哪件活儿）。
-            只有编排者知道哪几跳是一条链——盒子自己不知道。
+    通过 → 返回 (接好力的投料, 业务对象标识, 业务对象种类)；
+    不通过 → 抛 `TriggerError`，**不产生 TaskRun**。
 
-    Returns:
-        {task_run_id, box_id, task_type, status, acceptance_status, result}
+    ## 为什么要抽成独立函数
 
-    Raises:
-        TriggerError: box / task_type / beeline 校验失败
+    因为**守卫要用同一条路**验它。
+
+    这条闸里有一条规矩**结构契约不管**：契约只查「字段齐不齐、类型对不对」，
+    而「这次履约关于哪个业务对象」是**归档**的要求——
+    取不到标识，这条履约记录归不到任何工作单元，等于凭空消失。
+    于是曾经有个缝：
+    - 守卫查的是**契约**（`example_submittable`）→ 全绿
+    - 但 4 只盒子的示例投料其实被**标识那条**拒了
+      （`requirement_ref: ""` → 「must yield an id string」）
+
+    用户照着示例投，得到的是一句他看不懂、也不知道该改什么的报错。
+    守卫自己抄一遍规则 = 两份实现 = 迟早漂——
+    **让守卫调 intake 本人的函数**，这条缝就没了。
     """
-    entry = BOX_REGISTRY.get(box_id)
-    if entry is None:
-        raise TriggerError(
-            f"unknown box_id: {box_id!r} (registered: {sorted(BOX_REGISTRY)})"
-        )
-    get_definition, beeline_loaders = entry
-    definition = get_definition()
-
-    task = definition.get_task(task_type)
-    if task is None:
-        available = [t.type for t in definition.task]
-        raise TriggerError(
-            f"box {box_id!r} does not accept task type {task_type!r} "
-            f"(available: {available})"
-        )
-
-    beeline_loader = beeline_loaders.get(task.beeline_id)
-    if beeline_loader is None:
-        raise TriggerError(
-            f"beeline {task.beeline_id!r} not registered for box {box_id!r}"
-        )
-    beeline = beeline_loader()
-    if beeline.version != task.beeline_version:
-        raise TriggerError(
-            f"beeline version mismatch: definition pins "
-            f"{task.beeline_id}@v{task.beeline_version}, "
-            f"registry has v{beeline.version}"
-        )
-
-    # ===== 第一道闸：结构契约（投料前，不产生 TaskRun） =====
-    # 形状不对（字段缺失 / 类型错 / 枚举值非法）在这里中断，
-    # 不进入履约——看板上也看不到这次投料，因为它没开始过。
-    # 注意：空需求集在结构上合法（0 条违规），会放行到 acceptance 由业务判据接管。
-    schema = definition.get_schema(task.task_schema)
-    if schema is None:
-        raise TriggerError(
-            f"task {task_type!r} pins task_schema {task.task_schema!r} "
-            f"which is not declared in definition.schemas"
-        )
-
     # ===== 盒间接力：先把上游盒子的产出接到投料上 =====
     #
     # 放在契约校验**之前**：handoff 填的字段（`ref:` 类型）通常是必填的，
@@ -1015,7 +994,7 @@ def trigger_task(
             handoff,
             task_schema=schema,
             schemas=definition.schemas,
-            get_run=store.get_run,
+            get_run=get_run,
         )
     except HandoffError as e:
         raise TriggerError(str(e)) from e
@@ -1101,6 +1080,92 @@ def trigger_task(
             f"却没声明 subject_kind——「它关于哪一类业务对象」不能靠猜"
         )
     subject_kind = task.subject_kind
+
+    return payload, subject_ref, subject_kind
+
+
+def trigger_task(
+    box_id: str,
+    task_type: str,
+    payload: dict[str, Any],
+    store: TaskRunStore,
+    originator: str = "kanban.web",
+    handoff: Optional[dict[str, str]] = None,
+    chain_ref: Optional[str] = None,
+    chain_kind: Optional[str] = None,
+) -> dict[str, Any]:
+    """触发 1 次履约：校验 → 执行 → 验收 → 落盘
+
+    Args:
+        box_id: beeBox id（必须在 BOX_REGISTRY 注册）
+        task_type: task 类型（必须在 definition.task 注册）
+        payload: task 输入（按 task_schema 形状）
+        store: TaskRunStore（追加履约记录）
+        originator: 触发源标识
+        handoff: {投料字段名: 上游 task_run_id}——把上游盒子的产出接到
+            投料的 `ref:` 字段上（盒间接力）。见 runtime/handoff.py。
+        chain_ref / chain_kind: 这次履约**属于哪条链**（哪件活儿）。
+            只有编排者知道哪几跳是一条链——盒子自己不知道。
+
+    Returns:
+        {task_run_id, box_id, task_type, status, acceptance_status, result}
+
+    Raises:
+        TriggerError: box / task_type / beeline 校验失败
+    """
+    entry = BOX_REGISTRY.get(box_id)
+    if entry is None:
+        raise TriggerError(
+            f"unknown box_id: {box_id!r} (registered: {sorted(BOX_REGISTRY)})"
+        )
+    get_definition, beeline_loaders = entry
+    definition = get_definition()
+
+    task = definition.get_task(task_type)
+    if task is None:
+        available = [t.type for t in definition.task]
+        raise TriggerError(
+            f"box {box_id!r} does not accept task type {task_type!r} "
+            f"(available: {available})"
+        )
+
+    beeline_loader = beeline_loaders.get(task.beeline_id)
+    if beeline_loader is None:
+        raise TriggerError(
+            f"beeline {task.beeline_id!r} not registered for box {box_id!r}"
+        )
+    beeline = beeline_loader()
+    if beeline.version != task.beeline_version:
+        raise TriggerError(
+            f"beeline version mismatch: definition pins "
+            f"{task.beeline_id}@v{task.beeline_version}, "
+            f"registry has v{beeline.version}"
+        )
+
+    # ===== 第一道闸：结构契约（投料前，不产生 TaskRun） =====
+    # 形状不对（字段缺失 / 类型错 / 枚举值非法）在这里中断，
+    # 不进入履约——看板上也看不到这次投料，因为它没开始过。
+    # 注意：空需求集在结构上合法（0 条违规），会放行到 acceptance 由业务判据接管。
+    schema = definition.get_schema(task.task_schema)
+    if schema is None:
+        raise TriggerError(
+            f"task {task_type!r} pins task_schema {task.task_schema!r} "
+            f"which is not declared in definition.schemas"
+        )
+
+    # ===== 投料进履约之前的两道闸（接力 + 契约 + 业务对象标识）=====
+    # 抽成 `check_intake` 是为了**守卫能用同一条路**验它——
+    # 守卫自己抄一遍规则 = 两份实现 = 迟早漂。
+    payload, subject_ref, subject_kind = check_intake(
+        box_id=box_id,
+        task_type=task_type,
+        task=task,
+        payload=payload,
+        schema=schema,
+        definition=definition,
+        handoff=handoff,
+        get_run=store.get_run,
+    )
 
     task_run = create_task_run(
         originator=originator,

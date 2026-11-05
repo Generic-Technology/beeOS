@@ -296,6 +296,46 @@ class TestExamplePayloadsAreSubmittable:
         _assert_pass(box_id, "example_submittable")
 
 
+class TestExamplePayloadsPassIntake:
+    """示例投料不只是「满足 schema」，还得**真的投得出去**
+
+    上面那条守卫查的是**契约**（字段齐不齐、类型对不对）。
+    但 intake 还有一条**契约不管**的规矩：
+    `subject_ref_field` 必须能取出**非空 id 串**——
+    空串 = 「这次履约归不到任何工作单元」，intake 直接不收。
+
+    于是有过这么个缝：
+    - 契约那条守卫全绿（示例确实满足 schema）
+    - 而 4 只盒子的示例投料其实**投不出去**
+      （analysis / development / ops / testing——
+      走兜底生成，字符串给的是空串 → 「must yield an id string」）
+
+    用户照着示例投，得到的是一句看不懂、也不知道该改什么的报错。
+    「示例投料必须投得出去」这条纪律**只落在一半**（契约那半）。
+
+    **守卫调 intake 本人的函数**（`check_intake`）：
+    自己抄一遍规则 = 两份实现 = 迟早漂——
+    而这里已经漂过一次（契约那条守的是契约，漏了标识那条）。
+    """
+
+    @pytest.mark.parametrize("box_id", ALL_BOXES)
+    def test_the_example_payload_passes_intake(self, box_id):
+        from kanban.trigger import check_intake
+
+        entry = list_task_entries(box_id)[0]
+        definition = BOX_REGISTRY[box_id][0]()
+        task = definition.task[0]
+        schema = definition.get_schema(task.task_schema)
+        check_intake(
+            box_id=box_id,
+            task_type=task.type,
+            task=task,
+            payload=entry["sample_payload"],
+            schema=schema,
+            definition=definition,
+        )
+
+
 class TestNoCheckIsRed:
     """体检台上不能有红的检查项
 
