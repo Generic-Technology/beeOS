@@ -17,26 +17,28 @@ WMS 开发盒——**按设计包改代码**，把方案变成能构建、能跑
 
 **不声明任何指标**：没有稳定产出的可测的量，就不声明——
 声明了指标却没有采集器，那正是「声明了却拿不到」。
+
+**为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
+盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
+拼装（以及当场校验）由 `core/scaffold.py` 的装配器做——
+声明自相矛盾的话，在装配那一步就报出来，而不是等到履约跑起来。
 """
 
 from __future__ import annotations
 
 from core.models import (
     AcceptanceRule,
-    BeeBoxDefinition,
     ExceptionRule,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
-    ResultDef,
-    TaskDef,
 )
-from boxes.wms_development.schemas import ALL_SCHEMAS
+from core.scaffold import BoxDeclaration
 
-WMS_DEVELOPMENT_BOX = BeeBoxDefinition(
-    id="wms_development_box",
+
+DECLARATION = BoxDeclaration(
+    id='wms_development_box',
     version=1,
     description=(
         "WMS 开发盒——**按设计包改代码**：把方案变成能构建、能跑起来的代码。\n\n"
@@ -46,75 +48,75 @@ WMS_DEVELOPMENT_BOX = BeeBoxDefinition(
         "模型说什么不算数。"
     ),
 
-    schemas=ALL_SCHEMAS,
+    # ---- 归属：这只盒子在企业里站在哪 ----
+    display_name="WMS Development Box",
+    value_stream="Software Delivery",
+    role="WMS Implementation Fulfillment",
+    domain="WMS",
+    feeds_into=['wms_testing_box', 'wms_system_box'],
 
-    placement=PlacementDef(
-        display_name="WMS Development Box",
-        value_stream="Software Delivery",
-        role="WMS Implementation Fulfillment",
-        domain="WMS",
-        feeds_into=['wms_testing_box', 'wms_system_box'],
+    # ---- 投料入口（Intent）----
+    task_type="handle_development_request",
+    task_schema="schema_dev_task_input",
+    # 本次履约处理的业务对象标识（归档按它分组）
+    #
+    # 标识**藏在设计包对象里**——设计包是整份上游产出（`ref:` 字段
+    # 装的就是一份对象），而「这份设计对应哪条需求」的答案在它的
+    # set_id 上。所以要指明从对象的哪个键取。
+    subject_ref_field="design_package_ref",
+    subject_ref_subfield="set_id",
+    # 这只盒子的业务对象是**需求**（隔着设计包一跳，需求仍是同一个）。
+    subject_kind="requirement",
+    task_trigger=(
+        "设计包评审通过要落代码\nOR 线上缺陷要打补丁\nOR 发版前要出可复现的构建产物"
     ),
 
-    task=[
-        TaskDef(
-            type="handle_development_request",
-            task_schema="schema_dev_task_input",
-            beeline_id="beeline_wms_development_v1",
-            beeline_version=1,
-            # 本次履约处理的业务对象标识（归档按它分组）
-            #
-            # 标识**藏在设计包对象里**——设计包是整份上游产出（`ref:` 字段
-            # 装的就是一份对象），而「这份设计对应哪条需求」的答案在它的
-            # set_id 上。所以要指明从对象的哪个键取。
-            subject_ref_field="design_package_ref",
-            subject_ref_subfield="set_id",
-            # 这只盒子的业务对象是**需求**（隔着设计包一跳，需求仍是同一个）。
-            subject_kind="requirement",
-            trigger=(
-                "设计包评审通过要落代码\nOR 线上缺陷要打补丁\nOR 发版前要出可复现的构建产物"
-            ),
+    # ---- 产出契约（Contract）----
+    result_type="wms_code_built",
+    result_schema="schema_build_artifact",
+    # **live**：这条腿是真的了——它真的起隔离工作区、真的让模型改代码、
+    # 真的编译、真的跑仓库自带的测试套件（见 boxes/wms_development/）。
+    #
+    # 以前是 skeleton：产出是桩，刻意不产出判据要的 metric，
+    # 让看板显式标「未实现」。现在腿在了，徽章就得摘掉——
+    # **「未实现」和「实现了但不达标」必须分得开**。
+    maturity="live",
+    acceptance=[
+        AcceptanceRule(
+            metric="build_reproducibility", op="eq", value=True,
+        ),
+        AcceptanceRule(
+            metric="unit_test_green", op="eq", value=True,
+        ),
+        AcceptanceRule(
+            metric="review_coverage", op="eq", value=True,
+        ),
+        AcceptanceRule(
+            metric="artifact_traceable", op="eq", value=True,
         ),
     ],
+    exceptions=[
+        # 编译不过 = 不交付。**不用 rollback**：runtime 里的 rollback
+        # 只是个状态标记，并不会真的撤销提交——用它等于宣称
+        # 「已补偿」而实际没人补偿（声明了却没人执行那一族）。
+        ExceptionRule(
+            condition="build_failed == true", action="no_deliver",
+        ),
+        ExceptionRule(
+            condition="unit_test_pass_rate < 0.95", action="escalate",
+        ),
+    ],
+    artifact_view="generic",
 
-    result=ResultDef(
-        type="wms_code_built",
-        result_schema="schema_build_artifact",
-        # **live**：这条腿是真的了——它真的起隔离工作区、真的让模型改代码、
-        # 真的编译、真的跑仓库自带的测试套件（见 boxes/wms_development/）。
-        #
-        # 以前是 skeleton：产出是桩，刻意不产出判据要的 metric，
-        # 让看板显式标「未实现」。现在腿在了，徽章就得摘掉——
-        # **「未实现」和「实现了但不达标」必须分得开**。
-        maturity="live",
-        acceptance=[
-            AcceptanceRule(
-                metric="build_reproducibility", op="eq", value=True,
-            ),
-            AcceptanceRule(
-                metric="unit_test_green", op="eq", value=True,
-            ),
-            AcceptanceRule(
-                metric="review_coverage", op="eq", value=True,
-            ),
-            AcceptanceRule(
-                metric="artifact_traceable", op="eq", value=True,
-            ),
-        ],
-        exceptions=[
-            # 编译不过 = 不交付。**不用 rollback**：runtime 里的 rollback
-            # 只是个状态标记，并不会真的撤销提交——用它等于宣称
-            # 「已补偿」而实际没人补偿（声明了却没人执行那一族）。
-            ExceptionRule(
-                condition="build_failed == true", action="no_deliver",
-            ),
-            ExceptionRule(
-                condition="unit_test_pass_rate < 0.95", action="escalate",
-            ),
-        ],
-        view="generic",
+    # ---- 作业路线（Procedure）----
+    beeline_id='beeline_wms_development_v1',
+    beeline_version=1,
+    beeline_description=(
+        "WMS Development Box 履约作业路线："
+        "dev_intake → dev_code → dev_build → build_packager"
     ),
 
+    # ---- 履约政策（Policy）----
     queen=QueenDef(
         authorization=QueenAuthorization(
             task_routing="allow",
@@ -134,10 +136,6 @@ WMS_DEVELOPMENT_BOX = BeeBoxDefinition(
         ),
     ),
 
-    # 骨架盒不声明指标：没有产出就没有可测的量。
+    # ---- 履约度量（Metrics）----
     metrics=MetricsDef(),
 )
-
-
-def get_definition() -> BeeBoxDefinition:
-    return WMS_DEVELOPMENT_BOX

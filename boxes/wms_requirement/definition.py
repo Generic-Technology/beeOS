@@ -20,122 +20,121 @@ boxes.wms_requirement.definition - 需求捕获履约盒 Definition 数据
 **已知盲区（诚实声明）**：type_boundary（rule vs metric vs process 的边界）
 LLM 实测仍有 2/10 错，这条无法机械验证——因此在看板投料口做人工确认
 （human-in-the-loop），不写进 acceptance 假装机器能判。
+
+**为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
+盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
+拼装（以及当场校验）由 `core/scaffold.py` 的装配器做——
+声明自相矛盾的话，在装配那一步就报出来，而不是等到履约跑起来。
 """
 
 from __future__ import annotations
 
 from core.models import (
     AcceptanceRule,
-    BeeBoxDefinition,
     ExceptionRule,
     MetricDef,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
-    ResultDef,
-    TaskDef,
 )
-from boxes.wms_requirement.schemas import ALL_SCHEMAS
+from core.scaffold import BoxDeclaration
 
 
-WMS_REQUIREMENT_BOX = BeeBoxDefinition(
-    id="wms_requirement_box",
+DECLARATION = BoxDeclaration(
+    id='wms_requirement_box',
     version=1,
     description=(
         "需求捕获履约盒——把自然语言业务表述抽成可机械验证的结构化业务需求集，"
         "每条需求带原文溯源，并交出 4 项抽取证据供设计盒投料"
     ),
 
-    schemas=ALL_SCHEMAS,
+    # ---- 归属：这只盒子在企业里站在哪 ----
+    display_name="WMS Requirement Box",
+    value_stream="Software Delivery",
+    role="WMS Requirement Capture Fulfillment",
+    domain="WMS",
+    # 接线只写「投给谁」。「谁投给我」由注册表反推——
+    # 两侧各写一遍的话，这边改了那边忘了，那只盒子
+    # 的上游就悄悄空了，而没有任何东西会报错。
+    # **只有设计盒**。v1 里还有一条 wms_system_box，那是反的：
+    # 需求盒产出的是系统档案的**输入**（读基线：这份系统该是什么样），
+    # 不是往档案里加东西。声明它「投给」系统盒，等于说档案是需求盒的下游，
+    # 而真实关系正好相反。
+    #
+    # 这条假边还制造了一个更实际的问题：它让 requirement 也成了
+    # feeds_center 的一员，于是「五个生命周期盒都往系统盒汇」这句话
+    # 在数据上不再成立，而拓扑图是照着这句话画的。
+    feeds_into=["wms_design_box"],
 
-    placement=PlacementDef(
-        display_name="WMS Requirement Box",
-        value_stream="Software Delivery",
-        role="WMS Requirement Capture Fulfillment",
-        domain="WMS",
-        # 接线只写「投给谁」。「谁投给我」由注册表反推——
-        # 两侧各写一遍的话，这边改了那边忘了，那只盒子
-        # 的上游就悄悄空了，而没有任何东西会报错。
-        # **只有设计盒**。v1 里还有一条 wms_system_box，那是反的：
-        # 需求盒产出的是系统档案的**输入**（读基线：这份系统该是什么样），
-        # 不是往档案里加东西。声明它「投给」系统盒，等于说档案是需求盒的下游，
-        # 而真实关系正好相反。
-        #
-        # 这条假边还制造了一个更实际的问题：它让 requirement 也成了
-        # feeds_center 的一员，于是「五个生命周期盒都往系统盒汇」这句话
-        # 在数据上不再成立，而拓扑图是照着这句话画的。
-        feeds_into=["wms_design_box"],
+    # ---- 投料入口（Intent）----
+    task_type="capture_business_requirement",
+    task_schema="schema_business_narrative",
+    # **不声明 subject_ref_field**：这只盒子**产生**业务对象（需求集），
+    # 不消费。对象 id 是这次履约的**产出**，不是投料给的——
+    # 自由文本投料（/api/structure）根本没有 set_id，
+    # 把它设成必填会把那条路堵死。
+    # 归档按需求集分组时，需求盒这一次履约靠「产出的 set_id」认领。
+    #
+    # **这句话以前只是愿望**：机制没实现，运行时只从投料里抽标识，
+    # 于是需求盒的记录 subject_ref 是空的——它造出来的需求集
+    # 在归档里没有「谁造的」这一条，看板上那条需求任务少了一只盒子。
+    # 现在这条声明**真的生效**了：执行完从产出里取 set_id 认领。
+    subject_ref_from_result="set_id",
+    subject_kind="requirement",
+    # **全注册表里唯一吃业务自然语言的盒子**（直到下一只盒子
+    # 也需要接人话为止）。显式声明，不靠投料 schema 的形状推：
+    # 详见 core.models.TaskDef.accepts_free_text。
+    accepts_free_text=True,
+    task_trigger=(
+        "业务方用自然语言描述业务\n"
+        "OR 产品经理要一份可投料的结构化需求集\n"
+        "OR 上一轮抽取有需求被人工改回原文重抽"
     ),
 
-    task=[
-        TaskDef(
-            type="capture_business_requirement",
-            task_schema="schema_business_narrative",
-            beeline_id="beeline_wms_requirement_v1",
-            beeline_version=1,
-            # **不声明 subject_ref_field**：这只盒子**产生**业务对象（需求集），
-            # 不消费。对象 id 是这次履约的**产出**，不是投料给的——
-            # 自由文本投料（/api/structure）根本没有 set_id，
-            # 把它设成必填会把那条路堵死。
-            # 归档按需求集分组时，需求盒这一次履约靠「产出的 set_id」认领。
-            #
-            # **这句话以前只是愿望**：机制没实现，运行时只从投料里抽标识，
-            # 于是需求盒的记录 subject_ref 是空的——它造出来的需求集
-            # 在归档里没有「谁造的」这一条，看板上那条需求任务少了一只盒子。
-            # 现在这条声明**真的生效**了：执行完从产出里取 set_id 认领。
-            subject_ref_from_result="set_id",
-            subject_kind="requirement",
-            # **全注册表里唯一吃业务自然语言的盒子**（直到下一只盒子
-            # 也需要接人话为止）。显式声明，不靠投料 schema 的形状推：
-            # 详见 core.models.TaskDef.accepts_free_text。
-            accepts_free_text=True,
-trigger=(
-                "业务方用自然语言描述业务\n"
-                "OR 产品经理要一份可投料的结构化需求集\n"
-                "OR 上一轮抽取有需求被人工改回原文重抽"
-            ),
+    # ---- 产出契约（Contract）----
+    result_type="business_requirement_captured",
+    result_schema="schema_requirement_set_package",
+    artifact_view="flow_graph",
+    result_description="结构化业务需求集 + 4 项抽取验证证据",
+    # **我的投料条数叫 requirement_count**（2026-11-01）：
+    # runtime 的「投料是空的」归因以前写死了一个字段名——
+    # 业务知识漏进内核。现在由盒子自己声明，runtime 按合同办事。
+    empty_input_metric="requirement_count",
+    acceptance=[
+        AcceptanceRule(metric="contract_compliance", op="eq", value=True),
+        AcceptanceRule(metric="source_coverage", op="gte", value=100.0),
+        AcceptanceRule(metric="trace_integrity", op="eq", value=True),
+        AcceptanceRule(metric="no_hallucination", op="eq", value=True),
+    ],
+    exceptions=[
+        # 原文里一句内容都没有 = 业务方什么也没说，别硬编
+        #
+        # **只在这一个情形下成立**：原文有内容句、但模型没抽出可追溯的节点，
+        # 那是模型没履约，中止，不走这条例外——
+        # 「没说话」和「没听清」是两件事，混成一件就是假信号。
+        ExceptionRule(
+            condition="requirement_count == 0",
+            action="no_deliver",
+            reason="原文里没有内容句（空表述），业务方什么也没说",
+        ),
+        # 大段原文没被任何需求覆盖 = 抽取漏了
+        ExceptionRule(
+            condition="source_coverage < 50",
+            action="escalate",
+            reason="一半以上原文没被抽取到，需要业务方澄清",
         ),
     ],
 
-    result=ResultDef(
-        type="business_requirement_captured",
-        result_schema="schema_requirement_set_package",
-        view="flow_graph",
-        description="结构化业务需求集 + 4 项抽取验证证据",
-        # **我的投料条数叫 requirement_count**（2026-11-01）：
-        # runtime 的「投料是空的」归因以前写死了一个字段名——
-        # 业务知识漏进内核。现在由盒子自己声明，runtime 按合同办事。
-        empty_input_metric="requirement_count",
-
-        acceptance=[
-            AcceptanceRule(metric="contract_compliance", op="eq", value=True),
-            AcceptanceRule(metric="source_coverage", op="gte", value=100.0),
-            AcceptanceRule(metric="trace_integrity", op="eq", value=True),
-            AcceptanceRule(metric="no_hallucination", op="eq", value=True),
-        ],
-
-        exceptions=[
-            # 原文里一句内容都没有 = 业务方什么也没说，别硬编
-            #
-            # **只在这一个情形下成立**：原文有内容句、但模型没抽出可追溯的节点，
-            # 那是模型没履约，中止，不走这条例外——
-            # 「没说话」和「没听清」是两件事，混成一件就是假信号。
-            ExceptionRule(
-                condition="requirement_count == 0",
-                action="no_deliver",
-                reason="原文里没有内容句（空表述），业务方什么也没说",
-            ),
-            # 大段原文没被任何需求覆盖 = 抽取漏了
-            ExceptionRule(
-                condition="source_coverage < 50",
-                action="escalate",
-                reason="一半以上原文没被抽取到，需要业务方澄清",
-            ),
-        ],
+    # ---- 作业路线（Procedure）----
+    beeline_id='beeline_wms_requirement_v1',
+    beeline_version=1,
+    beeline_description=(
+        "需求捕获履约作业路线——把自然语言业务表述抽成可机械验证的"
+        "结构化业务需求集（1 个 LLM op + 4 个机械 op）"
     ),
 
+    # ---- 履约政策（Policy）----
     queen=QueenDef(
         authorization=QueenAuthorization(
             task_routing="allow",
@@ -169,6 +168,7 @@ trigger=(
         ),
     ),
 
+    # ---- 履约度量（Metrics）----
     metrics=MetricsDef(
         quality=[
             MetricDef(
@@ -209,7 +209,3 @@ trigger=(
         ],
     ),
 )
-
-
-def get_definition() -> BeeBoxDefinition:
-    return WMS_REQUIREMENT_BOX

@@ -32,26 +32,28 @@ WMS 系统档案盒——把「真实在跑的那套 WMS 是什么样」写成�
 其中 `aspect_status_complete` 判的是诚实本身：每条维度是否带了合法状态，
 declared 有没有出处，unverifiable 有没有原因。它不关心档案内容对不对，
 只关心档案有没有假装自己是全知的。
+
+**为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
+盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
+拼装（以及当场校验）由 `core/scaffold.py` 的装配器做——
+声明自相矛盾的话，在装配那一步就报出来，而不是等到履约跑起来。
 """
 
 from __future__ import annotations
 
 from core.models import (
     AcceptanceRule,
-    BeeBoxDefinition,
     ExceptionRule,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
-    ResultDef,
-    TaskDef,
 )
-from boxes.wms_system.schemas import ALL_SCHEMAS
+from core.scaffold import BoxDeclaration
 
-WMS_SYSTEM_BOX = BeeBoxDefinition(
-    id="wms_system_box",
+
+DECLARATION = BoxDeclaration(
+    id='wms_system_box',
     version=2,
     description=(
         "WMS 系统档案盒——把「真实在跑的那套 WMS 是什么样」写成一份带出处的档案。\n\n"
@@ -66,61 +68,60 @@ WMS_SYSTEM_BOX = BeeBoxDefinition(
         "它是 WMS 域的唯一汇点：五只过程盒的产出最终都要跟这份档案对上。"
     ),
 
-    schemas=ALL_SCHEMAS,
+    # ---- 归属：这只盒子在企业里站在哪 ----
+    display_name="WMS System Box",
+    value_stream="Software Delivery",
+    role="WMS System Description Fulfillment",
+    domain="WMS",
+    # 汇点没有下游：它不被投给谁，它是所有人的落点。
+    feeds_into=[],
 
-    placement=PlacementDef(
-        display_name="WMS System Box",
-        value_stream="Software Delivery",
-        role="WMS System Description Fulfillment",
-        domain="WMS",
-        # 汇点没有下游：它不被投给谁，它是所有人的落点。
-        feeds_into=[],
+    # ---- 投料入口（Intent）----
+    # v1 叫 handle_system_request（「处理一个系统请求」）——
+    # 名不副实：它不处理请求，它主动去观测然后归档。
+    # 改名跟 beeline 升 v2 是同一件事的两面。
+    task_type="sync_system_profile",
+    task_schema="schema_system_probe_input",
+    # **不声明 subject_ref_field**：这只盒子**就是**档案本身。
+    # 它不针对某个业务对象——它描述整个系统。
+    # （它一次同步的产出是全量观测，不属于任何一个需求单元。）
+    task_trigger=(
+        "发版后同步系统档案\nOR 新增/下线一个服务要更新接口清单\n"
+        "OR 架构评审前拉一份当前可观测状态\nOR 发现档案跟真实部署对不上"
     ),
 
-    task=[
-        TaskDef(
-            # v1 叫 handle_system_request（「处理一个系统请求」）——
-            # 名不副实：它不处理请求，它主动去观测然后归档。
-            # 改名跟 beeline 升 v2 是同一件事的两面。
-            type="sync_system_profile",
-            task_schema="schema_system_probe_input",
-            beeline_id="beeline_wms_system_v2",
-            beeline_version=2,
-            # **不声明 subject_ref_field**：这只盒子**就是**档案本身。
-            # 它不针对某个业务对象——它描述整个系统。
-            # （它一次同步的产出是全量观测，不属于任何一个需求单元。）
-            trigger=(
-                "发版后同步系统档案\nOR 新增/下线一个服务要更新接口清单\n"
-                "OR 架构评审前拉一份当前可观测状态\nOR 发现档案跟真实部署对不上"
-            ),
-        ),
+    # ---- 产出契约（Contract）----
+    result_type="wms_system_profiled",
+    result_schema="schema_system_profile",
+    maturity="live",
+    acceptance=[
+        AcceptanceRule(metric="health_endpoint_reachable", op="eq", value=True),
+        AcceptanceRule(metric="service_status_up", op="eq", value=True),
+        AcceptanceRule(metric="database_reachable", op="eq", value=True),
+        # 基线声明的只读端点必须条条答得上来。
+        # 低于 100 就是有端点失联：档案里那份接口清单开始过期了，
+        # 而过期的接口清单比没有更危险——它让人以为问对了接口。
+        AcceptanceRule(metric="readonly_probe_answer_rate", op="gte", value=100.0),
+        AcceptanceRule(metric="aspect_status_complete", op="eq", value=True),
     ],
+    exceptions=[
+        # 探不到系统，谈不上档案：升级人工，而不是产出一份空档案
+        ExceptionRule(condition="health_endpoint_reachable == false", action="escalate"),
+        # 服务活着但数据库掉了：业务不可用，升级人工
+        ExceptionRule(condition="database_reachable == false", action="escalate"),
+        # 一条只读端点都没探通，这份档案没有覆盖面可言，不投递
+        ExceptionRule(condition="readonly_probe_answer_rate == 0", action="no_deliver"),
+    ],
+    artifact_view="generic",
 
-    result=ResultDef(
-        type="wms_system_profiled",
-        result_schema="schema_system_profile",
-        maturity="live",
-        acceptance=[
-            AcceptanceRule(metric="health_endpoint_reachable", op="eq", value=True),
-            AcceptanceRule(metric="service_status_up", op="eq", value=True),
-            AcceptanceRule(metric="database_reachable", op="eq", value=True),
-            # 基线声明的只读端点必须条条答得上来。
-            # 低于 100 就是有端点失联：档案里那份接口清单开始过期了，
-            # 而过期的接口清单比没有更危险——它让人以为问对了接口。
-            AcceptanceRule(metric="readonly_probe_answer_rate", op="gte", value=100.0),
-            AcceptanceRule(metric="aspect_status_complete", op="eq", value=True),
-        ],
-        exceptions=[
-            # 探不到系统，谈不上档案：升级人工，而不是产出一份空档案
-            ExceptionRule(condition="health_endpoint_reachable == false", action="escalate"),
-            # 服务活着但数据库掉了：业务不可用，升级人工
-            ExceptionRule(condition="database_reachable == false", action="escalate"),
-            # 一条只读端点都没探通，这份档案没有覆盖面可言，不投递
-            ExceptionRule(condition="readonly_probe_answer_rate == 0", action="no_deliver"),
-        ],
-        view="generic",
+    # ---- 作业路线（Procedure）----
+    beeline_id='beeline_wms_system_v2',
+    beeline_version=2,
+    beeline_description=(
+        "WMS System Box 履约作业路线：system_intake → system_probe → system_profile_packager"
     ),
 
+    # ---- 履约政策（Policy）----
     queen=QueenDef(
         authorization=QueenAuthorization(
             task_routing="allow",
@@ -145,6 +146,7 @@ WMS_SYSTEM_BOX = BeeBoxDefinition(
         ),
     ),
 
+    # ---- 履约度量（Metrics）----
     metrics=MetricsDef(
         # 每个声明都必须有采集算法（boxes/wms_system/measure.py）。
         # 这 4 条全部从 acceptance 的实测值推出——`observed` 只搬运
@@ -183,7 +185,3 @@ WMS_SYSTEM_BOX = BeeBoxDefinition(
         ],
     ),
 )
-
-
-def get_definition() -> BeeBoxDefinition:
-    return WMS_SYSTEM_BOX

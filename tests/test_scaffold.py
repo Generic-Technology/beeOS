@@ -41,10 +41,6 @@ from core.scaffold import (
     Component,
     assemble,
 )
-from scripts.scaffold_migrate import (
-    components_from_beeline,
-    declaration_from_definition,
-)
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
@@ -441,52 +437,63 @@ class TestEveryRegisteredBoxSurvivesAssembly:
 
     @staticmethod
     def _boxes():
+        """每只注册盒子的**新协议三件套**（声明 / 组件链 / schema）+ 实现表
+
+        从注册表推模块名，不手抄名单——手抄的名册必漂。
+        """
+        import importlib
+
         from kanban.trigger import BOX_REGISTRY, RUNNER_REGISTRY
 
-        for box_id, (get_def, beeline_loaders) in sorted(BOX_REGISTRY.items()):
-            yield box_id, get_def(), beeline_loaders, RUNNER_REGISTRY[box_id]
+        for box_id, (get_def, _beeline_loaders) in sorted(BOX_REGISTRY.items()):
+            module = _module_of(box_id)
+            pkg = importlib.import_module(f"boxes.{module}")
+            runner = RUNNER_REGISTRY[box_id]
+            yield (
+                box_id,
+                pkg.DECLARATION,
+                pkg.COMPONENTS,
+                pkg.ALL_SCHEMAS,
+                runner.handlers,
+                get_def,
+            )
 
     def test_every_registered_box_can_be_expressed_in_the_new_protocol(self):
-        for box_id, definition, beeline_loaders, runner in self._boxes():
-            for _beeline_id, load in beeline_loaders.items():
-                beeline = load()
-                declaration = declaration_from_definition(definition, beeline=beeline)
-                components = components_from_beeline(beeline)
-                box = assemble(
-                    declaration,
-                    components,
-                    schemas=definition.schemas,
-                    handlers=runner.handlers,
-                )
-                assert box.definition.id == box_id
+        for box_id, declaration, components, schemas, handlers, _get_def in self._boxes():
+            box = assemble(
+                declaration,
+                components,
+                schemas=schemas,
+                handlers=handlers,
+            )
+            assert box.definition.id == box_id
 
     def test_assembling_a_box_back_gives_the_same_declaration(self):
-        """装回去的东西必须跟原来**一模一样**——
-        差一个字段，迁移就悄悄改了盒子的行为
+        """盒子的公开面必须就是**装配出来**的那一份
+
+        以前这条守卫是拿「旧声明 → 转成新声明 → 装回去」绕一圈，
+        验的是「转换器没丢东西」。迁移全部完成后那条路已经删了——
+        现在要验的是更靠前的一件事：**盒子自己交出来的声明，
+        装出来就是它对外声称的那只盒子**。
+        差一个字段，迁移就悄悄改了盒子的行为。
         """
-        for box_id, definition, beeline_loaders, runner in self._boxes():
-            for _beeline_id, load in beeline_loaders.items():
-                beeline = load()
-                declaration = declaration_from_definition(definition, beeline=beeline)
-                components = components_from_beeline(beeline)
-                box = assemble(
-                    declaration,
-                    components,
-                    schemas=definition.schemas,
-                    handlers=runner.handlers,
-                )
-                assert box.definition == definition, f"{box_id} 的声明装回去不一样了"
-                assert box.beeline == beeline, f"{box_id} 的作业路线装回去不一样了"
+        for box_id, declaration, components, schemas, handlers, get_def in self._boxes():
+            box = assemble(
+                declaration,
+                components,
+                schemas=schemas,
+                handlers=handlers,
+            )
+            assert box.definition == get_def(), f"{box_id} 的声明装回去不一样了"
 
     def test_every_op_of_every_box_has_an_implementation(self):
-        for box_id, definition, beeline_loaders, runner in self._boxes():
-            for _beeline_id, load in beeline_loaders.items():
-                beeline = load()
-                for op in beeline.operations:
-                    assert runner.supports(op.type), (
-                        f"{box_id} 的 op {op.op_id!r}（type={op.type!r}）"
-                        f"在它自己的 runner 里没有实现"
-                    )
+        for box_id, _declaration, components, _schemas, handlers, _get_def in self._boxes():
+            for comp in components:
+                # 分派键 = `resolved_type()`（执行器就按它找实现）
+                assert comp.resolved_type() in handlers, (
+                    f"{box_id} 的 op {comp.op_id!r}（type={comp.resolved_type()!r}）"
+                    f"在它自己的 runner 里没有实现"
+                )
 
 
 # ============================================================
@@ -525,7 +532,7 @@ def _uses_legacy_path(module: str) -> bool:
     return "BeeBoxDefinition(" in _definition_source(module)
 
 
-#: 还在**旧写法**上的盒子模块——**写死的迁移台账**。
+#: **旧路径台账**（手写）——记的是「还在用旧写法」的盒子。
 #:
 #: **为什么手写而不是自动推导**：自动推导的话，
 #: 「新盒子必须走装配器」这条守卫就形同虚设——
@@ -536,14 +543,10 @@ def _uses_legacy_path(module: str) -> bool:
 #: 对不上时红，并说清该改哪一边。
 #:
 #: **每迁走一只，就从这里划掉一条**——迁到最后这个清单是空的。
-LEGACY_BOX_MODULES = (
-    "wms_analysis",
-    "wms_development",
-    "wms_ops",
-    "wms_requirement",
-    "wms_system",
-    "wms_testing",
-)
+#:
+#: **2026-11-04：台账清空**——WMS 域 6 只全部迁完（analysis / development /
+#: ops / requirement / system / testing），仓库里没有一只盒子还在旧写法。
+LEGACY_BOX_MODULES = ()
 
 
 class TestOnePathPerBox:
@@ -677,6 +680,34 @@ class TestTheModelsDoNotSilentlyDropDeclarations:
             config = obj.model_config or {}
             assert config.get("extra") == "forbid", (
                 f"core.models.{name} 还会静默吞掉不认识的参数"
+            )
+
+    def test_every_scaffold_model_forbids_extra_fields(self):
+        """**新协议自己**也不许吞字段
+
+        实测过：迁 `wms_requirement` 时，旧文件里 `trigger=(` 顶格写歪了，
+        转换时没认出来 → 字段名写成 `trigger`（该是 `task_trigger`）→
+        而 `BoxDeclaration` 当时是 pydantic 默认的 `extra="ignore"` →
+        **安静地丢掉**，触发条件整段消失，盒子照样装得出来。
+
+        新协议最大的卖点是「装配期就报错」，
+        结果它自己在第一道门上就把拼错的字段吞了。
+        是**差分比对**抓到的（触发条件成了 null）——不是装配器抓到的。
+
+        所以装配器这三个模型（Component / BoxDeclaration / AssembledBox）
+        跟 core.models 一样，一律 `extra="forbid"`。
+        """
+        import core.scaffold as s
+
+        for name in dir(s):
+            obj = getattr(s, name)
+            if not (isinstance(obj, type) and issubclass(obj, BaseModel)):
+                continue
+            if obj.__module__ != s.__name__:
+                continue
+            config = obj.model_config or {}
+            assert config.get("extra") == "forbid", (
+                f"core.scaffold.{name} 还会静默吞掉不认识的参数"
             )
 
 

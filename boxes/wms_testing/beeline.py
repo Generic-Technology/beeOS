@@ -14,20 +14,18 @@ beeline 跟盒子是 **1:1 且不可分割** 的：它引用的 schema id 全部
 `schemas.py`，每个 op 的 handler 都在本盒的 `runner.py` 里。所以它住在盒子
 里面，而不是仓库顶层一个单独的目录——顶层目录会让人以为存在一种
 「可复用的跨盒作业路线」，而实际上一条都没有。
+**为什么是「组件链」而不是一份 `Beeline(...)`**：
+盒子不手写 `Operation` / `NextRef` / `Bee` 那套样板——
+它只声明每一跳的**形状**（吃什么、吐什么、数据从哪来、下一步去哪），
+由 `core/scaffold.py` 的装配器把它组装成作业路线**并当场校验**。
 """
 
 from __future__ import annotations
 
-from core.beeline_models import (
-    Bee,
-    Beeline,
-    Idempotency,
-    NextRef,
-    Operation,
-)
+from core.beeline_models import Idempotency
+from core.scaffold import Component
 
 
-# 同一任务重复执行必须产出同一份结果
 #: **幂等声明——逐 op 说的是真话**（2026-11-01 改）
 #:
 #: 以前这里是一个常量 `required, key=...` 套在**每一个** op 上。
@@ -50,55 +48,42 @@ IDEMPOTENT_BY_TASK = Idempotency(mode="optional")
 FORBIDDEN_REPLAY = Idempotency(mode="forbidden")
 
 
-
-WMS_TESTING_BEELINE = Beeline(
-    id="beeline_wms_testing_v1",
-    version=1,
-    description=(
-        "WMS Testing Box 履约作业路线：test_intake → test_execute → test_packager"
+COMPONENTS: list[Component] = [
+    Component(
+        op_id="test_intake",
+        type="test_intake",
+        input_from="external",
+        input="schema_test_task_input",
+        output="schema_test_execution",
+        next=['test_execute'],
+        bee_type="test_intake_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
     ),
 
-    operations=[
-        Operation(
-            op_id="test_intake",
-            type="test_intake",
-            input_from="external",
-            input="schema_test_task_input",
-            output="schema_test_execution",
-            next=[NextRef(op_id="test_execute")],
-            bee=Bee(type="test_intake_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
+        # **不许重放**（forbidden）：这一跳会往验证实例里**造数据**
+        #（库区、库位…）再清掉。重放一次 = 再造一套，
+        # 而上一套要是没清干净（正是失败的时候），两套都留在那儿。
+        # **会留下东西**（leaves_artifact）：造出来的数据就是残留。
+    Component(
+        op_id="test_execute",
+        type="test_execute",
+        input_from="test_intake",
+        input="schema_test_execution",
+        output="schema_test_verdict",
+        next=['test_packager'],
+        bee_type="test_execute_handler",
+        idempotency=FORBIDDEN_REPLAY,
+        leaves_artifact=True,
+    ),
 
-        Operation(
-            # **不许重放**（forbidden）：这一跳会往验证实例里**造数据**
-            #（库区、库位…）再清掉。重放一次 = 再造一套，
-            # 而上一套要是没清干净（正是失败的时候），两套都留在那儿。
-            # **会留下东西**（leaves_artifact）：造出来的数据就是残留。
-            op_id="test_execute",
-            type="test_execute",
-            input_from="test_intake",
-            input="schema_test_execution",
-            output="schema_test_verdict",
-            next=[NextRef(op_id="test_packager")],
-            leaves_artifact=True,
-            bee=Bee(type="test_execute_handler"),
-            idempotency=FORBIDDEN_REPLAY,
-        ),
-
-        Operation(
-            op_id="test_packager",
-            type="test_packager",
-            input_from="test_execute",
-            input="schema_test_verdict",
-            output="schema_test_report",
-            next=[],
-            bee=Bee(type="test_packager_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        )
-    ],
-)
-
-
-def get_beeline() -> Beeline:
-    return WMS_TESTING_BEELINE
+    Component(
+        op_id="test_packager",
+        type="test_packager",
+        input_from="test_execute",
+        input="schema_test_verdict",
+        output="schema_test_report",
+        next=[],
+        bee_type="test_packager_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+    ),
+]

@@ -116,7 +116,7 @@ def test_a_finished_run_covers_exactly_the_declared_chain():
     用效果分析盒：它的 op 全是机械的，跑它不需要 LLM 凭证。
     """
     from boxes.wms_analysis import get_definition as get_analysis_def
-    from boxes.wms_analysis.beeline import get_beeline as get_analysis_beeline
+    from boxes.wms_analysis import get_beeline as get_analysis_beeline
     from boxes.wms_analysis.runner import RUNNER as ANALYSIS_RUNNER
 
     box = get_analysis_def()
@@ -189,7 +189,7 @@ def test_the_dashboard_carries_the_chain_next_to_the_trail(tmp_path: Path):
     只有声明 → 面板看起来像「这些都跑过了」。
     """
     from boxes.wms_analysis import get_definition as get_analysis_def
-    from boxes.wms_analysis.beeline import get_beeline as get_analysis_beeline
+    from boxes.wms_analysis import get_beeline as get_analysis_beeline
     from boxes.wms_analysis.runner import RUNNER as ANALYSIS_RUNNER
 
     store = TaskRunStore(path=tmp_path / "x.jsonl")

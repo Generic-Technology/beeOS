@@ -22,13 +22,13 @@ from uuid import uuid4
 # 本盒的 runner.py 里。顶层一个 beelines/ 目录会让人以为存在一种可复用的
 # 跨盒路线，实际上一条都没有。
 from boxes.wms_design import get_beeline as get_design_beeline
-from boxes.wms_analysis.beeline import get_beeline as get_wms_analysis_beeline
-from boxes.wms_development.beeline import get_beeline as get_wms_development_beeline
-from boxes.wms_ops.beeline import get_beeline as get_wms_ops_beeline
-from boxes.wms_system.beeline import get_beeline as get_wms_system_beeline
-from boxes.wms_testing.beeline import get_beeline as get_wms_testing_beeline
+from boxes.wms_analysis import get_beeline as get_wms_analysis_beeline
+from boxes.wms_development import get_beeline as get_wms_development_beeline
+from boxes.wms_ops import get_beeline as get_wms_ops_beeline
+from boxes.wms_system import get_beeline as get_wms_system_beeline
+from boxes.wms_testing import get_beeline as get_wms_testing_beeline
 from boxes.receipt import get_beeline as get_receipt_capture_beeline
-from boxes.wms_requirement.beeline import get_beeline as get_requirement_capture_beeline
+from boxes.wms_requirement import get_beeline as get_requirement_capture_beeline
 from boxes.wms_analysis.measure import COMPUTERS as WMS_ANALYSIS_COMPUTERS
 from boxes.wms_analysis.runner import RUNNER as WMS_ANALYSIS_RUNNER
 from boxes.wms_development.measure import COMPUTERS as WMS_DEV_COMPUTERS

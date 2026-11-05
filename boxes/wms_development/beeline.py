@@ -20,17 +20,16 @@ beeline 跟盒子是 **1:1 且不可分割** 的：它引用的 schema id 全部
 `schemas.py`，每个 op 的 handler 都在本盒的 `runner.py` 里。所以它住在盒子
 里面，而不是仓库顶层一个单独的目录——顶层目录会让人以为存在一种
 「可复用的跨盒作业路线」，而实际上一条都没有。
+**为什么是「组件链」而不是一份 `Beeline(...)`**：
+盒子不手写 `Operation` / `NextRef` / `Bee` 那套样板——
+它只声明每一跳的**形状**（吃什么、吐什么、数据从哪来、下一步去哪），
+由 `core/scaffold.py` 的装配器把它组装成作业路线**并当场校验**。
 """
 
 from __future__ import annotations
 
-from core.beeline_models import (
-    Bee,
-    Beeline,
-    Idempotency,
-    NextRef,
-    Operation,
-)
+from core.beeline_models import Idempotency
+from core.scaffold import Component
 
 
 #: **幂等声明——逐 op 说的是真话**（2026-11-01 改）
@@ -55,72 +54,58 @@ IDEMPOTENT_BY_TASK = Idempotency(mode="optional")
 FORBIDDEN_REPLAY = Idempotency(mode="forbidden")
 
 
-
-WMS_DEVELOPMENT_BEELINE = Beeline(
-    id="beeline_wms_development_v1",
-    version=1,
-    description=(
-        "WMS Development Box 履约作业路线："
-        "dev_intake → dev_code → dev_build → build_packager"
+COMPONENTS: list[Component] = [
+    Component(
+        op_id="dev_intake",
+        type="dev_intake",
+        input_from="external",
+        input="schema_dev_task_input",
+        output="schema_dev_plan",
+        next=['dev_code'],
+        bee_type="dev_intake_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
     ),
 
-    operations=[
-        Operation(
-            op_id="dev_intake",
-            type="dev_intake",
-            input_from="external",
-            input="schema_dev_task_input",
-            output="schema_dev_plan",
-            next=[NextRef(op_id="dev_code")],
-            bee=Bee(type="dev_intake_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
+        # **不许重放**（forbidden）：这一跳会真的提交到 WMS 仓、并建一个交付分支。
+        # 重放一次 = 两个提交、两个分支 —— 而「重复执行产生同结果」对它根本不成立。
+        # **还会留下东西**（leaves_artifact）：提交和分支就在那儿。
+    Component(
+        op_id="dev_code",
+        type="dev_code",
+        input_from="dev_intake",
+        input="schema_dev_plan",
+        output="schema_code_change",
+        next=['dev_build'],
+        bee_type="dev_code_handler",
+        idempotency=FORBIDDEN_REPLAY,
+        leaves_artifact=True,
+    ),
 
-        Operation(
-            # **不许重放**（forbidden）：这一跳会真的提交到 WMS 仓、并建一个交付分支。
-            # 重放一次 = 两个提交、两个分支 —— 而「重复执行产生同结果」对它根本不成立。
-            # **还会留下东西**（leaves_artifact）：提交和分支就在那儿。
-            op_id="dev_code",
-            type="dev_code",
-            input_from="dev_intake",
-            input="schema_dev_plan",
-            output="schema_code_change",
-            next=[NextRef(op_id="dev_build")],
-            leaves_artifact=True,
-            bee=Bee(type="dev_code_handler"),
-            idempotency=FORBIDDEN_REPLAY,
-        ),
+        # **会留下东西**（leaves_artifact）：构建失败时隔离工作区**不会被拆**
+        #（拆工作区在下一跳的 finally 里），仓里会多一个 worktree。
+    Component(
+        op_id="dev_build",
+        type="dev_build",
+        input_from="dev_code",
+        input="schema_code_change",
+        output="schema_build_check",
+        next=['build_packager'],
+        bee_type="dev_build_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+        leaves_artifact=True,
+    ),
 
-        Operation(
-            # **会留下东西**（leaves_artifact）：构建失败时隔离工作区**不会被拆**
-            #（拆工作区在下一跳的 finally 里），仓里会多一个 worktree。
-            op_id="dev_build",
-            type="dev_build",
-            input_from="dev_code",
-            input="schema_code_change",
-            output="schema_build_check",
-            next=[NextRef(op_id="build_packager")],
-            leaves_artifact=True,
-            bee=Bee(type="dev_build_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
-
-        Operation(
-            # **会留下东西**（leaves_artifact）：jar 和前端产物被复制进制品库
-            #（制品库在仓外，不会被拆工作区带走）。
-            op_id="build_packager",
-            type="build_packager",
-            input_from="dev_build",
-            input="schema_build_check",
-            output="schema_build_artifact",
-            next=[],
-            leaves_artifact=True,
-            bee=Bee(type="build_packager_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        )
-    ],
-)
-
-
-def get_beeline() -> Beeline:
-    return WMS_DEVELOPMENT_BEELINE
+        # **会留下东西**（leaves_artifact）：jar 和前端产物被复制进制品库
+        #（制品库在仓外，不会被拆工作区带走）。
+    Component(
+        op_id="build_packager",
+        type="build_packager",
+        input_from="dev_build",
+        input="schema_build_check",
+        output="schema_build_artifact",
+        next=[],
+        bee_type="build_packager_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+        leaves_artifact=True,
+    ),
+]

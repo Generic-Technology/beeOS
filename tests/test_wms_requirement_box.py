@@ -19,7 +19,7 @@ import pytest
 
 from boxes.wms_requirement import get_definition as get_capture_definition
 from boxes.wms_design import get_definition as get_design_definition
-from boxes.wms_requirement.beeline import get_beeline as get_requirement_capture_beeline
+from boxes.wms_requirement import get_beeline as get_requirement_capture_beeline
 from kanban.trigger import (
     TriggerError,
     list_task_entries,

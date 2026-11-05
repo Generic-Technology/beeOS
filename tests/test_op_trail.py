@@ -52,7 +52,7 @@ def test_the_trail_reaches_the_dashboard_payload(tmp_path: Path):
     夹具盒的记录会被诚实地过滤掉——那是对的，所以这里不能用夹具盒。
     """
     from boxes.wms_analysis import get_definition as get_analysis_def
-    from boxes.wms_analysis.beeline import get_beeline as get_analysis_beeline
+    from boxes.wms_analysis import get_beeline as get_analysis_beeline
     from boxes.wms_analysis.runner import RUNNER as ANALYSIS_RUNNER
 
     store = TaskRunStore(path=tmp_path / "y.jsonl")

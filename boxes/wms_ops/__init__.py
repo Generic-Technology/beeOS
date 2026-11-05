@@ -15,14 +15,67 @@ WMS 运维盒——管**上线之后**的事：变更审批、发布执行、故
 
 **「用不上」和「通过」分开**：没有变更就没有审批率、没有告警就没有处置
 记录——那些判据的取值是 "n/a"，看板单独列，不混进通过率。
+
+## 这只盒子的零件在哪
+
+| 文件 | 装什么 |
+| --- | --- |
+| `definition.py` | `DECLARATION`——这只盒子是什么（声明） |
+| `beeline.py` | `COMPONENTS`——每一跳的形状（组件链） |
+| `runner.py` | 每一跳的实现（handler）+ handler 表 |
+| `schemas.py` | 业务 schema（契约） |
+
+**装配在这里发生**（下面这几行）：
+
+```python
+ASSEMBLED = assemble(DECLARATION, COMPONENTS, schemas=ALL_SCHEMAS, handlers=WMS_OPS_HANDLERS)
+```
+
+声明自相矛盾的话，装配这一步就抛出来——**装配期就报错**，
+不用等到履约跑起来才发现「判据读不到字段」「例外永远不触发」。
 """
+
 from __future__ import annotations
 
-from boxes.wms_ops.definition import WMS_OPS_BOX, get_definition
+from core.beeline_models import Beeline
+from core.models import BeeBoxDefinition
+from core.scaffold import assemble
+
+from boxes.wms_ops.beeline import COMPONENTS
+from boxes.wms_ops.definition import DECLARATION
 from boxes.wms_ops.runner import RUNNER, WMS_OPS_HANDLERS
-from boxes.wms_ops.beeline import WMS_OPS_BEELINE, get_beeline
+from boxes.wms_ops.schemas import ALL_SCHEMAS
+
+
+# **装配在这一步发生。** 声明自相矛盾 → 这里抛 AssemblyError，
+# 带着「是哪个 op、哪个 schema、现在是什么、应该是什么」。
+ASSEMBLED = assemble(
+    DECLARATION,
+    COMPONENTS,
+    schemas=ALL_SCHEMAS,
+    handlers=WMS_OPS_HANDLERS,
+)
+
+WMS_OPS_BOX: BeeBoxDefinition = ASSEMBLED.definition
+WMS_OPS_BEELINE: Beeline = ASSEMBLED.beeline
+
+
+def get_definition() -> BeeBoxDefinition:
+    return ASSEMBLED.definition
+
+
+def get_beeline() -> Beeline:
+    return ASSEMBLED.beeline
+
 
 __all__ = [
-    "WMS_OPS_BOX", "get_definition", "RUNNER", "WMS_OPS_HANDLERS",
-    "WMS_OPS_BEELINE", "get_beeline",
+    "ASSEMBLED",
+    "WMS_OPS_BOX",
+    "get_definition",
+    "WMS_OPS_BEELINE",
+    "get_beeline",
+    "RUNNER",
+    "WMS_OPS_HANDLERS",
+    "DECLARATION",
+    "COMPONENTS",
 ]

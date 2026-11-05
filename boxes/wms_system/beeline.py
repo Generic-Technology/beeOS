@@ -31,20 +31,18 @@ beeline 跟盒子是 **1:1 且不可分割** 的：它引用的 schema id 全部
 `schemas.py`，每个 op 的 handler 都在本盒的 `runner.py` 里。所以它住在盒子
 里面，而不是仓库顶层一个单独的目录——顶层目录会让人以为存在一种
 「可复用的跨盒作业路线」，而实际上一条都没有。
+**为什么是「组件链」而不是一份 `Beeline(...)`**：
+盒子不手写 `Operation` / `NextRef` / `Bee` 那套样板——
+它只声明每一跳的**形状**（吃什么、吐什么、数据从哪来、下一步去哪），
+由 `core/scaffold.py` 的装配器把它组装成作业路线**并当场校验**。
 """
 
 from __future__ import annotations
 
-from core.beeline_models import (
-    Bee,
-    Beeline,
-    Idempotency,
-    NextRef,
-    Operation,
-)
+from core.beeline_models import Idempotency
+from core.scaffold import Component
 
 
-# 同一任务重复执行必须产出同一份结果
 #: **幂等声明——逐 op 说的是真话**（2026-11-01 改）
 #:
 #: 以前这里是一个常量 `required, key=...` 套在**每一个** op 上。
@@ -67,50 +65,37 @@ IDEMPOTENT_BY_TASK = Idempotency(mode="optional")
 FORBIDDEN_REPLAY = Idempotency(mode="forbidden")
 
 
-
-WMS_SYSTEM_BEELINE = Beeline(
-    id="beeline_wms_system_v2",
-    version=2,
-    description=(
-        "WMS System Box 履约作业路线：system_intake → system_probe → system_profile_packager"
+COMPONENTS: list[Component] = [
+    Component(
+        op_id="system_intake",
+        type="system_intake",
+        input_from="external",
+        input="schema_system_probe_input",
+        output="schema_system_probe_plan",
+        next=['system_probe'],
+        bee_type="system_intake_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
     ),
 
-    operations=[
-        Operation(
-            op_id="system_intake",
-            type="system_intake",
-            input_from="external",
-            input="schema_system_probe_input",
-            output="schema_system_probe_plan",
-            next=[NextRef(op_id="system_probe")],
-            bee=Bee(type="system_intake_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
+    Component(
+        op_id="system_probe",
+        type="system_probe",
+        input_from="system_intake",
+        input="schema_system_probe_plan",
+        output="schema_system_observation",
+        next=['system_profile_packager'],
+        bee_type="system_probe_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+    ),
 
-        Operation(
-            op_id="system_probe",
-            type="system_probe",
-            input_from="system_intake",
-            input="schema_system_probe_plan",
-            output="schema_system_observation",
-            next=[NextRef(op_id="system_profile_packager")],
-            bee=Bee(type="system_probe_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
-
-        Operation(
-            op_id="system_profile_packager",
-            type="system_profile_packager",
-            input_from="system_probe",
-            input="schema_system_observation",
-            output="schema_system_profile",
-            next=[],
-            bee=Bee(type="system_profile_packager_handler"),
-            idempotency=IDEMPOTENT_BY_TASK,
-        ),
-    ],
-)
-
-
-def get_beeline() -> Beeline:
-    return WMS_SYSTEM_BEELINE
+    Component(
+        op_id="system_profile_packager",
+        type="system_profile_packager",
+        input_from="system_probe",
+        input="schema_system_observation",
+        output="schema_system_profile",
+        next=[],
+        bee_type="system_profile_packager_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+    ),
+]

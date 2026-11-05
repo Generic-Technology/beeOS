@@ -105,7 +105,10 @@ class Component(BaseModel):
     所以装配器**分别**校验这两条边，不合并。
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    # **不许静默吞字段**（2026-11-04 补）：拼错当场报错。
+    # 一跳的形状拼错了（`inpt=` 而不是 `input=`），吞掉的后果是
+    # 「这一跳吃什么」变成空值，装配器还照样装得出来。
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     op_id: str = Field(description="这一跳的标识（盒内唯一）")
     type: str = Field(
@@ -152,6 +155,21 @@ class BoxDeclaration(BaseModel):
     只装**声明**（事实与承诺），不装实现。实现是 `Component.handler` 和
     盒子的 handler 表。
     """
+
+    # **不许静默吞字段**（2026-11-04 补）
+    #
+    # 以前这里是 pydantic 的默认行为：**不认识的参数照单全收，然后丢掉**。
+    # 于是 `trigger=(...)`（写错了，应该是 `task_trigger`）会**安静地**
+    # 变成「没声明触发条件」——新协议最大的卖点是「装配期就报错」，
+    # 结果它自己在第一道门上就把拼错的字段吞了。
+    #
+    # 这不是假设：迁 `wms_requirement` 时它真的发生过一次——
+    # 旧文件里 `trigger=(` 顶格写歪了，转换时认不出来，
+    # 结果**触发条件整段消失**，差分比对当场抓到（触发条件 null）。
+    # 如果差分没跑，那就是一只「看起来装好了、其实少了半截」的盒子。
+    #
+    # `extra="forbid"` = 拼错当场报错，报错里写清「你写的不是这个字段」。
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(description="盒子唯一标识")
     version: int = Field(default=1, description="盒子版本（递增序列号）")
@@ -235,6 +253,10 @@ class BoxDeclaration(BaseModel):
 
 class AssemblyReport(BaseModel):
     """装配报告——装配过了什么、验过什么"""
+
+    # **不许静默吞字段**（2026-11-04 补）：报告是给人看的，
+    # 报告里少一项 = 有人以为验过了而其实没验。
+    model_config = ConfigDict(extra="forbid")
 
     box_id: str
     op_count: int = 0

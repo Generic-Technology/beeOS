@@ -335,7 +335,7 @@ class TestModelingEndToEnd:
     def test_different_lines_dont_cross_contaminate(self):
         """不同盒子的判据互不污染"""
         from boxes.wms_requirement import get_definition as get_req_def
-        from boxes.wms_requirement.beeline import get_beeline as get_req_beeline
+        from boxes.wms_requirement import get_beeline as get_req_beeline
 
         req_def = get_req_def()
         req_beeline = get_req_beeline()

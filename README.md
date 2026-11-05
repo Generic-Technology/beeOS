@@ -132,7 +132,6 @@ flowchart TB
   - `deploy.sh` — 部署上线（同步 → 重启服务 → 线上自检）
   - `run_chain.py` — 端到端串跑多只盒子
   - `new_box.py` — 造一只合规的新盒子（接新域只写业务，不写样板）
-  - `scaffold_migrate.py` — 从旧写法导出成新声明（迁移辅助，迁完即删）
   - `_sync_release.py` — 把**提交树**同步到服务器（不带工作区在途改动）
   - `verify_mermaid.py` — 文档里的 mermaid 块渲染校验
   - `standardization_audit.py` — 标准化审计

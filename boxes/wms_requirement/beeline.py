@@ -31,17 +31,16 @@ beeline 跟盒子是 **1:1 且不可分割** 的：它引用的 schema id 全部
 `schemas.py`，每个 op 的 handler 都在本盒的 `runner.py` 里。所以它住在盒子
 里面，而不是仓库顶层一个单独的目录——顶层目录会让人以为存在一种
 「可复用的跨盒作业路线」，而实际上一条都没有。
+**为什么是「组件链」而不是一份 `Beeline(...)`**：
+盒子不手写 `Operation` / `NextRef` / `Bee` 那套样板——
+它只声明每一跳的**形状**（吃什么、吐什么、数据从哪来、下一步去哪），
+由 `core/scaffold.py` 的装配器把它组装成作业路线**并当场校验**。
 """
 
 from __future__ import annotations
 
-from core.beeline_models import (
-    Bee,
-    Beeline,
-    Idempotency,
-    NextRef,
-    Operation,
-)
+from core.beeline_models import Idempotency
+from core.scaffold import Component
 
 
 #: **幂等声明——逐 op 说的是真话**（2026-11-01 改）
@@ -66,73 +65,59 @@ IDEMPOTENT_BY_SET = Idempotency(mode="optional")
 FORBIDDEN_REPLAY = Idempotency(mode="forbidden")
 
 
-
-WMS_REQUIREMENT_BEELINE = Beeline(
-    id="beeline_wms_requirement_v1",
-    version=1,
-    description=(
-        "需求捕获履约作业路线——把自然语言业务表述抽成可机械验证的"
-        "结构化业务需求集（1 个 LLM op + 4 个机械 op）"
+COMPONENTS: list[Component] = [
+    Component(
+        op_id="split_source_sentences",
+        type="source_sentence_splitter",
+        input_from="external",
+        input="schema_business_narrative",
+        output="schema_extracted_facts",
+        next=['extract_requirements'],
+        bee_type="source_sentence_splitter_impl",
+        idempotency=IDEMPOTENT_BY_SET,
     ),
 
-    operations=[
-        Operation(
-            op_id="split_source_sentences",
-            type="source_sentence_splitter",
-            input_from="external",
-            input="schema_business_narrative",
-            output="schema_extracted_facts",
-            next=[NextRef(op_id="extract_requirements")],
-            bee=Bee(type="source_sentence_splitter_impl"),
-            idempotency=IDEMPOTENT_BY_SET,
-        ),
+    Component(
+        op_id="extract_requirements",
+        type="requirement_extractor",
+        input_from="split_source_sentences",
+        input="schema_extracted_facts",
+        output="schema_extracted_facts",
+        next=['build_requirement_set'],
+        bee_type="requirement_extractor_impl",
+        idempotency=IDEMPOTENT_BY_SET,
+    ),
 
-        Operation(
-            op_id="extract_requirements",
-            type="requirement_extractor",
-            input_from="split_source_sentences",
-            input="schema_extracted_facts",
-            output="schema_extracted_facts",
-            next=[NextRef(op_id="build_requirement_set")],
-            bee=Bee(type="requirement_extractor_impl"),
-            idempotency=IDEMPOTENT_BY_SET,
-        ),
+    Component(
+        op_id="build_requirement_set",
+        type="requirement_set_builder",
+        input_from="extract_requirements",
+        input="schema_extracted_facts",
+        output="schema_extracted_facts",
+        next=['verify_graph_fidelity'],
+        bee_type="requirement_set_builder_impl",
+        idempotency=IDEMPOTENT_BY_SET,
+    ),
 
-        Operation(
-            op_id="build_requirement_set",
-            type="requirement_set_builder",
-            input_from="extract_requirements",
-            input="schema_extracted_facts",
-            output="schema_extracted_facts",
-            next=[NextRef(op_id="verify_graph_fidelity")],
-            bee=Bee(type="requirement_set_builder_impl"),
-            idempotency=IDEMPOTENT_BY_SET,
-        ),
+    Component(
+        op_id="verify_graph_fidelity",
+        type="graph_fidelity_verifier",
+        input_from="build_requirement_set",
+        input="schema_extracted_facts",
+        output="schema_extracted_facts",
+        next=['package_requirement_set'],
+        bee_type="graph_fidelity_verifier_impl",
+        idempotency=IDEMPOTENT_BY_SET,
+    ),
 
-        Operation(
-            op_id="verify_graph_fidelity",
-            type="graph_fidelity_verifier",
-            input_from="build_requirement_set",
-            input="schema_extracted_facts",
-            output="schema_extracted_facts",
-            next=[NextRef(op_id="package_requirement_set")],
-            bee=Bee(type="graph_fidelity_verifier_impl"),
-            idempotency=IDEMPOTENT_BY_SET,
-        ),
-
-        Operation(
-            op_id="package_requirement_set",
-            type="requirement_set_packager",
-            input_from="verify_graph_fidelity",
-            input="schema_extracted_facts",
-            output="schema_requirement_set_package",
-            next=[],
-            bee=Bee(type="requirement_set_packager_impl"),
-            idempotency=IDEMPOTENT_BY_SET,
-        ),
-    ],
-)
-
-
-def get_beeline() -> Beeline:
-    return WMS_REQUIREMENT_BEELINE
+    Component(
+        op_id="package_requirement_set",
+        type="requirement_set_packager",
+        input_from="verify_graph_fidelity",
+        input="schema_extracted_facts",
+        output="schema_requirement_set_package",
+        next=[],
+        bee_type="requirement_set_packager_impl",
+        idempotency=IDEMPOTENT_BY_SET,
+    ),
+]

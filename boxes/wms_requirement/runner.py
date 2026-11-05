@@ -715,7 +715,7 @@ def _simulate_graph_fidelity_verifier(input_data: dict[str, Any]) -> dict[str, A
     全部是集合运算与字符串匹配——不需要模型，结果可复现。
     """
     from runtime.contract import validate_payload
-    from boxes.wms_requirement.definition import get_definition
+    from boxes.wms_requirement import get_definition
 
     sentences = input_data.get("source_sentences", [])
     requirements = input_data.get("requirements", [])
