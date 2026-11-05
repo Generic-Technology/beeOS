@@ -579,6 +579,212 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
             "退款处理时长要可度量。"
         ),
     },
+
+    # ============================================================
+    # WMS 域（analysis / development / ops / testing）
+    # ============================================================
+    #
+    # 下面四份示例讲的是**同一条仓储业务线**：
+    # 「同一 SKU 同一库位不可重复占用」（req_unique_slot）。
+    #
+    # **为什么 id 要对得上**：四份示例孤立地看各自成立，
+    # 但 id 互相对不上时，看的人会以为它们是四件互不相干的活儿；
+    # 而实际上开发盒改的就是测试盒验的那份制品、
+    # 分析盒复盘的就是运维盒上线的那条规则。
+    # 示例之间能串起来，才看得出这条业务线长什么样。
+
+    ("wms_analysis_box", "handle_effect_analysis_request"): {
+        # **分析盒问的是「当初那条需求，线上满没满足」**——
+        # 所以 `requirement_ref` 放的是**需求号本身**（不是需求集对象）。
+        "analysis_id": "ana_demo_001",
+        "requirement_ref": "req_unique_slot",
+        # 预期：当初说「同一 SKU 同一库位不可重复占用」
+        "expected_metrics": [
+            {
+                "expectation_id": "exp_unique_slot",
+                "requirement_id": "req_unique_slot",
+                "wms_kind": "unique_slot",
+                "statement": "同一 SKU 同一库位不可被重复占用",
+            },
+        ],
+        # 实测：线上跑出来的观测（整份装在 ref: 字段里）
+        "observation_ref": {
+            "observations": [
+                {
+                    "expectation_id": "exp_unique_slot",
+                    "requirement_id": "req_unique_slot",
+                    "wms_kind": "unique_slot",
+                    "statement": "同一 SKU 同一库位不可被重复占用",
+                    "evidence": "库存台账 2026-10-31 快照",
+                    "outcome": "fail",
+                    "summary": (
+                        "快照里 SKU-8891 在库位 L-A-03 被占用了两次——"
+                        "落差就是下一轮需求的种子"
+                    ),
+                },
+            ],
+        },
+        "observed_window": "2026-10-01 ~ 2026-10-31",
+    },
+
+    ("wms_development_box", "handle_development_request"): {
+        "dev_task_id": "dev_demo_001",
+        # **设计包整份装在 ref: 字段里**（接力通道：开发盒不自己拼设计包）
+        "design_package_ref": {
+            "package_id": "pkg_demo_001",
+            "set_id": "req_set_demo",
+            "business_goal": "库位占用唯一",
+            "requirement_count": 3,
+            "design_elements": {
+                "entities": [
+                    {
+                        "entity_id": "ent_sku_8891",
+                        "name": "SKU-8891",
+                        "pattern": "entity",
+                        "wms_kind": "sku",
+                        "trace_to": "req_obj_sku",
+                    },
+                ],
+                "specifications": [
+                    {
+                        "rule_id": "rule_unique_slot",
+                        "name": "库位占用唯一",
+                        "condition": "同一 SKU 落在同一库位",
+                        "action": "拒绝第二次占用",
+                        "pattern": "specification",
+                        "wms_constraint": "unique_slot",
+                        "trace_to": "req_unique_slot",
+                    },
+                ],
+            },
+            "expectations": [
+                {
+                    "expectation_id": "exp_unique_slot",
+                    "requirement_id": "req_unique_slot",
+                    "wms_kind": "unique_slot",
+                    "statement": "同一 SKU 同一库位不可被重复占用",
+                    "evidence": "设计元素 rule_unique_slot",
+                },
+            ],
+        },
+        "commit_range": "beeos/dev-base..HEAD",
+        "target_env": "staging",
+    },
+
+    ("wms_ops_box", "handle_ops_request"): {
+        "ops_task_id": "ops_demo_001",
+        "change_request": "上线库位占用唯一（需求 req_unique_slot）",
+        "alerts": ["库位 L-A-03 的占用冲突告警 2 次"],
+        "rollback_target": "release-2026-10-31",
+        # 上游测试盒的验收报告（dev 盒的制品 → 测试盒 → 运维盒）
+        "verification_ref": {
+            "test_task_id": "test_demo_001",
+            "case_pass_rate": 0.92,
+            "open_defect_count": 1,
+            "no_blocking_defect": True,
+            "verification_determined": True,
+            "artifact_identified": True,
+            "observations": [
+                {
+                    "expectation_id": "exp_unique_slot",
+                    "requirement_id": "req_unique_slot",
+                    "wms_kind": "unique_slot",
+                    "statement": "同一 SKU 同一库位不可被重复占用",
+                    "evidence": "场景 scen_unique_slot 的实测记录",
+                    "outcome": "pass",
+                    "summary": "重复占用被拦下，落库只剩一条占用记录",
+                },
+            ],
+        },
+        "artifact_ref": {
+            "commit_count": 3,
+            "artifact_digest": "sha256:1f2e3d4c5b6a",
+            "build_failed": False,
+            "build_reproducibility": True,
+            "unit_test_green": True,
+            "review_coverage": True,
+            "artifact_traceable": True,
+            "commit_sha": "1f2e3d4c5b6a",
+            "branch": "beeos/dev-demo",
+            "artifact_path": "dist/",
+        },
+        "target_base_url": "https://wms.demo.internal",
+        "target_mode": "readonly",
+    },
+
+    ("wms_testing_box", "handle_testing_request"): {
+        "test_task_id": "test_demo_001",
+        # 开发盒的制品（整份装在 ref: 字段里）
+        "artifact_ref": {
+            "commit_count": 3,
+            "build_duration_s": 42.5,
+            "unit_test_pass_rate": 0.98,
+            "artifact_digest": "sha256:1f2e3d4c5b6a",
+            "build_failed": False,
+            "build_reproducibility": True,
+            "unit_test_green": True,
+            "review_coverage": True,
+            "artifact_traceable": True,
+            "frontend_expected": False,
+        },
+        # 被测的需求集
+        "requirement_ref": {
+            "set_id": "req_set_demo",
+            "business_goal": "库位占用唯一",
+            "requirement_count": 3,
+            "requirements": [
+                {
+                    "requirement_id": "req_obj_sku",
+                    "description": "SKU 实体",
+                    "requirement_type": "object",
+                },
+                {
+                    "requirement_id": "req_unique_slot",
+                    "description": "同一 SKU 同一库位不可重复占用",
+                    "requirement_type": "rule",
+                },
+                {
+                    "requirement_id": "req_met_pick_accuracy",
+                    "description": "拣货准确率可度量",
+                    "requirement_type": "metric",
+                },
+            ],
+        },
+        # 可判定的预期（每条预期都要指回需求 + 说清 WMS 概念）
+        "expectation_ref": {
+            "expectations": [
+                {
+                    "expectation_id": "exp_unique_slot",
+                    "requirement_id": "req_unique_slot",
+                    "wms_kind": "unique_slot",
+                    "statement": "同一 SKU 同一库位不可被重复占用",
+                    "evidence": "重复占用被拒后，落库的占用记录仍只有一条",
+                },
+            ],
+        },
+        # **场景是场景 id 的列表**（不是对象）——测试盒按它逐个跑
+        "scenarios": ["scen_unique_slot"],
+    },
+
+    ("wms_system_box", "sync_system_profile"): {
+        # **只读的探测目标**：系统档案盒去观测「线上那套 WMS 长什么样」，
+        # 它不写业务数据，只读这几个端点。
+        "target_base_url": "https://wms.demo.internal",
+        "timeout_seconds": 10,
+        "readonly_endpoints": [
+            "/api/v1/warehouses",
+            "/api/v1/inventory/summary",
+        ],
+    },
+
+    ("receipt_capture_box", "capture_receipt"): {
+        # **照片用那张 1x1 的 JPEG**：它格式合法，够过契约闸；
+        # 但它读不出任何内容——收银小票识别盒会**如实判红**
+        # （「没读出任何商品行」），而不是假装认出来了。
+        # 真正要看效果，得自己拍一张照。
+        "photo": _TINY_JPEG_DATA_URL,
+        "merchant_hint": "测试便利店（示例）",
+    },
 }
 
 
