@@ -22,6 +22,7 @@ import pytest
 from boxes.wms_design import get_definition as get_design_definition
 from boxes.wms_requirement import get_definition as get_capture_definition
 from core.models import EdgeKind
+from domains import domains_of
 from kanban.trigger import (
     BOX_REGISTRY,
     TriggerError,
@@ -569,7 +570,6 @@ class TestSkeletonIsHonest:
             BeeBoxDefinition,
             FieldDef,
             MetricsDef,
-            PlacementDef,
             QueenAuthorization,
             QueenDef,
             QueenRules,
@@ -613,12 +613,7 @@ class TestSkeletonIsHonest:
                 exceptions=[],
                 maturity="skeleton",
             ),
-            placement=PlacementDef(
-                display_name="骨架样例盒",
-                domain="WMS",
-                feeds_into=[],
-                feedback_into=[],
-            ),
+            display_name="骨架样例盒",
             queen=QueenDef(
                 authorization=QueenAuthorization(),
                 rules=QueenRules(),
@@ -715,7 +710,7 @@ class TestRegistryCoverage:
         而接线恰恰是「这只盒子是什么」的一部分。
 
         口径：**业务事实的值**（价值流 / 角色 / 显示名）不许作为字面量
-        出现在看板层。读 `placement.value_stream` 再传出去不算——
+        出现在看板层。读 `definition.value_stream` 再传出去不算——
         那是读，不是在这里声明。
 
         为什么不管 box_id 字面量：注册表总得写出自己有哪些成员，
@@ -724,8 +719,8 @@ class TestRegistryCoverage:
         """
         facts = set()
         for _bid, (get, _bl) in BOX_REGISTRY.items():
-            p = get().placement
-            facts |= {p.display_name, p.value_stream, p.role}
+            d = get()
+            facts |= {d.display_name, d.value_stream, d.role}
         facts = {f for f in facts if f}
 
         offenders = []
@@ -744,7 +739,7 @@ class TestRegistryCoverage:
                     offenders.append(f"{path.name}:{node.lineno} {node.value!r}")
         assert not offenders, (
             "看板层又敲了一遍业务事实的值：\n  " + "\n  ".join(offenders)
-            + "\n它们应该只住在各盒 definition 的 placement 里"
+            + "\n它们应该只住在各盒 definition 里"
         )
 
     def test_the_kanban_holds_no_per_box_table(self):
@@ -782,7 +777,7 @@ class TestRegistryCoverage:
                         offenders.append(f"{path.name}:{node.lineno} {t.id}")
         assert not offenders, (
             "看板层又出现一张按 box_id 索引的归属表：\n  " + "\n  ".join(offenders)
-            + "\n它应该住在各盒 definition 的 placement 里"
+            + "\n它应该住在各盒 definition 里"
         )
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
@@ -792,10 +787,10 @@ class TestRegistryCoverage:
         **这条现在顺带顶着 `test_every_registered_box_has_meta` 的活**：
         以前 BOX_META 漏一只盒子，那只盒子的三个字段全是空，
         而只遍历 BOX_META 的测试看不见这个缺失。BOX_META 没了之后，
-        漏填变成 `placement` 落回默认值——同样是三个空字段，
+        漏填变成展示位落回默认值——同样是三个空字段，
         这条按注册表逐只检查，照样能逮住。
         """
-        _assert_pass(box_id, "placement_filled")
+        _assert_pass(box_id, "display_fields_filled")
 
     @pytest.mark.parametrize("box_id", ALL_BOXES)
     def test_value_stream_has_a_kanban_color(self, box_id):
@@ -812,16 +807,17 @@ class TestRegistryCoverage:
     def test_the_kanban_does_not_redeclare_domains(self):
         """看板层不许把域名的值重新敲一遍
 
-        跟 value_stream 同一条规矩，域也一样：它是业务知识，住在各盒
-        自己的 placement.domain 里。看板读它来分菜单，不拥有它。
+        跟 value_stream 同一条规矩，域也一样：它是业务知识，住在**域声明**里
+        （`domains/<域>/`）。看板读它来分菜单，不拥有它。
 
         一旦有人为了让菜单好看，在 JS 里写死一句 `if (name.includes('WMS'))`，
         域的归属就变成第二份知识——加了新域、改了某只盒子的归属，
         看板会安静地按旧的那份分组，而且不报错。
         """
         declared = {
-            get().placement.domain
-            for get, _bl in BOX_REGISTRY.values()
+            domain
+            for _bid, (_get, _bl) in BOX_REGISTRY.items()
+            for domain in domains_of(_bid)
         } - {""}
 
         offenders = []
@@ -841,13 +837,13 @@ class TestRegistryCoverage:
                     offenders.append(f"{path.name}:{node.lineno} {node.value!r}")
         assert not offenders, (
             "看板层又敲了一遍域名的值：\n  " + "\n  ".join(offenders)
-            + "\n它应该只住在各盒 definition 的 placement.domain 里"
+            + "\n它应该只住在 domains/<域>/ 的域声明里"
         )
 
     def test_the_kanban_holds_no_domain_table(self):
         """看板层不许出现「一张按域名索引的表」
 
-        `box_domains` 是**算出来的**（遍历注册表读各盒 placement）。
+        `box_domains` 是**算出来的**（遍历域声明的成员表）。
         如果有人图省事写成 `DOMAINS = {"WMS": [...]}`，域成员就有了
         两份来源，改盒子忘了改表，看板会按旧名单分组——而域成员一旦
         对不上，接线视图、菜单计数、单盒面包屑会各说各话。
@@ -877,15 +873,18 @@ class TestRegistryCoverage:
                         offenders.append(f"{path.name}:{node.lineno} {name}")
         assert not offenders, (
             "看板层又出现一张按域名索引的表：\n  " + "\n  ".join(offenders)
-            + "\n域成员应该由 box_domains() 从各盒 placement 算出来"
+            + "\n域成员应该由 box_domains() 从域声明算出来"
         )
 
 
-def _placement(box_id):
-    """盒子的接线声明（不缓存：守卫要读到当下的值，不是导入那一刻的）"""
-    from kanban.trigger import BOX_REGISTRY
+def _wiring(box_id: str) -> dict[str, list[str]]:
+    """盒子的接线——**从域声明读**（不缓存：守卫要读到当下的值，不是导入那一刻的）
 
-    return BOX_REGISTRY[box_id][0]().placement
+    **接线住在域声明里**（`domains/<域>/`），不在盒子自己身上。
+    """
+    from domains import box_wiring
+
+    return box_wiring(box_id)
 
 
 class TestRadialLayoutIsDerived:
@@ -910,9 +909,7 @@ class TestRadialLayoutIsDerived:
     def _edges(domain: str):
         """域声明里的边（`from, to, kind`）——**接线的唯一事实源**
 
-        以前这里读各盒自己的 `placement.feeds_into`。
-        现在接线事实住在域声明里（`domains/<域>/`），
-        盒子上的旧字段是迁移期的双写，不是真源。
+        接线事实住在域声明里（`domains/<域>/`）——它是唯一真源。
         """
         from domains import DOMAIN_REGISTRY
 
@@ -1244,7 +1241,7 @@ class TestRadialLayoutIsDerived:
                 # 注意方向：上游是「投给它的那只」，不是它投给谁。
                 upstream = {
                     b for b in lay["boxes"]
-                    if src in _placement(b).feeds_into and b in on_ring
+                    if src in _wiring(b)["handoffs"] and b in on_ring
                 }
                 assert upstream, (
                     f"{domain!r}: 反馈边 {src}→{dst} 的源 {src} "
@@ -1270,7 +1267,7 @@ class TestRadialLayoutIsDerived:
     def test_every_declared_feedback_edge_is_drawn_exactly_once(self):
         """声明了的反馈边必须真的画出来，而且只画一次
 
-        `domain_layout` 输出的反馈边要跟各盒 `placement.feedback_into`
+        `domain_layout` 输出的反馈边要跟域声明里的 `feedback` 边
         逐条对得上：少画一条，图上就少一圈闭环，而看板上没有任何东西
         提示「本来还有一条」；重复画则同一对盒子之间多出一条线。
 
@@ -1291,7 +1288,7 @@ class TestRadialLayoutIsDerived:
             declared = {
                 (b, t)
                 for b in lay["boxes"]
-                for t in _placement(b).feedback_into
+                for t in _wiring(b)["feedback"]
                 if t in on_ring
             }
             drawn = [tuple(e) for e in lay["feedback"]]

@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from core.domain import handoff_channels
-from core.models import DomainDeclaration
+from core.models import DomainDeclaration, EdgeKind
 
 from domains.learning.domain import DOMAIN as LEARNING_DOMAIN
 from domains.wms.domain import DOMAIN as WMS_DOMAIN
@@ -50,6 +50,59 @@ def get_domain(domain_id: str) -> DomainDeclaration | None:
 def domain_ids() -> tuple[str, ...]:
     """全部域 id"""
     return tuple(DOMAIN_REGISTRY)
+
+
+def domains_of(box_id: str) -> list[str]:
+    """这只盒子在哪些域里
+
+    **成员是声明的**（`DomainDeclaration.boxes`），不是从接线推出来的——
+    「档案盒属于 WMS 域」是**业务判断**，靠接线推不出来
+    （它一条交接边都没有）。
+    """
+    return [did for did, d in DOMAIN_REGISTRY.items() if box_id in d.boxes]
+
+
+def box_wiring(box_id: str) -> dict[str, list[str]]:
+    """这只盒子的接线——**从域声明读**（不是从盒子自己读）
+
+    按 `kind` 分成三组，每组两个方向：
+
+    | 组 | 含义 |
+    |---|---|
+    | `handoff_from` / `handoffs` | 谁把产出**交给我** / 我把产出**交给谁**（数据交接，下游真的接产出）|
+    | `feedback_from` / `feedback` | 谁把结论**反馈给我** / 我把结论**反馈给谁**（闭环，开新一轮）|
+    | `archive` | 我的产物**进谁的档案**（归档归属——档案盒不收上游产出，所以没有「来源」方向）|
+
+    **为什么不再从盒子自己读**：接线是**域**的事实。
+    盒子自己那份接线声明已经退休——
+    照抄它会漏掉真实依赖（8 条真实交接里只声明过 5 条），
+    而两份事实并存必然漂，漂了不报错。
+
+    **接线不再混成一个列表**：「交给下游验」和「产物进档案」是两件事，
+    混在一起时读者会以为档案盒接了这份产出——它根本不接。
+    """
+    out: dict[str, list[str]] = {
+        "handoff_from": [],
+        "handoffs": [],
+        "feedback_from": [],
+        "feedback": [],
+        "archive": [],
+    }
+    for declaration in DOMAIN_REGISTRY.values():
+        for edge in declaration.edges:
+            if edge.kind == EdgeKind.handoff:
+                if edge.from_box == box_id:
+                    out["handoffs"].append(edge.to_box)
+                if edge.to_box == box_id:
+                    out["handoff_from"].append(edge.from_box)
+            elif edge.kind == EdgeKind.feedback:
+                if edge.from_box == box_id:
+                    out["feedback"].append(edge.to_box)
+                if edge.to_box == box_id:
+                    out["feedback_from"].append(edge.from_box)
+            elif edge.kind == EdgeKind.archive and edge.from_box == box_id:
+                out["archive"].append(edge.to_box)
+    return out
 
 
 def handoff_payload(
@@ -98,4 +151,6 @@ __all__ = [
     "get_domain",
     "domain_ids",
     "handoff_payload",
+    "box_wiring",
+    "domains_of",
 ]

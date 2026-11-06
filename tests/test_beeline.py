@@ -274,8 +274,10 @@ class TestEveryRegisteredBoxBeeline:
         只读盒子（小票识别：读 → 核 → 打包，全是纯计算）不需要——
         所以这条只查**有副作用**的那些盒子。
         """
+        from domains import domains_of
+
         for box_id, definition, beeline in _registered_beelines():
-            if definition.placement.domain != "WMS":
+            if "WMS" not in domains_of(box_id):
                 continue
             for op in beeline.operations:
                 assert op.idempotency is not None, (

@@ -31,7 +31,6 @@ from core.models import (
     ExceptionRule,
     FieldDef,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
@@ -103,14 +102,11 @@ def _definition(**over) -> BeeBoxDefinition:
             rules=QueenRules(),
         ),
         metrics=MetricsDef(),
-        placement=PlacementDef(
-            display_name="样例盒",
-            value_stream="样例价值流",
-            role="做样例",
-            domain="样例域",
-            feeds_into=[],
-            feedback_into=[],
-        ),
+        # **展示位摊平在顶层**（原来住在 placement 里，退休后搬上来）。
+        # **没有接线**——接线是域的事实，不在盒子的声明里。
+        display_name="样例盒",
+        value_stream="样例价值流",
+        role="做样例",
     )
     base.update(over)
     return BeeBoxDefinition(**base)
@@ -285,12 +281,10 @@ class TestEveryCheckCanGoRed:
         ))
         assert _status(_inspection(definition), "maturity_honest") == STATUS_FAIL
 
-    def test_placement_filled(self):
+    def test_display_fields_filled(self):
         """归属留空 → 跟没声明一样"""
-        definition = _definition(placement=PlacementDef(
-            display_name="", value_stream="", role="",
-        ))
-        assert _status(_inspection(definition), "placement_filled") == STATUS_FAIL
+        definition = _definition(display_name="", value_stream="", role="")
+        assert _status(_inspection(definition), "display_fields_filled") == STATUS_FAIL
 
     def test_subject_ref_resolvable(self):
         """声明了产出里根本没有的键 → 认领不到，记录归不到工作单元"""
@@ -355,28 +349,17 @@ class TestEveryCheckCanGoRed:
 
 
 class TestCatalog:
-    def test_wiring_to_a_missing_box_is_reported(self):
-        definition = _definition(placement=PlacementDef(
-            display_name="样例盒",
-            value_stream="样例价值流",
-            role="做样例",
-            feeds_into=["no_such_box"],
-        ))
-        problems = wiring_problems([_inspection(definition)])
-        assert problems and "no_such_box" in problems[0]
+    def test_wiring_is_not_judged_here(self):
+        """接线**不在盒子的体检项里**——它是域的事实
 
-    def test_wiring_inside_the_catalog_is_fine(self):
-        other = _definition(id="other_box")
-        definition = _definition(placement=PlacementDef(
-            display_name="样例盒",
-            value_stream="样例价值流",
-            role="做样例",
-            feeds_into=["other_box"],
-        ))
-        assert wiring_problems([
-            _inspection(definition),
-            _inspection(other, box_id="other_box"),
-        ]) == []
+        「指着一个不存在的盒子」由**域装配器**判（D2：边两端都得在
+        域的成员清单里）。这里再判一遍 = 两份判定，
+        而两份判定迟早给出不同答案。
+
+        所以这条守卫盯的是「这里**不**判接线」这件事本身——
+        哪天有人手痒把接线检查搬回来，这条会红。
+        """
+        assert wiring_problems([_inspection(_definition())]) == []
 
     def test_catalog_health_counts_every_box(self):
         catalog = inspect_catalog([_inspection(), _inspection(box_id="other_box")])

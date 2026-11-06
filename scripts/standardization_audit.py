@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core import metrics as cm  # noqa: E402
+from domains import box_wiring  # noqa: E402
 from kanban.trigger import (  # noqa: E402
     BOX_REGISTRY,
     METRIC_COMPUTERS,
@@ -111,7 +112,8 @@ for bid, (loader, beelines) in sorted(BOX_REGISTRY.items()):
         "stub_ops": stub_ops,
         "metrics": len(d.metrics.quality) + len(d.metrics.latency),
         "free_text": free_text,
-        "feeds": len(d.placement.feeds_into),
+        # 交接边数按**域声明**算——接线只住在 domains/<域>/，不回到盒子自己身上
+        "feeds": len(box_wiring(bid)["handoffs"]),
     })
 
 W = 26

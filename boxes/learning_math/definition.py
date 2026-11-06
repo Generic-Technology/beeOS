@@ -53,10 +53,6 @@ DECLARATION = BoxDeclaration(
     display_name="数学盒",
     value_stream="Learning",
     role="数学学习事件的履约",
-    # **放射形状**：本域没有交接链——数学的产出不是别科的输入，
-    # 它们各自直投成长记录盒。接线在生成时就填好了。
-    domain="Learning",
-    feeds_into=["learning_growth_box"],
 
     # ---- 投料入口（Intent）----
     task_type="run_math",

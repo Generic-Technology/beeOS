@@ -16,7 +16,6 @@ from core.models import (
     ExceptionRule,
     MetricDef,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
@@ -33,12 +32,11 @@ SAMPLE_BOX = BeeBoxDefinition(
 
     schemas=ALL_SCHEMAS,
 
-    placement=PlacementDef(
-        display_name="Sample Fixture Box",
-        value_stream="Testing",
-        role="Sample Fixture Fulfillment",
-        feeds_into=[],
-    ),
+    # **展示位摊平在顶层**（原来住在 placement 里，退休后搬上来）。
+    # **这里没有接线**——夹具盒不属于任何域。
+    display_name="Sample Fixture Box",
+    value_stream="Testing",
+    role="Sample Fixture Fulfillment",
 
     task=[
         TaskDef(

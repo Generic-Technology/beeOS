@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from domains import box_wiring, domains_of
 from kanban.catalog import catalog_inspections
 from kanban.trigger import box_metrics_readings
 from runtime.box_health import BoxHealth, inspect_box
@@ -47,19 +48,23 @@ _DATA_PLACEHOLDER = "__WORKSHOP_DATA__"
 def _box_payload(inspection, records: list[dict[str, Any]]) -> dict[str, Any]:
     """一只盒子在工作台页面上的全部内容"""
     d = inspection.definition
-    p = d.placement
+    # **接线从域声明读**（`domains/<域>/`）——不再从盒子自己的字段读。
+    # 那份字段已经退休：照抄它会漏掉真实依赖，而两份事实并存必然漂。
+    wiring = box_wiring(inspection.box_id)
+    box_domains = domains_of(inspection.box_id)
     return {
         "box_id": inspection.box_id,
         "version": d.version,
         "description": d.description,
-        "display_name": p.display_name or inspection.box_id,
-        "value_stream": p.value_stream,
-        "role": p.role,
-        "domain": p.domain,
+        "display_name": d.display_name or inspection.box_id,
+        "value_stream": d.value_stream,
+        "role": d.role,
+        "domain": box_domains[0] if box_domains else "",
         "maturity": d.result.maturity,
         "artifact_view": d.result.view,
-        "feeds_into": list(p.feeds_into),
-        "feedback_into": list(p.feedback_into),
+        "handoffs": list(wiring["handoffs"]),
+        "feedback": list(wiring["feedback"]),
+        "archive": list(wiring["archive"]),
         "tasks": [
             {
                 "type": t.type,
@@ -399,8 +404,9 @@ _PAGE = r"""<!DOCTYPE html>
       metricRows.length ? table(["指标", "定义", "实测 / 目标", "样本"], metricRows) : el("div", "empty", "没有声明指标")));
 
     var wire = [];
-    if (box.feeds_into.length) wire.push("交给：" + box.feeds_into.join("、"));
-    if (box.feedback_into.length) wire.push("反馈给：" + box.feedback_into.join("、"));
+    if (box.handoffs.length) wire.push("交给：" + box.handoffs.join("、"));
+    if (box.feedback.length) wire.push("反馈给：" + box.feedback.join("、"));
+    if (box.archive.length) wire.push("产物进档案：" + box.archive.join("、"));
     if (box.tasks.length) {
       wire.push("接：" + box.tasks.map(function (t) { return t.type; }).join("、"));
     }

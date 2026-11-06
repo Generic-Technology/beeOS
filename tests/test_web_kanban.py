@@ -535,7 +535,7 @@ class TestKanbanServer:
 
     def test_box_context_exposes_box_level_facts(self, server_url: tuple[str, TaskRunStore]):
         """盒子上下文是四栏共同依赖的底座——不是第五个先后步骤。
-        上游从别人的 feeds_into 反推，不另写一遍。"""
+        上游从**域声明**反推，不另写一遍。"""
         url, _ = server_url
         conn = HTTPConnection(url.replace("http://", ""))
         conn.request("GET", "/api/data?box=wms_design_box")
@@ -543,14 +543,19 @@ class TestKanbanServer:
         conn.close()
         ctx = body["box_stats"][0]["box_context"]
         assert ctx["self_name"] == "WMS Design Box"
-        # 上游 = 声明了 feeds_into 包含本盒的那只盒
+        # 上游 = 域声明里把产出交给本盒的那只盒
         assert [h["id"] for h in ctx["fed_by"]] == ["wms_requirement_box"]
         # 上游名字必须跟着 id 出，不能让前端自己补——单盒过滤时它只有一只盒的名字表
         assert ctx["fed_by"][0]["name"] == "WMS Requirement Box"
-        assert [h["id"] for h in ctx["feeds_into"]] == [
+        # **交接和归档分两栏**：档案盒不收上游产出，混在一起读者会看错
+        assert [h["id"] for h in ctx["handoffs"]] == [
             "wms_development_box",
-            "wms_system_box",
+            "wms_testing_box",
         ]
+        assert [h["id"] for h in ctx["archive"]] == ["wms_system_box"]
+        # 退休的两个键不许再出现
+        assert "feeds_into" not in ctx
+        assert "feedback_into" not in ctx
         assert ctx["consumes"][0]["task_type"] == "handle_design_request"
         assert ctx["produces"]["type"] == "business_design_produced"
         assert "design_elements" in ctx["produces"]["fields"]
@@ -1088,14 +1093,17 @@ class TestTheRosterComesFromTheRegistry:
         order = order_boxes_by_flow(registered_box_ids())
         pos = {b: i for i, b in enumerate(order)}
 
-        def _feeds_into(box_id: str) -> list[str]:
-            return list(BOX_REGISTRY[box_id][0]().placement.feeds_into)
+        def _handoffs(box_id: str) -> list[str]:
+            """交接下游——**从域声明读**（接线不在盒子自己身上了）"""
+            from domains import box_wiring
+
+            return list(box_wiring(box_id)["handoffs"])
 
         # ① 上游必须在下游前面
         violations = [
             f"{box_id} → {target}"
             for box_id in order
-            for target in _feeds_into(box_id)
+            for target in _handoffs(box_id)
             if target in pos and pos[target] < pos[box_id]
         ]
         assert not violations, f"名册顺序没按流程：{violations}"
@@ -1103,7 +1111,7 @@ class TestTheRosterComesFromTheRegistry:
         # ② 同层按 box_id 字母序
         roots = [
             b for b in order
-            if not any(b in _feeds_into(other) for other in order)
+            if not any(b in _handoffs(other) for other in order)
         ]
         assert roots == sorted(roots), (
             f"没有上游的那些盒子该按字母序排：{roots}"

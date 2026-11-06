@@ -152,7 +152,6 @@ DECLARATION = BoxDeclaration(
     # 等于把盒子挂到错误的业务线上，跟业务语义造假是一回事。
     value_stream="Expense Reimbursement",
     role="Receipt Recognition Fulfillment",
-    feeds_into=[],
 
     # ---- 投料入口（Intent）----
     task_type="capture_receipt",

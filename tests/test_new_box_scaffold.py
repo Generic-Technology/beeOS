@@ -35,6 +35,7 @@ from scripts.new_box import (
     apply_registration,
     build_spec,
     parse_box_id,
+    render,
     write_box,
 )
 
@@ -45,7 +46,7 @@ def _spec(
     box_id: str = "fixture_probe_box",
     *,
     domain: str = "FIXTURE",
-    feeds_into: str = "",
+    handoff_to: str = "",
     insert_after: str = "",
     sink: bool = True,
 ):
@@ -62,7 +63,7 @@ def _spec(
         value_stream="Software Delivery",
         role="样例域的履约",
         description="脚手架自测用的一只盒子",
-        feeds_into=feeds_into,
+        handoff_to=handoff_to,
         insert_after=insert_after,
         sink=sink,
     ))
@@ -346,7 +347,7 @@ class TestTheScaffoldItself:
     def test_the_wiring_must_be_spelled_out(self):
         """**不许留空接线**
 
-        空着的 `feeds_into` 让新盒子变成本域的**第二个终点** →
+        空着的交接边让新盒子变成本域的**第二个终点** →
         圆心算不出来 → 看板拓扑直接禁用。
         这个坑是端到端跑出来的：脚手架第一版留了空列表，
         一次就把 9 条真守卫跑红了。
@@ -354,7 +355,7 @@ class TestTheScaffoldItself:
         args = argparse.Namespace(
             box_id="wms_probe_box", domain="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
-            feeds_into="", insert_after="", sink=False,
+            handoff_to="", insert_after="", sink=False,
         )
         with pytest.raises(ValueError, match="必须说清它站在哪"):
             build_spec(args)
@@ -367,16 +368,16 @@ class TestTheScaffoldItself:
         args = argparse.Namespace(
             box_id="wms_probe_box", domain="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
-            feeds_into="nosuch_box", insert_after="", sink=False,
+            handoff_to="nosuch_box", insert_after="", sink=False,
         )
         with pytest.raises(ValueError, match="不存在的盒子"):
             build_spec(args)
 
-    def test_a_sink_and_a_feeds_into_are_mutually_exclusive(self):
+    def test_a_sink_and_a_handoff_to_are_mutually_exclusive(self):
         args = argparse.Namespace(
             box_id="wms_probe_box", domain="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
-            feeds_into="wms_ops_box", insert_after="", sink=True,
+            handoff_to="wms_ops_box", insert_after="", sink=True,
         )
         with pytest.raises(ValueError, match="互斥"):
             build_spec(args)
@@ -391,7 +392,7 @@ class TestTheScaffoldItself:
         args = argparse.Namespace(
             box_id="wms_probe_box", domain="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
-            feeds_into="wms_ops_box", insert_after="", sink=False,
+            handoff_to="wms_ops_box", insert_after="", sink=False,
         )
         with pytest.raises(ValueError, match="画不出拓扑"):
             build_spec(args)
@@ -460,8 +461,8 @@ class TestANewDomainIsAFirstClassCase:
 
     def test_the_first_box_of_a_new_domain_is_allowed(self):
         spec = _spec("qa_probe_box", domain="QA", sink=True)
-        assert spec.domain == "QA"
-        assert spec.feeds_into == []
+        assert spec.domain_id == "QA"
+        assert spec.handoff_to == []
 
     def test_a_new_domain_box_is_not_a_wms_box(self):
         """新域的盒子不许占 `wms_` 前缀
@@ -478,51 +479,82 @@ class TestANewDomainIsAFirstClassCase:
         args = argparse.Namespace(
             box_id="qa_probe_box", domain="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
-            feeds_into="wms_ops_box", insert_after="", sink=False,
+            handoff_to="wms_ops_box", insert_after="", sink=False,
         )
         with pytest.raises(ValueError, match="画不出拓扑"):
             build_spec(args)
 
 
-class TestRewiringTheUpstream:
-    """插在链上 → 上游那只盒子的下游要改成新盒子
+class TestTheDomainFragment:
+    """插在链上 → **域声明**里那条边要换成「上游 → 新盒子 → 原来的下游」
 
-    **但指向档案盒（汇点）的那条边要留着**：
-    整份列表换掉 = 把归档边也删了 → 档案盒收不到这只盒子的产出。
+    **脚手架不改盒子**——接线住在域声明里，
+    而改接线是改产品结构（仓里的既有原则：接线是产品事实）。
+    脚手架只把该改哪几行算清楚，写成片段让人并进域声明。
+
+    **但指向档案盒（汇点）的那条归档边要留着**：
+    整段换掉 = 把归档边也删了 → 档案盒收不到这只盒子的产出。
     """
 
-    def test_it_swaps_the_chain_edge_and_keeps_the_archive_edge(self, tmp_path):
-        from scripts.new_box import _rewire_upstream
+    def _fragment(self) -> str:
+        from scripts.new_box import _domain_fragment
 
-        spec = _spec("qa_probe_box", domain="WMS", insert_after="wms_testing_box", sink=False)
-        upstream = tmp_path / "definition.py"
-        upstream.write_text(
-            "PLACEMENT = PlacementDef(feeds_into=['wms_ops_box', 'wms_system_box'])\n",
-            encoding="utf-8",
+        spec = _spec(
+            "qa_probe_box", domain="WMS",
+            insert_after="wms_testing_box", sink=False,
+        )
+        return _domain_fragment(spec)
+
+    def test_it_says_the_chain_edge_has_to_be_replaced(self):
+        """原来那条边是**换掉**，不是再加一条
+
+        加一条 = 上游有两个下游 = 分叉 → 域里是一条线性链，
+        分叉的拓扑排不出唯一顺序。
+        """
+        fragment = self._fragment()
+
+        assert "换掉" in fragment, "得说清楚是替换，不是追加"
+        assert 'from_box="wms_testing_box"' in fragment
+        assert 'to_box="wms_ops_box"' in fragment
+
+    def test_the_new_box_takes_over_the_chain_segment(self):
+        fragment = self._fragment()
+
+        assert 'from_box="qa_probe_box"' in fragment, "新盒子要接手链条那一段"
+        assert 'to_box="wms_ops_box"' in fragment
+
+    def test_it_keeps_the_archive_edge(self):
+        """指向档案盒（汇点）的归档边留着——删了档案盒就收不到产出"""
+        fragment = self._fragment()
+
+        assert "EdgeKind.archive" in fragment
+        assert 'to_box="wms_system_box"' in fragment
+
+    def test_it_says_the_channel_still_has_to_land(self):
+        """通道是下游投料里的 `ref:` 字段——脚手架不知道你要吃哪些字段
+
+        它能算出来的只有「下游投料里哪些 ref 通道还空着」。
+        """
+        fragment = self._fragment()
+
+        assert "ref:" in fragment, "得说清楚通道是什么"
+        assert "得你来定" in fragment or "空着的 ref 通道" in fragment, (
+            "接料形状是业务决定，脚手架不能替人选"
         )
 
-        note = _rewire_upstream(spec, upstream)
+    def test_the_generated_box_declares_no_wiring_of_its_own(self):
+        """生成出来的盒子**自己不带接线**
 
-        text = upstream.read_text(encoding="utf-8")
-        assert "feeds_into=['qa_probe_box', 'wms_system_box']" in text, (
-            f"改写结果不对：{text}"
-        )
-        assert "wms_ops_box" not in text, "链条那一段应该交给新盒子接手"
-        assert "wms_system_box" in text, "指向档案盒（汇点）的边不能被删掉"
-        assert note  # 要有话说清楚改了什么
+        接线住在域声明里。盒子身上再留一份 = 两套接线并存，
+        而两份接线迟早给出不同答案。
+        """
+        spec = _spec("qa_probe_box", domain="QA", sink=True)
+        out = render(spec)
 
-    def test_it_says_so_when_the_file_has_no_wiring(self, tmp_path):
-        """文件里找不到 `feeds_into=[...]` → 说清楚要手工改成什么"""
-        from scripts.new_box import _rewire_upstream
-
-        spec = _spec("qa_probe_box", domain="WMS", insert_after="wms_testing_box", sink=False)
-        upstream = tmp_path / "definition.py"
-        upstream.write_text("# 没有接线\n", encoding="utf-8")
-
-        note = _rewire_upstream(spec, upstream)
-
-        assert "feeds_into" in note
-        assert "qa_probe_box" in note, "要说清楚该改成什么，不能只说「改一下」"
+        text = out["definition.py"]
+        assert "feeds_into" not in text
+        assert "feedback_into" not in text
+        assert "placement" not in text
 
 
 class TestTheRegistrationInsertion:

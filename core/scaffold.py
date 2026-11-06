@@ -70,7 +70,6 @@ from core.models import (
     BeeBoxDefinition,
     ExceptionRule,
     MetricsDef,
-    PlacementDef,
     QueenAuthorization,
     QueenDef,
     QueenRules,
@@ -176,19 +175,17 @@ class BoxDeclaration(BaseModel):
     version: int = Field(default=1, description="盒子版本（递增序列号）")
     description: str = Field(default="", description="这只盒子在做什么")
 
-    # ---- 归属（这只盒子在企业里站在哪）----
+    # ---- 展示位（这只盒子在企业里站在哪）----
     display_name: str = Field(default="", description="给人看的名字")
     value_stream: str = Field(default="", description="所属企业价值流")
     role: str = Field(default="", description="业务责任单元的职责")
-    domain: str = Field(default="", description="所属业务领域")
-    feeds_into: list[str] = Field(
-        default_factory=list,
-        description="本盒产出交出去给哪些 box_id（接线唯一声明）",
-    )
-    feedback_into: list[str] = Field(
-        default_factory=list,
-        description="本盒产出反馈给哪些 box_id（闭环边，不进拓扑排序）",
-    )
+    #
+    # **这里没有 `domain` / `feeds_into` / `feedback_into`**（2026-11-06 退休）。
+    #
+    # 盒子之间怎么连，是**域**的事实，住在 `domains/<域>/` 的声明里——
+    # 不再是每只盒子各写一遍。理由见 `docs/domain-declaration.md`：
+    # 照抄 `feeds_into` 会漏掉真实依赖（8 条交接里只有 5 条被声明过），
+    # 而两份事实并存必然漂，漂了不报错。
 
     # ---- 投料入口（Intent）----
     task_type: str = Field(description="task 类型标识")
@@ -561,13 +558,14 @@ def assemble(
     checks.append("C12 业务对象标识拿得到")
 
     # ---- 接线 ----
-    if declaration.feeds_into and declaration.feeds_into == declaration.feedback_into:
-        problems.append(
-            "feeds_into 和 feedback_into 一模一样——"
-            "「交出去让下游接着验」和「上一轮的结论回到起点」是两件事，"
-            "混在一起闭环边会进拓扑排序，排序遇到环就静默按原顺序收尾"
-        )
-    checks.append("接线声明")
+    #
+    # **这里不再校验接线**（2026-11-06 退休）：接线搬到域声明之后，
+    # 「边指向的盒子存不存在」「闭环边有没有混进交接边」都是**域级**的事，
+    # 由域装配器判（`core/decl_checks.py` 的 D2 / D7 / D11）。
+    #
+    # **一份事实只放一处**：这里再判一遍，就是两份判定，
+    # 而两份判定迟早给出不同答案（域里那份才是对的）。
+    checks.append("接线（在域声明里校验）")
 
     if problems:
         raise AssemblyError(box_id, problems)
@@ -625,14 +623,9 @@ def assemble(
         ),
         queen=declaration.queen,
         metrics=declaration.metrics,
-        placement=PlacementDef(
-            display_name=declaration.display_name,
-            value_stream=declaration.value_stream,
-            role=declaration.role,
-            domain=declaration.domain,
-            feeds_into=list(declaration.feeds_into),
-            feedback_into=list(declaration.feedback_into),
-        ),
+        display_name=declaration.display_name,
+        value_stream=declaration.value_stream,
+        role=declaration.role,
     )
 
     # 执行器由 runtime 建（执行是执行层的事），**表是盒子的**——

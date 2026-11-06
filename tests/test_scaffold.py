@@ -75,7 +75,6 @@ def _declaration(**overrides) -> BoxDeclaration:
         version=1,
         description="演示盒",
         display_name="演示盒",
-        domain="Demo",
         value_stream="Demo",
         task_type="run_demo",
         task_schema="s_in",
@@ -380,12 +379,23 @@ class TestC12SubjectRefIsObtainable:
 
 
 class TestWiringDeclaration:
-    def test_feeds_into_equal_to_feedback_into_is_refused(self):
-        """闭环边混进 feeds_into，拓扑排序遇到环就静默按原顺序收尾"""
-        err = _broken(declaration=_declaration(
-            feeds_into=["other_box"], feedback_into=["other_box"],
-        ))
-        assert "两件事" in str(err)
+    """接线**不在盒子的声明里**了——它是域的事实
+
+    原来这里守着「闭环边不许混进交接边」（`feeds_into` 与
+    `feedback_into` 不许指向同一只盒子）。接线搬到域声明之后，
+    这条判定归**域装配器**（`core/decl_checks.py` 的 D7/D11）。
+    """
+
+    @pytest.mark.parametrize("field", ["domain", "feeds_into", "feedback_into"])
+    def test_the_retired_wiring_fields_are_refused(self, field):
+        """退休的字段**写上去就报错**——不留空壳，也不留别名
+
+        留一个能写但没人读的字段 = 两套接线并存，
+        而两份接线迟早给出不同答案。
+        """
+        with pytest.raises(Exception) as exc:
+            _declaration(**{field: ["other_box"]} if field != "domain" else {"domain": "Demo"})
+        assert "Extra inputs are not permitted" in str(exc.value)
 
 
 class TestErrorQuality:

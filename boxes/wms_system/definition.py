@@ -3,7 +3,7 @@
 WMS 系统档案盒——把「真实在跑的那套 WMS 是什么样」写成一份**带出处、带缺口**的档案。
 
 按 Fulfillment 5 维度 + 度量组织：
-- 基础元信息 + placement（归属 / 接谁 / 投给谁 / 属于哪个域）
+- 基础元信息 + 展示位（显示名 / 价值流 / 角色）
 - 数据形状（schemas）
 - 履约意图 Intent（task）
 - 履约合同 Contract（result + 5 条机械 acceptance + 3 条 exception）
@@ -19,7 +19,7 @@ WMS 系统档案盒——把「真实在跑的那套 WMS 是什么样」写成�
 对外契约是什么、哪些部分此刻可观测。
 
 将来要对账时（本轮不做），对的是「两边都声称的结果」，
-不是「代码里写的」——所以接线是五只盒子都 feeds_into 本盒，
+不是「代码里写的」——所以域声明里五只盒子都归档到本盒，
 唯一例外是需求盒：它产出的是读基线（现在这份档案的输入来源之一），
 不是往档案里加东西。
 
@@ -72,9 +72,6 @@ DECLARATION = BoxDeclaration(
     display_name="WMS System Box",
     value_stream="Software Delivery",
     role="WMS System Description Fulfillment",
-    domain="WMS",
-    # 汇点没有下游：它不被投给谁，它是所有人的落点。
-    feeds_into=[],
 
     # ---- 投料入口（Intent）----
     # v1 叫 handle_system_request（「处理一个系统请求」）——

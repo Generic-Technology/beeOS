@@ -124,12 +124,18 @@ class TestTheLearningDomainIsAStar:
         )
         assert m.handoffs == (), "放射形状里不该有交接边"
 
-    def test_every_subject_feeds_the_archive(self):
+    def test_every_subject_hands_off_to_the_archive(self):
+        """三科都把产出交给成长记录盒——**从域声明读**
+
+        接线住在 `domains/<域>/`，不在盒子自己身上了。
+        """
+        from domains import box_wiring
+
         m = domain_wiring("Learning")
         for box_id in SUBJECT_BOXES:
-            feeds = _definition(box_id).placement.feeds_into
-            assert list(feeds) == [GROWTH_BOX], (
-                f"{box_id} 的下游是 {list(feeds)}，应该是 {GROWTH_BOX}"
+            handoffs = box_wiring(box_id)["handoffs"]
+            assert list(handoffs) == [GROWTH_BOX], (
+                f"{box_id} 的下游是 {list(handoffs)}，应该是 {GROWTH_BOX}"
             )
             assert box_id in m.feeds_center
 

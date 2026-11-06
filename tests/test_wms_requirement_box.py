@@ -160,66 +160,109 @@ class TestPayloadKind:
         assert _payload_kind(None) == "json"
 
 
-class TestFeedInto:
-    """盒子之间的关系声明在各自 definition.placement，不在前端硬编码
+class TestTheDomainWiring:
+    """盒子之间的关系声明在**域声明**里（`domains/<域>/`），不在盒子自己身上
 
-    以前住在 kanban/trigger.py 的 BOX_META。那是业务知识放在看板层——
-    盒子只能通过看板去知道自己接谁。现在接线跟着盒子走。
+    以前住在各自 definition 的 placement 字段里；更早住在 kanban/trigger.py
+    的 BOX_META。两次搬家都是往对的方向搬的：接线**横跨多只盒子**，
+    它本来就不属于任何一只盒子——它是**域**的事实。
+
+    **归档不是交接**：产物进档案是「这一环的事实先落档案」，
+    档案盒**不收上游产出**（投料里 0 个 ref 通道）。
+    两者混在一个列表里，读者会以为档案盒接了这份产出。
     """
 
-    def test_capture_feeds_only_design(self):
-        """需求盒的下游**只有**设计盒——系统档案盒那条边是假的，已删
+    def test_capture_hands_off_to_design_and_testing(self):
+        """需求盒的交接是**设计盒 + 测试盒**——没有系统档案盒
 
-        v1 里这里还有一条 `wms_system_box`，方向反了：需求盒产出的是系统
+        v1 里还有一条 `wms_system_box`：需求盒产出的是系统
         档案的**输入**（读基线：这份系统该是什么样），不是往档案里加东西。
         留着它会让「五个生命周期盒都往系统盒汇」这句话在数据上不成立，
         而拓扑图是照着这句话画的。
-        """
-        from kanban.trigger import box_meta
-        assert box_meta("wms_requirement_box")["feeds_into"] == ["wms_design_box"]
 
-    def test_design_feeds_development_and_system(self):
-        from kanban.trigger import box_meta
-        assert box_meta("wms_design_box")["feeds_into"] == [
-            "wms_development_box",
-            "wms_system_box",
+        测试盒那条以前只存在于编排脚本里（测试盒也要知道要验哪条需求），
+        域声明把它补上了。
+        """
+        from domains import box_wiring
+        assert sorted(box_wiring("wms_requirement_box")["handoffs"]) == [
+            "wms_design_box",
+            "wms_testing_box",
         ]
+
+    def test_design_hands_off_to_development_and_testing(self):
+        """设计盒的交接有**两条**：开发 + 测试
+
+        以前只声明了开发那一条（测试那条藏在编排脚本里）。
+        域声明把它补上了——「唯一事实源」要是漏了真实依赖，
+        那它就不是事实源。
+        """
+        from domains import box_wiring
+        assert sorted(box_wiring("wms_design_box")["handoffs"]) == [
+            "wms_development_box",
+            "wms_testing_box",
+        ]
+
+    def test_the_archive_is_not_a_handoff(self):
+        """产物进档案**不是**交接——两者得分开声明"""
+        from domains import box_wiring
+        w = box_wiring("wms_design_box")
+        assert w["archive"] == ["wms_system_box"]
+        assert "wms_system_box" not in w["handoffs"], (
+            "档案盒接了这份产出——它根本不接（投料里 0 个 ref 通道）"
+        )
 
     def test_system_is_the_sink(self):
         """系统档案盒是终点：它是「关于那个系统的描述」，描述完了没有下游"""
-        from kanban.trigger import box_meta
-        assert box_meta("wms_system_box")["feeds_into"] == []
+        from domains import box_wiring
+        assert box_wiring("wms_system_box")["handoffs"] == []
 
     def test_the_whole_wms_chain_is_pinned(self):
-        """把 6 只 WMS 盒的接线整条钉住
+        """把 WMS 域 7 只盒子的交接整条钉住
 
-        为什么要钉全链而不是一条条钉：接线是「盒子是什么」的一部分，
+        为什么要钉全链而不是一条条钉：接线是**产品结构**，
         改一只盒子顺手改了下游，这组测试会一片绿地带过去。
         需求 → 设计 → 开发 → 测试 → 运维 → 分析 → 系统档案，是一条
         **生命周期链**，每一环还额外直投系统档案盒（各自领域的事实先落档案）。
 
         唯一的例外是**需求盒**：它不汇入档案盒。它产出的是档案的输入
         （读基线），不是档案的内容——这条边在 v2 里删掉了。
+
+        域声明比旧的那份**多 3 条真实交接**（需求→测试、设计→测试、开发→运维），
+        它们以前藏在编排脚本里。这几条现在被钉住了——
+        「唯一事实源」漏掉真实依赖 = 它不是事实源。
         """
-        from kanban.trigger import BOX_REGISTRY
+        from domains import box_wiring
 
         chain = {
-            "wms_requirement_box": ["wms_design_box"],
-            "wms_design_box": ["wms_development_box", "wms_system_box"],
-            "wms_development_box": ["wms_testing_box", "wms_system_box"],
-            "wms_testing_box": ["wms_ops_box", "wms_system_box"],
-            # 运维之后不再直接结束：它把线上真实状态投给分析盒，
-            # 由分析盒去回答「这条需求线上到底满没满足」
-            "wms_ops_box": ["wms_analysis_box", "wms_system_box"],
-            "wms_analysis_box": ["wms_system_box"],
+            "wms_requirement_box": ["wms_design_box", "wms_testing_box"],
+            "wms_design_box": ["wms_development_box", "wms_testing_box"],
+            "wms_development_box": ["wms_testing_box", "wms_ops_box"],
+            "wms_testing_box": ["wms_ops_box"],
+            "wms_ops_box": ["wms_analysis_box"],
+            "wms_analysis_box": [],
             "wms_system_box": [],
-            # 费用报销线不属于 WMS 域，自成一条独立的线
-            "receipt_capture_box": [],
         }
         for bid, expected in chain.items():
-            assert BOX_REGISTRY[bid][0]().placement.feeds_into == expected, (
+            assert sorted(box_wiring(bid)["handoffs"]) == sorted(expected), (
                 f"{bid} 的下游变了"
             )
+
+        archives = {
+            "wms_design_box": ["wms_system_box"],
+            "wms_development_box": ["wms_system_box"],
+            "wms_testing_box": ["wms_system_box"],
+            "wms_ops_box": ["wms_system_box"],
+            "wms_analysis_box": ["wms_system_box"],
+            "wms_requirement_box": [],
+            "wms_system_box": [],
+        }
+        for bid, expected in archives.items():
+            assert box_wiring(bid)["archive"] == expected, (
+                f"{bid} 的归档归属变了"
+            )
+
+        # 费用报销线不属于 WMS 域，自成一条独立的线
+        assert box_wiring("receipt_capture_box")["handoffs"] == []
 
     def test_the_system_box_is_the_only_sink_and_has_exactly_one(self):
         """系统档案盒必须**恰好是**一个汇点，且没有下游
@@ -235,65 +278,72 @@ class TestFeedInto:
         中心算不出来时看板会禁用拓扑 Tab 并写明原因，而不是静默退回
         网格——所以这里必须确保中心**算得出来**。
         """
-        from kanban.trigger import BOX_REGISTRY, domain_layout
+        from domains import DOMAIN_REGISTRY, box_wiring
+        from kanban.trigger import domain_layout
 
-        domain_boxes = [
-            bid for bid, (loader, _) in BOX_REGISTRY.items()
-            if loader().placement.domain == "WMS"
+        domain_boxes = list(DOMAIN_REGISTRY["WMS"].boxes)
+        sinks = [
+            b for b in domain_boxes
+            if "wms_system_box" in box_wiring(b)["archive"]
         ]
-        sinks = [b for b in domain_boxes if "wms_system_box" in BOX_REGISTRY[b][0]().placement.feeds_into]
         assert sorted(sinks) == [
             "wms_analysis_box", "wms_design_box", "wms_development_box",
             "wms_ops_box", "wms_testing_box",
         ], f"WMS 域的汇点集合变了：{sorted(sinks)}"
 
         # 没有下游的盒子：只有系统档案盒
-        terminal = [b for b in domain_boxes if not BOX_REGISTRY[b][0]().placement.feeds_into]
+        terminal = [
+            b for b in domain_boxes
+            if not box_wiring(b)["handoffs"] and not box_wiring(b)["archive"]
+        ]
         assert terminal == ["wms_system_box"], f"域里出现了别的终点：{terminal}"
 
         layout = domain_layout("WMS")
         assert layout["layout"] == "radial", "拓扑退化了，环形出不来"
         assert layout["center"] == "wms_system_box", "环形中心算不出来了"
 
-    def test_the_closed_loop_edge_is_declared_as_feedback_not_feeds(self):
-        """闭环那条边必须走 feedback_into——混进 feeds_into 会让主干成环
+    def test_the_closed_loop_edge_is_declared_as_feedback_not_handoff(self):
+        """闭环那条边必须走 feedback——混进 handoff 会让主干成环
 
         分析盒的结论回到需求盒，是**反馈**不是交接：需求盒不会去验分析
         结论，它是拿这个结论**开新一轮需求**。两件事，声明也得分开。
 
-        分开还有个纯技术上的理由：feeds_into 是拓扑排序的输入，
+        分开还有个纯技术上的理由：交接边是拓扑排序的输入，
         把闭环那条边塞进去，排序就遇到环，于是**静默**按原顺序收尾——
         环上顺序变成任意的，看板照常渲染，只是结构是错的，
         没有任何东西会报错。
         """
-        from kanban.trigger import BOX_REGISTRY
+        from domains import box_wiring
 
         expected = {"wms_analysis_box": ["wms_requirement_box"]}
         for bid, targets in expected.items():
-            placement = BOX_REGISTRY[bid][0]().placement
-            assert placement.feedback_into == targets, (
-                f"{bid} 的反馈对象变了"
-            )
+            w = box_wiring(bid)
+            assert w["feedback"] == targets, f"{bid} 的反馈对象变了"
             # 同一只盒子不能把同一条边在两个列表里各写一遍：
-            # 那样改了 feedback 忘了 feeds，两侧就漂了
-            assert not set(placement.feeds_into) & set(placement.feedback_into), (
-                f"{bid} 把同一条边在 feeds_into 和 feedback_into 里各写了一遍"
+            # 那样改了反馈忘了交接，两侧就漂了
+            assert not set(w["handoffs"]) & set(w["feedback"]), (
+                f"{bid} 把同一条边在交接和反馈里各写了一遍"
             )
 
-    def test_feedback_into_targets_are_registered(self):
+    def test_the_feedback_targets_are_registered(self):
         """反馈的对象也必须是真盒子，否则闭环那条线指向空气"""
-        from kanban.trigger import BOX_REGISTRY, registered_box_ids
+        from domains import box_wiring
+        from kanban.trigger import registered_box_ids
 
-        for bid, (_get, _beelines) in BOX_REGISTRY.items():
-            for t in _get().placement.feedback_into:
-                assert t in registered_box_ids(), f"{bid} 反馈给了未注册盒子 {t}"
+        registered = set(registered_box_ids())
+        for bid in registered:
+            for t in box_wiring(bid)["feedback"]:
+                assert t in registered, f"{bid} 反馈给了未注册盒子 {t}"
 
-    def test_feeds_into_targets_are_registered(self):
-        """声明的下游必须是真盒子，否则接力按钮点了没地方去"""
-        from kanban.trigger import BOX_REGISTRY, registered_box_ids
-        for bid, (_get, _beelines) in BOX_REGISTRY.items():
-            for t in _get().placement.feeds_into:
-                assert t in registered_box_ids(), f"{bid} 指向未注册盒子 {t}"
+    def test_the_handoff_targets_are_registered(self):
+        """交接的下游必须是真盒子，否则接力按钮点了没地方去"""
+        from domains import box_wiring
+        from kanban.trigger import registered_box_ids
+
+        registered = set(registered_box_ids())
+        for bid in registered:
+            for t in box_wiring(bid)["handoffs"]:
+                assert t in registered, f"{bid} 指向未注册盒子 {t}"
 
 
 # ============================================================

@@ -140,14 +140,16 @@ class BoxSpec:
     prefix: str
     const: str
     display_name: str
-    domain: str
+    #: 它属于哪个域（域声明的 id）。**接线住在域声明里，不在这只盒子身上**——
+    #: 所以这只盒子只回答「我在哪个域」，不回答「我跟谁连」。
+    domain_id: str
     value_stream: str
     role: str
     description: str
-    # **它接谁**（投给谁）。空着 = 它成了本域的**第二个终点** →
+    # **它投给谁**（域声明里的交接边）。空着 = 它成了本域的**第二个终点** →
     # 圆心算不出来 → 看板拓扑直接禁用。所以接线必须在生成时就问清楚，
     # 不能留个空列表让后人想起来再填。
-    feeds_into: list[str] = field(default_factory=list)
+    handoff_to: list[str] = field(default_factory=list)
     # **它插在链上哪一段之后**（上游那只盒子的下游被它接手）。
     # 域里是一条**线性链**：新盒子要么插进链里，要么自己开一条新链，
     # 不能从中间分叉（分叉 → 环序排不出来 → 拓扑画不出来）。
@@ -209,21 +211,21 @@ def parse_box_id(box_id: str) -> tuple[str, str]:
 def build_spec(args: argparse.Namespace) -> BoxSpec:
     module, prefix = parse_box_id(args.box_id)
     insert_after = (args.insert_after or "").strip()
-    feeds_into = [b.strip() for b in (args.feeds_into or "").split(",") if b.strip()]
-    if args.sink and (feeds_into or insert_after):
+    handoff_to = [b.strip() for b in (args.handoff_to or "").split(",") if b.strip()]
+    if args.sink and (handoff_to or insert_after):
         raise ValueError(
             "--sink（它是本域的终点）和接线互斥：终点没有下游"
         )
-    if insert_after and feeds_into:
+    if insert_after and handoff_to:
         raise ValueError(
-            "--insert-after（它接手谁的活）和 --feeds-into（它投给谁）"
+            "--insert-after（它接手谁的活）和 --handoff-to（它投给谁）"
             "不能同时给：插入链上时，下游由它接手的那只盒子决定"
         )
     if insert_after:
         # **它接手那只盒子的下游** —— 链是线性的，新盒子插在中间，
         # 那只盒子原来的下游就变成新盒子的下游。
-        feeds_into = _downstream_of(insert_after)
-    elif not feeds_into and not args.sink:
+        handoff_to = _downstream_of(insert_after)
+    elif not handoff_to and not args.sink:
         raise ValueError(
             "**新盒子必须说清它站在哪**——不说的接线有两种坏法：\n"
             "  · 在已有链的域里，它成了本域的**第二个终点** → 圆心算不出来"
@@ -231,21 +233,21 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
             "  · 在新域里，它成了一只**没接线的孤盒子** → 谁都不知道它跟谁有关\n"
             "所以生成时就问清楚：\n"
             "  --insert-after <box_id>   插在它后面（接手它的下游）\n"
-            "  --feeds-into <box_id>      它投给谁（自己开一条链时用）\n"
+            "  --handoff-to <box_id>      它投给谁（自己开一条链时用）\n"
             "  --sink                    它是本域的终点（没有下游）"
         )
-    _validate_feeds_into(feeds_into)
+    _validate_handoff_to(handoff_to)
     spec = BoxSpec(
         box_id=args.box_id,
         module=module,
         prefix=prefix,
         const=module.upper(),
         display_name=args.display_name or args.box_id.replace("_", " ").title(),
-        domain=args.domain,
+        domain_id=args.domain,
         value_stream=args.value_stream,
         role=args.role,
         description=args.description,
-        feeds_into=feeds_into,
+        handoff_to=handoff_to,
         insert_after=insert_after,
     )
     code, reason = _wiring_problem(spec)
@@ -262,33 +264,53 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
 
 
 def _downstream_of(box_id: str) -> list[str]:
-    """那只盒子现在投给谁"""
+    """那只盒子现在投给谁 —— **从域声明读**，不从盒子自己身上读
+
+    接线事实只有一份，住在 `domains/<域>/`。
+    盒子自己那份声明已经退休了：它只声明了 5 条交接，
+    真实链路有 8 条——照抄那份会漏掉 3 条真实的边。
+    """
+    try:
+        from domains import box_wiring
+    except Exception:  # noqa: BLE001 - 仓外生成时不查
+        return []
+    if not _box_exists(box_id):
+        raise ValueError(
+            f"要插在 {box_id} 后面，但仓里没有这只盒子。"
+            f"已注册的：{sorted(_registered_box_ids())}"
+        )
+    return list(box_wiring(box_id)["handoffs"])
+
+
+def _registered_box_ids() -> list[str]:
     try:
         from kanban.trigger import BOX_REGISTRY
     except Exception:  # noqa: BLE001 - 仓外生成时不查
         return []
-    entry = BOX_REGISTRY.get(box_id)
-    if entry is None:
-        raise ValueError(
-            f"要插在 {box_id} 后面，但仓里没有这只盒子。"
-            f"已注册的：{sorted(BOX_REGISTRY)}"
-        )
-    return list(entry[0]().placement.feeds_into)
+    return list(BOX_REGISTRY)
 
 
-def _validate_feeds_into(feeds_into: list[str]) -> None:
-    """接线指向的盒子必须真的存在
+def _box_exists(box_id: str) -> bool:
+    try:
+        from kanban.trigger import BOX_REGISTRY
+    except Exception:  # noqa: BLE001 - 仓外生成时不查
+        return True
+    return box_id in BOX_REGISTRY
+
+
+def _validate_handoff_to(handoff_to: list[str]) -> None:
+    """交接边指向的盒子必须真的存在
 
     **为什么现在就要查**：一条指向虚空的边不会报错，只会让场图少画一只盒子
     ——「声明了却拿不到」的又一族。
     """
-    if not feeds_into:
+    if not handoff_to:
         return
     try:
         from kanban.trigger import BOX_REGISTRY
     except Exception:  # noqa: BLE001 - 仓外生成时不校验
         return
-    unknown = [b for b in feeds_into if b not in BOX_REGISTRY]
+    unknown = [b for b in handoff_to if b not in BOX_REGISTRY]
     if unknown:
         raise ValueError(
             f"接线指向了不存在的盒子：{unknown}。\n"
@@ -327,11 +349,11 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
     except Exception:  # noqa: BLE001 - 仓外生成时不校验
         return "ok", ""
 
-    declaration = DOMAIN_REGISTRY.get(spec.domain)
+    declaration = DOMAIN_REGISTRY.get(spec.domain_id)
     if declaration is None:
         # **新域**：域里还没有接线。
         # 「域还小」不是「接线坏了」——接一个新域的第一只盒子本来就该被允许。
-        return "too_small", f"域 {spec.domain!r} 还不存在"
+        return "too_small", f"域 {spec.domain_id!r} 还不存在"
 
     edges = [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges]
     base = derive_wiring(declaration.id, declaration.boxes, edges)
@@ -351,7 +373,7 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
     else:
         # **自己开一条链**：它投给谁。
         # 投给汇点（档案盒）= **归档**边；投给别的盒子 = **交接**边。
-        for target in spec.feeds_into:
+        for target in spec.handoff_to:
             kind = "archive" if target == center else "handoff"
             edges.append((spec.box_id, target, kind))
 
@@ -362,8 +384,230 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
             edges.append((spec.box_id, center, "archive"))
 
     boxes = list(declaration.boxes) + [spec.box_id]
-    m = derive_wiring(spec.domain, boxes, edges)
+    m = derive_wiring(spec.domain_id, boxes, edges)
     return m.reason_code, m.reason
+
+
+# ============================================================
+# 域声明片段
+# ============================================================
+#
+# **接线只住在 `domains/<域>/domain.py`。**
+#
+# 脚手架**不替人改**那份文件——改接线是改产品结构，
+# 而产品结构是人的决定（仓里的既有原则：接线是产品事实）。
+# 它只把**该加哪几行**算清楚，写成一段能直接粘的片段。
+#
+# **为什么不让脚手架直接改域声明**：域声明是手写的（成员 + 边 + 规则），
+# 脚手架按正则往里插行，插坏了没人知道；而且「插进去」和「这段接线
+# 对不对」是两件事——后者是业务判断，前者是文本操作。
+#
+# **via 为什么有的时候是「你定」**：交接通道是**下游投料里的一个 ref 字段**，
+# 字段名和接料形状都是业务决定。脚手架能算出来的只有一件：
+# 下游投料里**哪些 ref 通道还空着**（没被别的交接边占掉）。
+
+
+def _free_ref_channels(declaration, to_box: str) -> list[str]:
+    """下游投料里**还空着**的 ref 通道
+
+    「空着」= 没被任何一条交接边占用（`via` 没指向它）。
+    """
+    try:
+        from kanban.trigger import box_facts
+    except Exception:  # noqa: BLE001 - 仓外生成时不查
+        return []
+    facts = box_facts().get(to_box)
+    if facts is None:
+        return []
+    schema = facts.task_schema()
+    if schema is None:
+        return []
+    claimed = {
+        e.via for e in declaration.edges
+        if e.kind.value == "handoff" and e.to_box == to_box and e.via
+    }
+    return [
+        f.name for f in schema.fields
+        if f.type.startswith("ref:") and f.name not in claimed
+    ]
+
+
+def _domain_fragment(spec: BoxSpec) -> str:
+    """接线片段：该加进 `domains/<域>/domain.py` 的东西
+
+    返回一段**能直接粘**的 Markdown。
+    """
+    try:
+        from domains import DOMAIN_REGISTRY
+    except Exception:  # noqa: BLE001 - 仓外生成时不查
+        return "（读不到域声明——接线片段没法算）"
+
+    declaration = DOMAIN_REGISTRY.get(spec.domain_id)
+    slug = spec.domain_id.lower()
+    target = f"domains/{slug}/domain.py"
+
+    out: list[str] = []
+    if declaration is None:
+        out.append(f"## 接线片段：域 `{spec.domain_id}` 还不存在\n")
+        out.append(
+            f"这个域还没有声明文件。先建 `{target}`，里面至少要有：\n\n"
+            "```python\n"
+            "from core.models import DomainDeclaration, Edge, EdgeKind\n\n"
+            "DOMAIN = DomainDeclaration(\n"
+            f'    id="{spec.domain_id}",\n'
+            f'    display_name="{spec.domain_id}",\n'
+            "    boxes=[\n"
+            f'        "{spec.box_id}",\n'
+            "    ],\n"
+            "    edges=[\n"
+            "        # 这只盒子的边——见下面的说明\n"
+            "    ],\n"
+            "    rules=[],\n"
+            ")\n"
+            "```\n"
+        )
+        return "\n".join(out)
+
+    out.append(f"## 接线片段：并进 `{target}`\n")
+
+    # ---- 1. 成员表 ----
+    out.append("### 1. 成员表加一行\n")
+    out.append(f"```python\n    \"{spec.box_id}\",\n```\n")
+
+    # ---- 2. 边 ----
+    out.append("### 2. 边\n")
+    replaced = _replaced_edges(spec, declaration)
+    for from_box, to_box, kind, via in replaced:
+        via_part = f', via="{via}"' if via else ""
+        out.append(
+            "**先把原来这条换掉**（不换掉就成两个下游 → 分叉 → 拓扑画不出来）：\n\n"
+            "```python\n"
+            f'Edge(from_box="{from_box}", to_box="{to_box}", '
+            f"kind=EdgeKind.{kind}{via_part}),\n"
+            "```\n"
+        )
+    edges = _suggested_edges(spec, declaration)
+    if not edges:
+        out.append("（这只盒子现在没有边——它是本域的终点。）\n")
+    for from_box, to_box, kind, via in edges:
+        via_part = f', via="{via}"' if via else ""
+        out.append(
+            "```python\n"
+            f'Edge(from_box="{from_box}", to_box="{to_box}", '
+            f"kind=EdgeKind.{kind}{via_part}),\n"
+            "```\n"
+        )
+
+    # ---- 3. 通道要落地 ----
+    out.append("### 3. 通道（`via`）要落地\n")
+    out.append(_channel_notes(spec, declaration, edges))
+    return "\n".join(out)
+
+
+def _replaced_edges(spec: BoxSpec, declaration) -> list[tuple[str, str, str, str]]:
+    """插在链上时，**原来那条边**该被换掉
+
+    **换掉，不是加一条**：加一条 = 上游有两个下游 = 分叉，
+    而域里是一条线性链（分叉 → 拓扑排不出唯一的顺序）。
+    """
+    if not spec.insert_after:
+        return []
+    upstream = spec.insert_after
+    return [
+        (e.from_box, e.to_box, e.kind.value, e.via or "")
+        for e in declaration.edges
+        if e.kind.value == "handoff" and e.from_box == upstream
+    ]
+
+
+def _suggested_edges(spec: BoxSpec, declaration) -> list[tuple[str, str, str, str]]:
+    """脚手架算出来的边：(from, to, kind, via 或空串)
+
+    **插在链上**：上游 → 新盒子 → 上游原来的下游。
+    上游 → 下游那条边**换掉**，不是**加一条**——
+    加一条会让新盒子变成上游的第二个下游（分叉 → 拓扑画不出来）。
+
+    **自己开一条链**：新盒子 → 它投给的那只。
+    `via` 从下游**空着的 ref 通道**里找：只有一个就自动填，
+    多于一个就留空（列候选让人选——挑哪个通道是业务决定）。
+    """
+    out: list[tuple[str, str, str, str]] = []
+    if spec.insert_after:
+        upstream = spec.insert_after
+        for e in declaration.edges:
+            if e.kind.value != "handoff" or e.from_box != upstream:
+                continue
+            out.append((upstream, spec.box_id, "handoff", ""))
+            # 新盒子接手的那一段：**通道不变**（下游还在等同一份东西）
+            out.append((spec.box_id, e.to_box, "handoff", e.via or ""))
+    else:
+        for target in spec.handoff_to:
+            free = _free_ref_channels(declaration, target)
+            via = free[0] if len(free) == 1 else ""
+            out.append((spec.box_id, target, "handoff", via))
+
+    # 归档边：**规则说了算**（域里有 all_archived 规则时，新盒子也要归档）
+    center = _center_of(spec.domain_id)
+    if center and any(r.kind.value == "all_archived" for r in declaration.rules):
+        if not any(f == spec.box_id and t == center for f, t, _k, _v in out):
+            out.append((spec.box_id, center, "archive", ""))
+    return out
+
+
+def _center_of(domain_id: str) -> str:
+    """这个域的汇点（档案盒）——**从域声明推**，不写死盒子名字"""
+    try:
+        from kanban.trigger import domain_wiring
+    except Exception:  # noqa: BLE001 - 仓外生成时不查
+        return ""
+    try:
+        return domain_wiring(domain_id).center or ""
+    except Exception:  # noqa: BLE001 - 域还不存在时没有汇点
+        return ""
+
+
+def _channel_notes(spec: BoxSpec, declaration, edges) -> str:
+    """通道要落地才成话——把「还差什么」一条条说清楚"""
+    notes: list[str] = []
+    for from_box, to_box, kind, via in edges:
+        if kind != "handoff":
+            continue
+        if via:
+            notes.append(
+                f"- `{from_box}` → `{to_box}`：通道 `{via}` 照旧。"
+                f"**但下游等的是新东西了**——`{to_box}` 那个通道的 `ref:` "
+                f"类型还指着旧上游的产出形状，得改成新盒子的产出"
+                f"（或者让新盒子的产出长得跟旧上游一样）。"
+            )
+            continue
+        if to_box == spec.box_id:
+            notes.append(
+                f"- `{from_box}` → `{to_box}`：**通道名和接料形状都得你来定**。"
+                f"新盒子的投料（`{spec.schema_input}`）里得加一个 `ref:` 字段"
+                f"接上游的产出——脚手架不知道你要吃上游的哪些字段"
+                f"（schema 归消费者所有）。"
+            )
+            continue
+        free = _free_ref_channels(declaration, to_box)
+        if len(free) == 1:
+            notes.append(
+                f"- `{from_box}` → `{to_box}`：通道填 `{free[0]}`"
+                f"（下游投料里唯一空着的 ref 通道）。"
+            )
+        elif free:
+            notes.append(
+                f"- `{from_box}` → `{to_box}`：下游投料里有几个空着的 ref 通道"
+                f"（{', '.join(f'`{c}`' for c in free)}）——"
+                f"**挑哪个是业务决定**，脚手架不替你选。"
+            )
+        else:
+            notes.append(
+                f"- `{from_box}` → `{to_box}`：下游投料里**没有空着的 ref 通道**——"
+                f"得先给它加一个（或者换一条接法）。"
+            )
+    if not notes:
+        return "（没有交接边要落地通道。）\n"
+    return "\n".join(notes) + "\n"
 
 
 # ============================================================
@@ -609,7 +853,7 @@ _DEFINITION_TEMPLATE = '''"""boxes.__MODULE__.definition - __DISPLAY__ 的声明
 __DESCRIPTION__
 
 按 Fulfillment 5 维度 + 度量组织：
-- 基础元信息 + 归属（域 / 价值流 / 角色 / 接谁投给谁）
+- 基础元信息 + 归属（价值流 / 角色）
 - 履约意图 Intent（task）
 - 履约合同 Contract（result + acceptance + exceptions）
 - 履约政策 Policy（queen）
@@ -649,10 +893,10 @@ DECLARATION = BoxDeclaration(
     display_name="__DISPLAY__",
     value_stream="__VALUE_STREAM__",
     role="__ROLE__",
-    domain="__DOMAIN__",
-    # **接线在生成时就填好了**：空着的 feeds_into 会让这只盒子
-    # 变成本域的第二个终点 → 圆心算不出来 → 看板拓扑禁用。
-    feeds_into=__FEEDS_INTO__,
+    # **这里没有「域」，也没有「接线」**——
+    # 接线是**域**的事实，声明在 `domains/<域>/domain.py`，
+    # 不在盒子自己身上。一只盒子不许同时留两套接线，
+    # 所以接线**只**住在域声明里。
 
     # ---- 投料入口（Intent）----
     task_type="__TASK_TYPE__",
@@ -811,7 +1055,7 @@ __DESCRIPTION__
 | 成熟度 | **skeleton**（腿还没实现，跑起来一定是红的） |
 | 判据 | 1 条（`__METRIC_OK__`） |
 | 例外 | 1 条（`__METRIC_OK__ == false` → escalate） |
-| 接线 | __FEEDS_INTO_TEXT__ |
+| 交接 | __HANDOFF_TEXT__ |
 
 ## 它是什么
 
@@ -864,7 +1108,7 @@ def render(spec: BoxSpec) -> dict[str, str]:
         "__PREFIX__": spec.prefix,
         "__CONST__": spec.const,
         "__DISPLAY__": spec.display_name,
-        "__DOMAIN__": spec.domain,
+        "__DOMAIN__": spec.domain_id,
         "__VALUE_STREAM__": spec.value_stream,
         "__ROLE__": spec.role,
         "__DESCRIPTION__": spec.description,
@@ -879,10 +1123,10 @@ def render(spec: BoxSpec) -> dict[str, str]:
         "__TASK_TYPE__": spec.task_type,
         "__BEELINE_ID__": spec.beeline_id,
         "__BEELINE_VERSION__": str(spec.beeline_version),
-        "__FEEDS_INTO__": repr(list(spec.feeds_into)),
-        "__FEEDS_INTO_TEXT__": (
-            "、".join(f"`{b}`" for b in spec.feeds_into)
-            if spec.feeds_into
+        "__HANDOFF_TEXT__": (
+            "投给 " + "、".join(f"`{b}`" for b in spec.handoff_to)
+            + "（**接线声明在域声明里**，不在这只盒子身上）"
+            if spec.handoff_to
             else "**本域的终点**（没有下游）"
         ),
     }
@@ -1054,7 +1298,7 @@ def apply_registration(
     readme_text = readme_path.read_text(encoding="utf-8")
     row = (
         f"  | [`{spec.module}/`](boxes/{spec.module}/README.md) | "
-        f"`{spec.box_id}` | {spec.domain} | 1 | 1 | skeleton |\n"
+        f"`{spec.box_id}` | {spec.domain_id} | 1 | 1 | skeleton |\n"
     )
     # **接在表格最后一行后面**（不是第一行后面）：
     # 插在第一行后面 = 新盒子夹在 WMS 那几行中间，读者会以为它是 WMS 域的。
@@ -1086,99 +1330,19 @@ def apply_registration(
                 + package_line.rstrip()
             )
 
-    # **插在链上** → 上游那只盒子的下游改成新盒子
+    # **插在链上** → 上游那条交接边要换成「上游 → 新盒子 → 原来的下游」
+    #
+    # **脚手架不改任何盒子**——接线住在域声明里，
+    # 而改接线是改产品结构（仓里的既有原则：接线是产品事实）。
+    # 脚手架只把该改哪几行算清楚，写成片段让人并进域声明。
     if spec.insert_after:
-        upstream_path = _definition_path_of(spec.insert_after)
-        if upstream_path is None:
-            notes.append(
-                f"**没找到 {spec.insert_after} 的 definition.py** —— "
-                f"请手工把它的 feeds_into 改成 [{spec.box_id!r}]"
-            )
-        else:
-            notes.append(_rewire_upstream(spec, upstream_path))
-            notes.append(
-                f"⚠️  你改了 {spec.insert_after} 的下游。**接线是产品事实**，"
-                "仓里有守卫把它整条钉死"
-                "（tests/test_wms_requirement_box.py::TestFeedInto）——"
-                "那几条钉子要**手工**同步更新，否则会红。"
-                "这不是脚手架能替你做的决定：改接线等于改产品结构。"
-            )
+        notes.append(
+            f"⚠️  {spec.insert_after} 的下游变了（新盒子接手了链条那一段）。"
+            f"**接线是产品事实**，它住在域声明里，"
+            f"脚手架不替你改——把下面「接线片段」并进域声明，"
+            f"并把守着旧接线的那几条守卫同步更新。"
+        )
     return notes
-
-
-def _definition_path_of(box_id: str) -> Path | None:
-    """那只盒子的 `definition.py` 在哪 —— **从注册表里问出来，不靠目录名猜**
-
-    **为什么不能猜**：目录名**不一定**等于 box_id 去掉 `_box`：
-    `receipt_capture_box` 住在 `boxes/receipt/`，
-    `wms_testing_box` 住在 `boxes/wms_testing/`。
-    猜错 = 改错文件（或者报「文件不存在」让人自己找）。
-
-    **迁到装配器之后多了一步**：装好的盒子，`get_definition` 住在**包**里
-    （`boxes/<mod>/__init__.py`），而**接线声明在 `definition.py`**。
-    所以包要拼出 `definition.py`，模块就是它自己。
-    （少了这一步，接线改写会改到 `__init__.py` 去——那里根本没有 `feeds_into=`。）
-    """
-    import sys
-
-    try:
-        from kanban.trigger import BOX_REGISTRY
-    except Exception:  # noqa: BLE001 - 仓外生成时不查
-        return None
-    entry = BOX_REGISTRY.get(box_id)
-    if entry is None:
-        return None
-    module = sys.modules.get(getattr(entry[0], "__module__", "") or "")
-    path = getattr(module, "__file__", None)
-    if not path:
-        return None
-    file_path = Path(path)
-    if hasattr(module, "__path__"):
-        # 它是**包**（装好的盒子）：接线声明在同目录的 definition.py
-        return file_path.parent / "definition.py"
-    return file_path
-
-
-def _rewire_upstream(spec: BoxSpec, path: Path) -> str:
-    """把上游盒子的下游改成新盒子（链是线性的，新盒子插在中间）
-
-    **只换链条那一段，归档边留着**：
-    一只 WMS 过程盒的下游有两个——链条上的下一只（`wms_ops_box`）
-    和本域的汇点/档案盒（`wms_system_box`）。
-    整个列表换掉 = 把归档边也删了 → 档案盒收不到这只盒子的产出。
-
-    **哪些是归档边**：域的汇点（center）就是。
-    从注册表现推（`domain_wiring`），不写死「wms_system_box」这种名字。
-    """
-    upstream = spec.insert_after
-    if not path.exists():
-        return (
-            f"**没找到 {upstream} 的 definition.py** —— "
-            f"请手工把它的 feeds_into 改成 [{spec.box_id!r}]"
-        )
-    try:
-        from kanban.trigger import BOX_REGISTRY, domain_wiring
-        center = domain_wiring(spec.domain).center
-        old_targets = list(BOX_REGISTRY[upstream][0]().placement.feeds_into)
-    except Exception:  # noqa: BLE001 - 仓外生成时不查
-        center = None
-        old_targets = list(spec.feeds_into)
-
-    # 链条上的目标换成新盒子；指向汇点（归档）的边留着
-    kept = [t for t in old_targets if t == center]
-    new_targets = [spec.box_id] + kept
-
-    text = path.read_text(encoding="utf-8")
-    match = re.search(r"feeds_into=\[([^\]]*)\]", text)
-    if not match:
-        return (
-            f"**{path.name} 里没找到 feeds_into=[...]** —— "
-            f"请手工改成 feeds_into={new_targets!r}"
-        )
-    replacement = f"feeds_into={new_targets!r}"
-    text = text[: match.start()] + replacement + text[match.end():]
-    path.write_text(text, encoding="utf-8")
-    return f"{path.name}：下游改成 {new_targets}（新盒子接手了链条那一段）"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1201,12 +1365,12 @@ def main(argv: list[str] | None = None) -> int:
         help="插在它后面（接手它的下游）——域里是一条线性链",
     )
     parser.add_argument(
-        "--feeds-into", default="",
+        "--handoff-to", default="",
         help="它投给谁（逗号分隔的 box_id）——自己开一条链时用",
     )
     parser.add_argument(
         "--sink", action="store_true",
-        help="它是本域的终点（没有下游）——与 --feeds-into 互斥；"
+        help="它是本域的终点（没有下游）——与 --handoff-to 互斥；"
              "新域的第一只盒子用它",
     )
     parser.add_argument(
@@ -1233,6 +1397,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"✓ 生成了 {len(written)} 个文件 → {out_dir / spec.module}")
     for path in written:
         print(f"    {path.name}")
+
+    # **接线片段**：接线住在域声明里，不在这只盒子身上——
+    # 所以盒子生成完，还得把这片段并进 `domains/<域>/domain.py`。
+    print()
+    print(_domain_fragment(spec))
 
     if args.apply:
         if out_dir.resolve() != BOXES_DIR.resolve():

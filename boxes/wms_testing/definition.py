@@ -3,7 +3,7 @@
 WMS 测试盒——拿开发盒的制品，用**WMS 业务场景**验它：收货上架、拣货复核、盘点、批次效期这些真实单据跑一遍。
 
 按 Fulfillment 5 维度 + 度量组织：
-- 基础元信息 + placement（归属 / 接谁 / 投给谁 / 属于哪个域）
+- 基础元信息 + 展示位（显示名 / 价值流 / 角色）
 - 数据形状（schemas）
 - 履约意图 Intent（task）
 - 履约合同 Contract（result + 4 条机械 acceptance + 2 条 exception）
@@ -47,8 +47,6 @@ DECLARATION = BoxDeclaration(
     display_name="WMS Testing Box",
     value_stream="Software Delivery",
     role="WMS Verification Fulfillment",
-    domain="WMS",
-    feeds_into=['wms_ops_box', 'wms_system_box'],
 
     # ---- 投料入口（Intent）----
     task_type="handle_testing_request",

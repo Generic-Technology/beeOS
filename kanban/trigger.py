@@ -74,7 +74,7 @@ from core.beeline_models import Beeline
 from core.domain import AssembledDomain, assemble_domain
 from core.models import BeeBoxDefinition, BoxFacts, DomainDeclaration, FieldDef, SchemaDef
 from core.wiring import WiringView, wiring_of_scope
-from domains import DOMAIN_REGISTRY, STANDALONE_BOXES
+from domains import DOMAIN_REGISTRY, STANDALONE_BOXES, box_wiring
 from core.beeline_models import Beeline
 from runtime import BeelineExecutor, create_task_run, evaluate_acceptance
 from runtime.acceptance import apply_acceptance_to_run
@@ -180,32 +180,37 @@ RUNNER_REGISTRY: dict[str, HandlerRunner] = {
     "learning_english_box": LEARNING_ENGLISH_RUNNER,
 }
 
-# ~~Box 元信息（归属 / 接线）~~
+# ~~Box 元信息（展示位）~~
 #
 # 原先这里有一张 BOX_META 表，写着每只盒子的 display_name / value_stream /
-# role / feeds_into。现在全部搬回各盒自己的 definition（placement）。
+# role / feeds_into。展示位搬回了各盒自己的 definition；
+# **接线（交接/反馈/归档）在 2026-11-06 又搬了一次**——
+# 搬进了**域声明**（`domains/<域>/`）。
 #
-# 为什么搬：这些是**业务知识**。「盒子之间的关系是业务信息」这句注释本来
-# 就写在 BOX_META 头上——它自己承认了这件事，只是放错了地方。放在看板层
-# 的直接后果是：盒子只能通过看板去知道自己接谁，换掉看板接线就丢了。
-# 而接线是「这只盒子是什么」的一部分，恰恰属于盒子自己。
-#
-# 搬走之后看板变成纯读者：box_meta() 从 definition.placement 取值，
-# 看板自己一个字都不持有。
+# 为什么接线不跟着盒子走：接线是**域**的事实，不是「这只盒子是什么」的一部分。
+# 盒子自己那份只声明了 5 条交接，真实链路有 8 条——差的 3 条藏在编排脚本里。
+# 照抄那份 = 域声明号称是唯一事实源，而它其实不是。
 
 
 def box_meta(box_id: str) -> dict[str, str]:
     """盒子的展示元信息（未注册盒子返回空 dict）
 
-    **来源是盒子自己的 definition，不是看板**。接线（feeds_into）和
-    价值流归属是业务知识，住在 `kanban/` 的话，换掉看板这只盒子
-    就不知道自己接谁——而接线是「这只盒子是什么」的一部分。
+    **来源是盒子自己的 definition，不是看板**。
+    展示位是业务知识，住在 `kanban/` 的话，换掉看板这只盒子
+    就不知道自己是什么。
     看板读它，不拥有它。
+
+    **接线不在这里**：接线是**域**的事实（`box_wiring()`）。
     """
     entry = BOX_REGISTRY.get(box_id)
     if entry is None:
         return {}
-    return entry[0]().placement.model_dump()
+    definition = entry[0]()
+    return {
+        "display_name": definition.display_name,
+        "value_stream": definition.value_stream,
+        "role": definition.role,
+    }
 
 
 def registered_box_ids() -> set[str]:
@@ -264,8 +269,8 @@ def box_domains(box_ids: Iterable[str]) -> dict[str, list[str]]:
     """按域分组盒子——**成员来自域声明**（唯一事实源）
 
     域成员住在 `domains/<域>/` 的声明里（`DomainDeclaration.boxes`）。
-    **不再从各盒自己的 `placement.domain` 派生**——
-    那是迁移期的旧事实源，两边并存必然漂。
+    **不再从各盒自己的声明派生**——
+    域归属也是域声明的事实；盒子自己那份已经退休，两边并存必然漂。
 
     `""`（不在任何域里）单独归到「未归域」，不假装它属于某个域。
     """
@@ -310,25 +315,25 @@ def domain_layout(domain: str) -> dict[str, Any]:
       「流水线」和「记账」是两件事。
     - **环序**：交接边的拓扑序，同层按 box_id 字母序（稳定）。
 
-    **依据是域声明，不是各盒自己的 `placement`**——
+    **依据是域声明**——
     接线事实只有一份（`domains/<域>/`）。
     """
     return _layout_from_map(domain_wiring(domain))
 
 
 # 「全部域」哨兵，与前端 ALL_DOMAINS 一致。
-# 它**不是**一个域：它没有 placement.domain，也没有成员表。
+# 它**不是**一个域：它没有成员表。
 ALL_DOMAINS_SCOPE = "__all__"
 
 
 # ===== Map（BeeBox Map）=====
 #
-# Map是**派生**的：唯一事实源是各盒自己的 placement（domain + 接线），
+# Map是**派生**的：唯一事实源是**域声明**（域归属 + 接线），
 # 这里把它推成一份**可复用的结构**，而不是看板内部的一种画法。
 # 画布上的虚线边界只是它的一张照片。
 #
 # 「再手写一张域接线表」= 第二份事实 = 必然漂，而且漂了不报错。
-# 所以Map永远从 placement 推；想让Map变，就去改那只盒子。
+# 所以Map永远从域声明推；想让Map变，就去改域声明。
 
 
 def box_facts() -> dict[str, BoxFacts]:
@@ -457,8 +462,8 @@ def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     ids = sorted(box_ids)
     # preds[b] = 哪些盒子把产出投给 b（b 的上游）
     #
-    # **依据是域声明的边**，不是各盒自己的 `placement.feeds_into`——
-    # 域声明才是唯一事实源。而且它比 `feeds_into` **多 3 条真实交接**
+    # **依据是域声明的边**——
+    # 域声明是唯一事实源。而且它比盒子自己那份旧接线声明**多 3 条真实交接**
     # （需求→测试、设计→测试、开发→运维），所以这个顺序更接近真实流水线。
     preds: dict[str, set[str]] = {b: set() for b in ids}
     for declaration in DOMAIN_REGISTRY.values():
@@ -1099,9 +1104,9 @@ def box_manifest(box_id: str) -> dict[str, Any]:
         "description": definition.description,
         "display_name": box_meta(box_id).get("display_name", box_id),
         "value_stream": box_meta(box_id).get("value_stream", ""),
-        "feeds_into": [
-            _hop(dst) for dst in box_meta(box_id).get("feeds_into", [])
-        ],
+        # **这里没有接线**——接线住在域声明里，
+        # 由 `box_context` 的 handoffs / archive 两栏分别呈现。
+        # 留一个空的接线键 = 声明了却拿不到。
         "tasks": tasks,
         "beelines": beelines,
         "produces": {
@@ -1191,26 +1196,23 @@ def box_context(
         })
 
     result_schema = definition.get_schema(result.result_schema)
-    placement = definition.placement
+    # **接线从域声明读**（`domains/<域>/`）——不再从盒子自己的字段读。
+    # 那份字段已经退休：照抄它会漏掉真实依赖，而两份事实并存必然漂。
+    wiring = box_wiring(box_id)
     return {
-        "value_stream": placement.value_stream,
-        "role": placement.role,
-        "self_name": placement.display_name or box_id,
-        # 上游从**别的盒子的 definition** 反推——接线只在「投给谁」那一侧
-        # 声明，「谁投给我」是同一条声明的另一边，两边各写一遍就会漂。
-        # 反推源是 BOX_REGISTRY（由各盒 definition 装起来的），不是看板的表。
-        "fed_by": [
-            _hop(src) for src in BOX_REGISTRY
-            if box_id in BOX_REGISTRY[src][0]().placement.feeds_into
-        ],
-        "feeds_into": [_hop(dst) for dst in placement.feeds_into],
-        # 反馈单列：并进 fed_by 会让「上游接着做」和「上一轮结论回到起点」
-        # 在单盒页上长得一样，而它们要求做的事完全不同
-        "feedback_from": [
-            _hop(src) for src in BOX_REGISTRY
-            if box_id in BOX_REGISTRY[src][0]().placement.feedback_into
-        ],
-        "feedback_into": [_hop(dst) for dst in placement.feedback_into],
+        "value_stream": definition.value_stream,
+        "role": definition.role,
+        "self_name": definition.display_name or box_id,
+        # 上游 = 域声明里「投给我」的那几条交接边。
+        # 「上游接着做」和「上一轮结论回到起点」是两件事，
+        # 所以反馈单列，不并进 fed_by。
+        "fed_by": [_hop(src) for src in wiring["handoff_from"]],
+        "handoffs": [_hop(dst) for dst in wiring["handoffs"]],
+        "feedback_from": [_hop(src) for src in wiring["feedback_from"]],
+        "feedback": [_hop(dst) for dst in wiring["feedback"]],
+        # 归档归属：产物进谁的档案。**它不是交接**——
+        # 档案盒是去线上读的，不收上游产出，所以没有「上游」方向。
+        "archive": [_hop(dst) for dst in wiring["archive"]],
         "consumes": consumes,
         "produces": {
             "type": result.type,

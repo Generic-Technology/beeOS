@@ -424,66 +424,20 @@ class MetricsDef(BaseModel):
     cost: list[MetricDef] = Field(default_factory=list)
 
 
-class PlacementDef(BaseModel):
-    """盒子在企业里站在哪
-
-    **为什么这部分是 beeBox 自带的，不住在看板里**：盒子要能作为独立
-    单元被描述和调用，调用方就得能知道它接谁、投给谁。这些是**这只盒子
-    是什么**的一部分，不是「看板长什么样」。
-
-    之前它们住在 `kanban/trigger.py` 的 BOX_META 里，后果是：盒子只能通过
-    看板去知道自己接谁，换掉看板接线就丢了——而接线恰恰是描述的一部分。
-    「盒子之间的关系是业务信息」这句注释本来就写在 BOX_META 头上，
-    它自己承认了这件事，只是放错了地方。
-
-    这里只定义**形状**，跟 metrics 同一个套路：`core` 知道字段叫什么，
-    `boxes/` 声明具体值。`core` 里不该出现「费用报销」这种业务值——
-    那属于 `boxes/`。
-
-    **feeds_into 是接线的唯一声明，fed_by 不另写**：一边声明「投给谁」，
-    另一边从注册表反推。两侧各写一遍的话，A 改了 B 忘了，
-    B 的页面上游就悄悄空了，而没有任何东西会报错。
-    反过来算则结构上不可能不一致。
-
-    **feedback_into 跟 feeds_into 分开声明，不合并成一个列表**：
-    「交出去让下游接着验」和「上一轮的结论回到起点变成新一轮输入」
-    是两件事——需求盒不会去验分析结论，它拿分析结论开新一轮需求。
-
-    混在一个列表里的后果不只是画线画错：`feeds_into` 是拓扑排序的输入，
-    一旦把闭环那条边当成交接声明，排序就遇到环，于是**静默**按原顺序
-    收尾——环上顺序变成任意的，看板照常渲染，只是结构是错的。
-    分开声明，闭环那条边不进拓扑排序，主干就永远无环。
-    """
-
-    model_config = _FORBID_EXTRA
-    display_name: str = Field(default="", description="给人看的名字")
-    value_stream: str = Field(default="", description="所属企业价值流")
-    role: str = Field(default="", description="业务责任单元的职责")
-    domain: str = Field(
-        default="",
-        description=(
-            "所属业务领域（如 WMS）。**跟 value_stream 是两个维度**："
-            "value_stream 答「在价值流哪一段」，domain 答「属于哪个业务领域」。"
-            "一只盒子可以既在软件交付价值流、又属于 WMS 域。"
-            "域的成员由各盒自己声明派生，不另立一张域表——"
-            "那正是 BOX_META 当年被拆掉的原因。"
-        ),
-    )
-    feeds_into: list[str] = Field(
-        default_factory=list,
-        description=(
-            "本盒产出**交出去**给哪些 box_id，让对方接着验"
-            "（接线唯一声明，流水线方向）"
-        ),
-    )
-    feedback_into: list[str] = Field(
-        default_factory=list,
-        description=(
-            "本盒产出**反馈**给哪些 box_id——驱动对方开新一轮，"
-            "不是交出去让对方验。闭环边（末位回到入口）走这里，"
-            "不进 feeds_into 的拓扑排序"
-        ),
-    )
+# **`PlacementDef` 已退休（2026-11-06）**
+#
+# 它当年存在的理由是：「调用方得能知道这只盒子接谁、投给谁——
+# 接线是**描述**的一部分，不是看板长什么样」。
+# 接线搬到**域声明**（`domains/<域>/`）之后，这个理由没了：
+# 接线不再是「盒子自己的字段」，而是**域的事实**。
+#
+# 剩下的三样（`display_name` / `value_stream` / `role`）是**展示位**，
+# 新协议里本来就在顶层，所以旧协议也跟着摊平——
+# 留着个只剩三个字段的壳子，只会让「placement」这个名字继续骗人。
+#
+# **判据**：新协议（`core/scaffold.py` 的 `BoxDeclaration`）里
+# 已经没有 `domain` / `feeds_into` / `feedback_into`，
+# 旧协议这里也不再有 `placement`。
 
 
 # ============================================================
@@ -501,12 +455,13 @@ class BeeBoxDefinition(BaseModel):
     - 履约合同 Contract（result）
     - 履约政策 Policy（queen）
     - 履约度量 Metrics
-    - 业务归属 Placement（接谁 / 投给谁，见 PlacementDef）
+    - 展示位（display_name / value_stream / role）
 
     机制层独立：
     - task[].beeline_id + version（不作为顶层独立字段）
 
-    **placement 归盒子自己**：看板读它，不拥有它。
+    **接线不在这里**：盒子之间怎么连，是**域**的事实（`domains/<域>/`），
+    不再是盒子自己的字段。旧协议里的 `placement` 已退休（2026-11-06）。
     """
 
     model_config = _FORBID_EXTRA
@@ -519,7 +474,10 @@ class BeeBoxDefinition(BaseModel):
     result: ResultDef
     queen: QueenDef
     metrics: MetricsDef
-    placement: PlacementDef = Field(default_factory=PlacementDef)
+    # ---- 展示位（原来住在 placement 里，退休后摊平到顶层）----
+    display_name: str = Field(default="", description="给人看的名字")
+    value_stream: str = Field(default="", description="所属企业价值流")
+    role: str = Field(default="", description="业务责任单元的职责")
 
     def get_schema(self, schema_id: str) -> Optional[SchemaDef]:
         """按 id 查找 schema"""

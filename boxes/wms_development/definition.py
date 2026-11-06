@@ -4,7 +4,7 @@ WMS 开发盒——**按设计包改代码**，把方案变成能构建、能跑
 定位源码 → 改 → 编译 → 跑仓库自带的测试套件 → 制品。
 
 按 Fulfillment 5 维度 + 度量组织：
-- 基础元信息 + placement（归属 / 接谁 / 投给谁 / 属于哪个域）
+- 基础元信息 + 展示位（显示名 / 价值流 / 角色）
 - 数据形状（schemas）
 - 履约意图 Intent（task）
 - 履约合同 Contract（result + 4 条机械 acceptance + 2 条 exception）
@@ -52,8 +52,6 @@ DECLARATION = BoxDeclaration(
     display_name="WMS Development Box",
     value_stream="Software Delivery",
     role="WMS Implementation Fulfillment",
-    domain="WMS",
-    feeds_into=['wms_testing_box', 'wms_system_box'],
 
     # ---- 投料入口（Intent）----
     task_type="handle_development_request",

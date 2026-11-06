@@ -53,19 +53,6 @@ DECLARATION = BoxDeclaration(
     display_name="WMS Requirement Box",
     value_stream="Software Delivery",
     role="WMS Requirement Capture Fulfillment",
-    domain="WMS",
-    # 接线只写「投给谁」。「谁投给我」由注册表反推——
-    # 两侧各写一遍的话，这边改了那边忘了，那只盒子
-    # 的上游就悄悄空了，而没有任何东西会报错。
-    # **只有设计盒**。v1 里还有一条 wms_system_box，那是反的：
-    # 需求盒产出的是系统档案的**输入**（读基线：这份系统该是什么样），
-    # 不是往档案里加东西。声明它「投给」系统盒，等于说档案是需求盒的下游，
-    # 而真实关系正好相反。
-    #
-    # 这条假边还制造了一个更实际的问题：它让 requirement 也成了
-    # feeds_center 的一员，于是「五个生命周期盒都往系统盒汇」这句话
-    # 在数据上不再成立，而拓扑图是照着这句话画的。
-    feeds_into=["wms_design_box"],
 
     # ---- 投料入口（Intent）----
     task_type="capture_business_requirement",

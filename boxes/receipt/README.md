@@ -57,5 +57,9 @@ print(box.id, box.version, box.result.maturity)
 
 ## 边界
 
-本盒**未归域**（`placement.domain` 为空）——票据识别还没划进哪个业务域，
+本盒**未归域**——票据识别还没划进哪个业务域，
 但合同、判据、例外都已就位并注册进看板。
+
+（归域是**域声明**的事：`domains/<域>/domain.py` 的成员表。
+没归域的盒子要在 `domains/__init__.py` 的 `STANDALONE_BOXES` 里**点名**——
+「忘了加进域」和「有意独立」不能分不开。）

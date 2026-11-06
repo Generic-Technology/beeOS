@@ -25,6 +25,7 @@ import tomllib
 
 import pytest
 
+from domains import domains_of
 from kanban.trigger import BOX_REGISTRY
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -75,8 +76,7 @@ class TestTheDirectoryNameMatchesTheBox:
         wms_design_box → boxes/wms_design
         wms_requirement_box → boxes/wms_requirement
         """
-        definition = BOX_REGISTRY[box_id][0]()
-        if definition.placement.domain != "WMS":
+        if "WMS" not in domains_of(box_id):
             pytest.skip("不是 WMS 域的盒子，不受这条约束")
         expected = box_id[:-len("_box")]
         assert _package_of(box_id) == expected, (
@@ -91,13 +91,12 @@ class TestTheDirectoryNameMatchesTheBox:
         否则「wms_* = WMS 域的盒子」这条规则又会失效——
         而读者正是靠它来判断一只盒子属于哪个域。
         """
-        definition = BOX_REGISTRY[box_id][0]()
         package = _package_of(box_id)
-        if definition.placement.domain == "WMS":
+        if "WMS" in domains_of(box_id):
             assert package.startswith("wms_")
         else:
             assert not package.startswith("wms_"), (
-                f"{box_id}（domain={definition.placement.domain or '未归域'}）"
+                f"{box_id}（域={', '.join(domains_of(box_id)) or '未归域'}）"
                 f"用了 wms_ 前缀——这会让「wms_* 就是 WMS 域」这条规则失效"
             )
 
@@ -182,7 +181,7 @@ class TestThePackagingListMatchesDisk:
 
 class TestTheNamingRuleIsNotASecondTable:
     def test_the_rule_is_derived_not_declared(self):
-        """规则从 box_id 和 placement.domain 推出来，不另立一张对照表
+        """规则从 box_id 和**域声明**推出来，不另立一张对照表
 
         另立一张表 = **第二份事实**：它会跟盒子自己的声明漂，
         而漂了没人报错——跟以前 BOX_META 那张表一个下场。

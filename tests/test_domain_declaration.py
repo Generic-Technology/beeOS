@@ -15,22 +15,24 @@
 | 装配总闸 | 域声明本身不合法（域级装配器当场拒）|
 | 真的在装配 | 注册表里的声明就是模块里那个，域装配器确实跑了 |
 | 全局归属 | 每只盒子要么在域里，要么**显式**独立；不能两处都算 |
-| 迁移期双写 | 盒子上的旧接线字段跟域声明**不得矛盾** |
+| 退休 | 旧接线字段**不得复活**（一只盒子不许同时留两套）|
 
-## 为什么「旧字段」还要留
+## 旧字段已经退休（2026-11-06）
 
-`placement.domain` / `feeds_into` / `feedback_into` 正在退休，
-但盒子还没迁完新协议。**两份事实并存 = 必然漂**，
-而漂了不报错——所以这里不把它们删掉，而是**钉住它们跟域声明不矛盾**：
+`placement.domain` / `feeds_into` / `feedback_into` 这三个字段**退休了**。
 
-- 旧 `feeds_into` 的每一条，域声明里都得有对应的边
-- 旧 `feedback_into` 的每一条，域声明里都得是 `feedback` 边
-- 旧 `placement.domain` 说它在哪个域，域声明就得把它算进那个域
+迁移期它们跟域声明**双写**，那时候这里守的是「不矛盾」
+（域声明比旧字段**多** 3 条真实交接：需求→测试、设计→测试、开发→运维，
+那 3 条以前藏在编排脚本里。要求「完全一样」等于逼着人把真实依赖藏起来）。
 
-**不是「两边一样」**——域声明比旧字段**多**：
-真实的数据依赖图比 `feeds_into` 多 3 条交接
-（需求→测试、设计→测试、开发→运维），那 3 条以前藏在脚本里。
-要求「完全一样」等于逼着人把真实依赖藏起来。
+现在旧字段已经摘干净，这条守卫换成**更硬**的那条：
+**不许再定义**这三个名字。
+
+- 判据是「**定义**」，不是「字符串里不许有」——
+  退休名出现在**读**的地方（兼容层读旧产出）没问题，
+  出现在**定义**的地方（模型字段、声明关键字）才是复活。
+- 为什么守得住：盒子身上再留一份接线 = **两套接线**，
+  而两套接线迟早给出不同答案——到那时没人知道该信哪份。
 """
 
 from __future__ import annotations
@@ -43,9 +45,8 @@ from domains import DOMAIN_REGISTRY, STANDALONE_BOXES
 from kanban.trigger import BOX_REGISTRY, box_facts, domain_assemblies
 
 
-def _legacy_placement(box_id: str):
-    """盒子自己的旧接线声明（迁移期还在）"""
-    return BOX_REGISTRY[box_id][0]().placement
+#: 退休的接线字段名——**不许再定义**
+RETIRED_WIRING_FIELDS = ("placement", "domain", "feeds_into", "feedback_into")
 
 
 # ============================================================
@@ -200,77 +201,71 @@ class TestEveryBoxBelongsSomewhere:
 
 
 # ============================================================
-# 4. 迁移期双写：旧字段跟域声明不得矛盾
+# 4. 退休：旧接线字段不得复活
 # ============================================================
 
-class TestTheLegacyFieldsDoNotContradictTheDeclaration:
-    """旧接线字段正在退休，但**还在**——两份事实并存时必须钉住不矛盾"""
+class TestTheRetiredWiringFieldsAreGone:
+    """旧接线字段**已经摘干净**——一只盒子不许同时留两套接线
 
-    def _domains_of(self, box_id: str) -> list[str]:
-        return [d.id for d in DOMAIN_REGISTRY.values() if box_id in d.boxes]
+    **判据是「不许再定义」**，不是「字符串里不许有」：
+    退休名出现在**读**的地方（兼容层读旧产出）没问题，
+    出现在**定义**的地方（模型字段、声明关键字）就是复活了。
+    """
 
-    def test_a_legacy_edge_exists_in_the_domain_declaration(self):
-        """旧 `feeds_into` 的每一条，域声明里都得有对应的**交接或归档**边
-
-        旧字段是**有损**的投影（它把「数据交接」和「归档归属」混在一个列表里），
-        所以这里不比「完全一样」，只比**不矛盾**：
-        旧字段说有的边，域声明里一条都不能没有。
-
-        **为什么不能是 `feedback`**：旧协议把反馈边单独放在 `feedback_into`，
-        所以旧 `feeds_into` 里的每一条都是「我把产出交给它」或「我的产出进它」。
-        域声明把它说成 `feedback` = 两边对**这条边是什么性质**的判断不一致。
-        """
+    def test_no_box_carries_a_placement(self):
+        """盒子身上没有 `placement` 这个属性了"""
         for box_id in BOX_REGISTRY:
-            placement = _legacy_placement(box_id)
-            domains = self._domains_of(box_id)
-            if not domains:
-                continue
-            declared_pairs = {
-                (e.from_box, e.to_box)
-                for did in domains
-                for e in DOMAIN_REGISTRY[did].edges
-                if e.kind != EdgeKind.feedback
-            }
-            for target in placement.feeds_into:
-                assert (box_id, target) in declared_pairs, (
-                    f"{box_id!r} 的旧 feeds_into 说它投给 {target!r}，"
-                    f"域声明里却没有这条交接/归档边——两边矛盾了，"
-                    f"看板读的是域声明，所以这条关系会**在图上消失**"
-                )
-
-    def test_a_legacy_feedback_edge_is_a_feedback_edge_in_the_declaration(self):
-        """旧 `feedback_into` 的每一条，域声明里都得是 `feedback` 边
-
-        反馈边混进交接边 = 主干成环 = 环序排不出来（看板会静默按原顺序收尾）。
-        """
-        for box_id in BOX_REGISTRY:
-            placement = _legacy_placement(box_id)
-            domains = self._domains_of(box_id)
-            if not domains:
-                continue
-            feedback_pairs = {
-                (e.from_box, e.to_box)
-                for did in domains
-                for e in DOMAIN_REGISTRY[did].edges
-                if e.kind == EdgeKind.feedback
-            }
-            for target in placement.feedback_into:
-                assert (box_id, target) in feedback_pairs, (
-                    f"{box_id!r} 的旧 feedback_into 说它反馈给 {target!r}，"
-                    f"域声明里却没有这条 feedback 边——"
-                    f"两边对「这条边是什么性质」的判断不一致"
-                )
-
-    def test_the_legacy_domain_field_matches_the_declaration(self):
-        """旧 `placement.domain` 说它在哪个域，域声明就得把它算进那个域"""
-        for box_id in BOX_REGISTRY:
-            placement = _legacy_placement(box_id)
-            if not placement.domain:
-                continue
-            assert box_id in DOMAIN_REGISTRY[placement.domain].boxes, (
-                f"{box_id!r} 的旧 placement.domain 说它属于 "
-                f"{placement.domain!r}，域声明的成员清单里却没有它"
+            definition = BOX_REGISTRY[box_id][0]()
+            assert not hasattr(definition, "placement"), (
+                f"{box_id!r} 身上还有 placement——接线住在域声明里，"
+                f"盒子身上再留一份 = 两套接线并存"
             )
+
+    def test_the_display_fields_live_at_the_top_level(self):
+        """展示位摊平到顶层（原来在 placement 里）"""
+        for box_id in BOX_REGISTRY:
+            definition = BOX_REGISTRY[box_id][0]()
+            for field in ("display_name", "value_stream", "role"):
+                assert hasattr(definition, field), (
+                    f"{box_id!r} 少了顶层展示位 {field!r}"
+                )
+
+    def test_no_definition_declares_the_retired_wiring(self):
+        """各盒的 `definition.py` 里不许再声明那三个字段
+
+        **用 AST 查**，不查字符串：注释里提一句「以前有 feeds_into」
+        是历史说明，不是在定义接线。
+        """
+        import ast
+        import pathlib
+
+        repo = pathlib.Path(__file__).resolve().parent.parent
+        offenders: list[str] = []
+        for path in sorted(repo.glob("boxes/*/definition.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = getattr(func, "id", None) or getattr(func, "attr", None)
+                if name not in ("BoxDeclaration", "BeeBoxDefinition"):
+                    continue
+                for kw in node.keywords:
+                    if kw.arg in ("domain", "feeds_into", "feedback_into", "placement"):
+                        offenders.append(f"{path.name}:{kw.lineno} {kw.arg}=")
+        assert not offenders, (
+            "接线字段又回来了（一只盒子不许同时留两套）：\n  " + "\n  ".join(offenders)
+        )
+
+    def test_the_domain_declaration_is_the_only_wiring_source(self):
+        """域声明里的边 = 接线事实；盒子上再没有第二份"""
+        from domains import box_wiring
+
+        for box_id in BOX_REGISTRY:
+            wiring = box_wiring(box_id)
+            # 归档、交接、反馈三组都只从域声明来
+            for group in ("handoffs", "handoff_from", "feedback", "feedback_from"):
+                assert isinstance(wiring[group], list)
 
 
 # ============================================================

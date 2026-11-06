@@ -3,7 +3,7 @@
 WMS 运维盒——管**上线之后**的事：变更审批、发布执行、故障处置、回滚能力、以及把线上真实状态回写进系统档案。
 
 按 Fulfillment 5 维度 + 度量组织：
-- 基础元信息 + placement（归属 / 接谁 / 投给谁 / 属于哪个域）
+- 基础元信息 + 展示位（显示名 / 价值流 / 角色）
 - 数据形状（schemas）
 - 履约意图 Intent（task）
 - 履约合同 Contract（result + 4 条机械 acceptance + 2 条 exception）
@@ -52,8 +52,6 @@ DECLARATION = BoxDeclaration(
     display_name="WMS Ops Box",
     value_stream="Software Delivery",
     role="WMS Operations Fulfillment",
-    domain="WMS",
-    feeds_into=['wms_analysis_box', 'wms_system_box'],
 
     # ---- 投料入口（Intent）----
     task_type="handle_ops_request",

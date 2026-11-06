@@ -2,11 +2,12 @@
 
 **这里是「WMS 域里这些盒子怎么连」的唯一事实源。**
 
-## 边是**完整的数据依赖图**，不是 `feeds_into` 那几��
+## 边是**完整的数据依赖图**，不是「盒子上写的那几行」
 
-`placement.feeds_into` 只声明了 5 条交接，但真实链路（`scripts/run_chain.py` 实跑）
-有 **8 条**——另外 3 条（需求→测试、设计→测试、开发→运维）**一直藏在脚本里**。
-只照搬 `feeds_into`，那 3 条会继续藏着，而这里号称是唯一事实源。
+旧协议里，每只盒子自己写着「我投给谁」——那只声明了 5 条交接，
+但真实链路（`scripts/run_chain.py` 实跑）有 **8 条**：
+另外 3 条（需求→测试、设计→测试、开发→运维）**一直藏在脚本里**。
+照搬那 5 条，这 3 条会继续藏着，而这里号称是唯一事实源。
 
 ## 归档边没有通道，而且它**不是交接**
 
@@ -55,7 +56,7 @@ DOMAIN = DomainDeclaration(
         Edge(from_box="wms_development_box", to_box="wms_testing_box",
              kind=EdgeKind.handoff, via="artifact_ref"),
         # ↓ 这两条**原来只存在于 scripts/run_chain.py 里**，
-        #   `placement.feeds_into` 根本没声明。
+        #   盒子上写的接线声明根本没提。
         Edge(from_box="wms_requirement_box", to_box="wms_testing_box",
              kind=EdgeKind.handoff, via="requirement_ref"),
         Edge(from_box="wms_design_box", to_box="wms_testing_box",

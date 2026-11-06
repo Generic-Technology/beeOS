@@ -90,6 +90,39 @@ HISTORICAL_DOCS = {
     "docs/wms-closure-plan.md",
 }
 
+#: **退休的接线字段名**（2026-11-06）
+#:
+#: 接线搬进了域声明（`domains/<域>/`），盒子自己那份声明就退休了。
+#: 三个名字一起退：`placement`（那个壳）、`domain`（域归属）、`feeds_into`（交接）。
+#:
+#: **为什么「一只盒子不许同时留两套」**：两份接线迟早给出不同答案，
+#: 而到那时没人知道该信哪份——看板读的是域声明，
+#: 于是「盒子上写的那份」会静静地失效，看着一切正常。
+RETIRED_WIRING_FIELDS = ("placement", "feeds_into", "feedback_into")
+
+#: **退休的接线字段，只许作为「历史说明」出现在文档里**
+#:
+#: 接线搬家这件事本身必须写得出旧名——不然读者看不懂「改了什么」，
+#: 决策的理由也就跟着没了。所以豁免**那一篇讲这次搬家的文档**，
+#: 别的文档提到旧名就是在教人走一条已经不通的路。
+#:
+#: **豁免的前提**：旧名在**代码**里确实已经退休
+#: （`test_the_retired_wiring_fields_are_not_back_in_code` 照常跑）。
+DOCS_MAY_MENTION_RETIRED_WIRING = {
+    "docs/domain-declaration.md",
+}
+
+#: 接线字段在**盒子声明**里不许再出现的关键字
+#:
+#: `domain` 不在这份名单的「裸名」一栏里——它太泛
+#: （`domain_wiring(domain)` 这种参数名是合法的）。
+#: 它只在**声明的关键字**这一层被判：往 `BoxDeclaration(...)` 里写
+#: `domain=` = 又在盒子身上留了一份接线。
+RETIRED_WIRING_KEYWORDS = ("domain", "feeds_into", "feedback_into", "placement")
+
+#: 声明这些关键字的调用（= 盒子的声明）
+DECLARATION_CALLS = ("BoxDeclaration", "BeeBoxDefinition", "PlacementDef")
+
 # 已经搬走 / 拆掉的模块名：import 它 = 文档在教人一条走不通的路
 RETIRED_MODULES = ("beelines",)
 
@@ -393,6 +426,83 @@ def test_the_retired_names_are_not_back_in_code() -> None:
                 bad.append(
                     f"{_rel(path)}: 声明了 id=`{node.value.value}` —— 这是退休名"
                 )
+    assert not bad, "\n".join(bad)
+
+
+def test_the_retired_wiring_fields_are_not_back_in_code() -> None:
+    """接线字段退休了（2026-11-06）——**不许再定义**
+
+    **判据是「不许再定义」，不是「字符串里不许有」**：
+    - 退休名出现在**读**的地方（兼容层读旧产出）没问题
+    - 出现在**定义**的地方（变量 / 函数 / 类 / 参数 / 声明关键字）就是复活
+
+    ## 为什么不留空壳
+
+    留一个「能写但没人读」的字段 = **两套接线并存**。
+    两套接线迟早给出不同答案，而看板读的是域声明——
+    所以「盒子上写的那份」会静静地失效，看着一切正常。
+
+    ## `domain` 为什么不在裸名名单里
+
+    `domain` 太泛：`domain_wiring(domain)` 这种参数名是合法的。
+    它只在**声明的关键字**这一层被判——
+    往 `BoxDeclaration(...)` 里写 `domain=` = 又在盒子身上留了一份接线。
+    """
+    bad: list[str] = []
+    for path in sorted(ROOT.rglob("*.py")):
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        if path.resolve() == SELF:
+            continue  # 退休名单本身就住在这个文件里
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                if node.id in RETIRED_WIRING_FIELDS:
+                    bad.append(f"{_rel(path)}: 变量 `{node.id}` 是退休的接线字段")
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.name in RETIRED_WIRING_FIELDS:
+                    bad.append(f"{_rel(path)}: 定义 `{node.name}` 是退休的接线字段")
+                if node.name == "PlacementDef":
+                    bad.append(
+                        f"{_rel(path)}: `PlacementDef` 已整体退休——"
+                        f"它当年存在的理由（接线是描述的一部分）已经没了"
+                    )
+            if isinstance(node, ast.arg) and node.arg in RETIRED_WIRING_FIELDS:
+                bad.append(f"{_rel(path)}: 参数 `{node.arg}` 是退休的接线字段")
+            # 盒子声明里的关键字：`BoxDeclaration(domain=...)` = 接线又回来了
+            if isinstance(node, ast.Call):
+                func = node.func
+                name = getattr(func, "id", None) or getattr(func, "attr", None)
+                if name in DECLARATION_CALLS:
+                    for kw in node.keywords:
+                        if kw.arg in RETIRED_WIRING_KEYWORDS:
+                            bad.append(
+                                f"{_rel(path)}:{node.lineno}: "
+                                f"{name}(...) 里写了 `{kw.arg}=`——"
+                                f"接线字段退休了，它只住在域声明里"
+                            )
+    assert not bad, "\n".join(bad)
+
+
+@pytest.mark.parametrize("md", _md_files(), ids=_rel)
+def test_md_has_no_retired_wiring_fields(md: Path) -> None:
+    """文档里不许把退休的接线字段当**现状**教人
+
+    **豁免那一篇讲这次搬家的文档**：搬家这件事必须写得出旧名，
+    不然读者看不懂「改了什么」。别的文档提到旧名 =
+    在教人走一条已经不通的路。
+    """
+    if _rel(md) in HISTORICAL_DOCS or _rel(md) in DOCS_MAY_MENTION_RETIRED_WIRING:
+        pytest.skip(f"{_rel(md)} 是这次搬家的记录文档，写得出旧名")
+    text = md.read_text(encoding="utf-8")
+    bad: list[str] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for name in RETIRED_WIRING_FIELDS:
+            if name in line:
+                bad.append(f"{_rel(md)}:{lineno}: 退休字段 `{name}` 出现在文档里")
     assert not bad, "\n".join(bad)
 
 

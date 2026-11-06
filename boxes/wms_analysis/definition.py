@@ -4,7 +4,7 @@ WMS 线上效果分析盒——上线之后拿真实运行数据回头看：**�
 线上到底满足了没有**。落差就是下一轮需求的种子。
 
 按 Fulfillment 5 维度 + 度量组织：
-- 基础元信息 + placement（归属 / 接谁 / 投给谁 / 反馈给谁 / 属于哪个域）
+- 基础元信息 + 展示位（显示名 / 价值流 / 角色）
 - 数据形状（schemas）
 - 履约意图 Intent（task）
 - 履约合同 Contract（result + 4 条机械 acceptance + 2 条 exception）
@@ -17,10 +17,13 @@ WMS 线上效果分析盒——上线之后拿真实运行数据回头看：**�
 **不声明任何指标**：没有基线就不声明「线上该是多少」，
 凭空写一个数字只会让看板上出现一个没人解释过的指标。
 
-## 接线上为什么是 feedback_into 而不是 feeds_into
+## 接线上为什么是「反馈」而不是「交接」
 
 它产出「线上满不满足需求」这个结论，这个结论**不是**交给需求盒去验的
 （需求盒不会去验），它是拿去**开新一轮需求**的——所以是反馈。
+
+（这两条边都声明在**域声明**里：`domains/wms/domain.py`。
+接线不在盒子自己身上——一只盒子不许同时留两套。）
 
 而 ops → analysis 才是交接：ops 把线上真实状态投过来，分析接着比。
 所以链路是 ops ─交接→ analysis ─反馈→ requirement，
@@ -61,11 +64,6 @@ DECLARATION = BoxDeclaration(
     display_name="WMS Analysis Box",
     value_stream="Software Delivery",
     role="WMS Post-Release Effect Analysis Fulfillment",
-    domain="WMS",
-    # 交接：ops 把线上真实状态投过来，分析接着比
-    feeds_into=['wms_system_box'],
-    # 反馈：分析结论回到需求口，开新一轮——它不是交给需求去验的
-    feedback_into=['wms_requirement_box'],
 
     # ---- 投料入口（Intent）----
     task_type="handle_effect_analysis_request",

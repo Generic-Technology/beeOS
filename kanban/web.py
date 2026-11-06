@@ -227,7 +227,7 @@ def dashboard_data(
         exceptions = store.list_exceptions(limit=5)
 
     # Boxes（按 filter）
-    # 排序按业务流向（feeds_into 声明），不是字母序也不是注册序
+    # 排序按业务流向（域声明的边），不是字母序也不是注册序
     #
     # **名单来自注册表，不来自运行记录**。以前是 `store.list_boxes()`，
     # 那个函数返回「跑过过的盒子」——于是一只还没跑过的盒子在看板上
@@ -1680,7 +1680,7 @@ async function fetchData() {{
 
 // ===== Domain 视图切换 =====
 //
-// **域成员是服务端算好的**（box_domains 从各盒 placement.domain 派生）。
+// **域成员是服务端算好的**（box_domains 从**域声明**的成员表派生）。
 // 前端不再自己判断「哪只盒子算 WMS」——那种判断写在 JS 里就是第二份
 // 业务知识，改了盒子忘了改 JS，看板就会把一只盒子归错域，而且不报错。
 //
@@ -1886,7 +1886,7 @@ function currentScopeLayout(scopeLayouts) {{
 // 两件事对不上，而且**没有任何东西提示他口径变了**。
 //
 // **域成员从服务端 payload 的 `domains` 取**——那份数据是从各盒自己的
-// `placement.domain` 派生的，前端不自己列名单（自己列 = 第二份真相）。
+// **域声明**派生的，前端不自己列名单（自己列 = 第二份真相）。
 //
 // 返回 null = 不筛（全部域）。筛选是**显示**口径：顶部的验收率分母
 // 仍是全平台的（见 applyDomainFilter 那段注释）。
@@ -2394,7 +2394,7 @@ function decideRun(runId, decision) {{
 // 它在**门牌**上，不在盒子目录卡里——定位是门牌的事（域 / 价值流 / 角色
 // 都在那儿），卡只讲接口和表现。同一份信息两处各留一份，迟早对不上。
 //
-// 上游是**反推**来的（别人的 feeds_into 声明了本盒），显示名随 id 一起
+// 上游是**反推**来的（域声明里有「投给我」的那条边），显示名随 id 一起
 // 由后端给（box_context 的 _hop）——前端只有当前这一只盒的名字表，
 // 自己补会露出原始 id。
 function wiringRows(box) {{
@@ -2402,9 +2402,10 @@ function wiringRows(box) {{
   const self = ctx.self_name || box.box_id;
   const nm = (h) => esc(h.name || h.id);
   const up = (ctx.fed_by || []).map(nm);
-  const down = (ctx.feeds_into || []).map(nm);
+  const down = (ctx.handoffs || []).map(nm);
   const fbIn = (ctx.feedback_from || []).map(nm);
-  const fbOut = (ctx.feedback_into || []).map(nm);
+  const fbOut = (ctx.feedback || []).map(nm);
+  const arch = (ctx.archive || []).map(nm);
   const chain = (up.length ? up.join(' → ') + ' → ' : '')
     + `<span class="wire-me">${{esc(self)}}</span>`
     + (down.length ? ' → ' + down.join(' → ') : '');
@@ -2416,6 +2417,13 @@ function wiringRows(box) {{
     if (fbOut.length) fb.push('回到 ' + fbOut.join('、'));
     rows += `<div class="spec-row"><span class="k">反馈</span>`
       + `<span class="v wire">${{esc(fb.join('；'))}}</span></div>`;
+  }}
+  // **归档单列**：产物进档案 ≠ 交给下游验。
+  // 混进「接线」那一行，读者会以为档案盒接了这份产出——
+  // 它根本不接（档案盒是去线上读的，0 个 ref 通道）。
+  if (arch.length) {{
+    rows += `<div class="spec-row"><span class="k">归档</span>`
+      + `<span class="v wire">产物进 ${{esc(arch.join('、'))}}</span></div>`;
   }}
   return rows;
 }}
@@ -2690,7 +2698,7 @@ function renderCube(box) {{
   // CSS 3D 玻璃履约盒（仅用于多盒总览的小盒；单盒聚焦视图是 2D 流水线）
   // 默认角度比以前大（-14 / -24）。立体感靠角度露侧面，
   // 角度给小了立方体就是一张正方形的纸。
-  // data-box-domain 供域切换用；值取自各盒自己的 placement.domain。
+  // data-box-domain 供域切换用；值取自**域声明**的成员表。
   //
   // 卡片是**真链接**而不是 div + click：这样 cmd/中键打开、复制链接、
   // 键盘 Tab 过去全都自动可用。用 click 模拟出来的「可点」卡片
@@ -2705,7 +2713,7 @@ function renderCube(box) {{
 // ===== 环形视图：中心 = 域内唯一汇点 =====
 //
 // **中心、环序、两类边全部来自服务端 layout**（`domain_layout` 从各盒
-// placement.feeds_into 推导）。前端一个 box_id 都不认，也不判断
+// 域声明的边推导）。前端一个 box_id 都不认，也不判断
 // 「哪只盒子该在中心」——那是业务事实，住在盒子里。
 //
 // 两类边分开画，因为是两件事：
@@ -3631,13 +3639,15 @@ function renderBoxMetrics(metrics) {{
 function buildShell(boxId, box, entries) {{
   // 静态 shell：只建一次——工位图 DOM 不随 2s 刷新重建
   window._taskEntries = {{}};
-  // 接力目标：盒子之间的关系声明在各盒 definition.placement.feeds_into
-  // （业务信息跟着盒子走，不在前端硬编码）。
+  // 接力目标：域声明里「本盒 → 下游」的那些**交接**边
+  // （业务信息跟着域走，不在前端硬编码）。
+  // **只认真交接**：归档边不是接力目标——档案盒不收上游产出，
+  // 把它列进来，接力过去必被投料拒。
   // 显示名取 box_context 随 id 一起给的那份——单盒过滤时前端手里只有
   // 当前这一只盒的名字表，自己补就会露出 box_id 原文。
   // （所以这里也不写任何具体 box_id：前端一旦认得某个名字，
   //   就有能力决定「谁在中心」，而那件事属于接线。）
-  window._feedsInto = ((box && box.box_context && box.box_context.feeds_into) || [])
+  window._handoffs = ((box && box.box_context && box.box_context.handoffs) || [])
     .map((h) => ({{ box_id: h.id, display_name: h.name || h.id }}));
   let options = '';
   let ops = [];
@@ -3806,13 +3816,13 @@ function renderArtifactInto() {{
 // 接力：本盒产出 → 下游盒投料口
 // 渲染在 ACCEPTANCE 栏底部：这条链是「算 → 出 → 判 → 交」，
 // 「交」这个动作属于判完之后，不属于产物旁边。
-// 目标盒子来自各盒 definition.placement.feeds_into
+// 目标盒子来自域声明里「本盒 → 下游」的交接边
 // （盒子之间的关系是业务信息，跟着盒子走，不在前端硬编码）。
 // 投料字段按下游 task_schema 裁剪——把捕获盒的 evidence / 抽取者等内部字段
 // 一起塞给下游会让人分不清哪些是对方需要的。
 function renderRelayBar() {{
   const a = _boxState.artifact;
-  const targets = window._feedsInto || [];
+  const targets = window._handoffs || [];
   if (!a || !targets.length) return '';
   // 履约中止没有产出，也就没有东西可放行。画一个禁用的放行口会读成
   // "东西在这儿只是没过检"——实际是没有东西。别画。
@@ -4896,7 +4906,7 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
 
         # 盒间接力：{投料字段名: 上游 task_run_id}
         #
-        # 以前 6 只盒子之间**没有数据通道**——feeds_into 只是看板上的箭头，
+        # 以前 6 只盒子之间**没有数据通道**——接线声明只是看板上的箭头，
         # 投料要人手工把上游产出 copy 进下游的 payload。
         # 现在它是一个声明：目标字段必须是 `ref:` 类型，
         # 交接通道按**目标盒自己声明的形状**校验上游产出再接上。

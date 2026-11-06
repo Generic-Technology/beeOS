@@ -90,15 +90,18 @@ class TestTheWorkshopNamesNoBox:
 
 
 class TestTheWorkshopRetypesNoBusinessFact:
-    def test_no_placement_value_is_written_into_the_workshop(self):
-        """归属、域、价值流的值都住在盒子里，工作台只读
+    def test_no_business_fact_is_written_into_the_workshop(self):
+        """归属、域、价值流的值都住在盒子里（或域声明里），工作台只读
 
         跟看板那条守卫同一条规矩：值重敲一遍 = 第二份真相。
         """
+        from domains import domains_of
+
         facts = set()
-        for get_def, _bl in BOX_REGISTRY.values():
-            p = get_def().placement
-            facts |= {p.display_name, p.value_stream, p.role, p.domain}
+        for box_id, (get_def, _bl) in BOX_REGISTRY.items():
+            d = get_def()
+            facts |= {d.display_name, d.value_stream, d.role}
+            facts |= set(domains_of(box_id))
         facts = {f for f in facts if f}
 
         offenders = []
@@ -118,7 +121,7 @@ class TestTheWorkshopRetypesNoBusinessFact:
                     offenders.append(f"{path.name}:{node.lineno} {node.value!r}")
         assert not offenders, (
             "工作台里又敲了一遍业务事实的值：\n  " + "\n  ".join(offenders)
-            + "\n它们应该只住在各盒 definition 的 placement 里"
+            + "\n它们应该只住在各盒 definition（或域声明）里"
         )
 
 

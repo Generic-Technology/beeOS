@@ -61,10 +61,6 @@ DECLARATION = BoxDeclaration(
     display_name="WMS Design Box",
     value_stream="Software Delivery",
     role="WMS Design Fulfillment",
-    # 需求 → 设计 → 开发 是生命周期主链；设计还直接投给系统档案盒，
-    # 因为「系统由哪些服务组成」这个问题，最早由设计给出答案。
-    domain="WMS",
-    feeds_into=["wms_development_box", "wms_system_box"],
 
     # ---- 投料入口（Intent）----
     task_type="handle_design_request",

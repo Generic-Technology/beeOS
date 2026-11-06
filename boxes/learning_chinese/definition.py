@@ -55,10 +55,6 @@ DECLARATION = BoxDeclaration(
     display_name="语文盒",
     value_stream="Learning",
     role="语文学习事件的履约",
-    domain="Learning",
-    # **放射形状**：本域没有交接链——语文的产出不是别科的输入，
-    # 它们各自直投成长记录盒。接线在生成时就填好了。
-    feeds_into=["learning_growth_box"],
 
     # ---- 投料入口（Intent）----
     task_type="run_chinese",
