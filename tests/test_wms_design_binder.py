@@ -627,15 +627,71 @@ class TestTheMetricVocabularyIsNotCopiedTwice:
     """「同一份形状抄两遍就会漂」——指标词表这里抄过两遍"""
 
     def test_指标词表与指标表是同一份(self):
-        """WMS_METRIC_KEYWORDS 必须覆盖 WMS_METRICS 的每一个指标
+        """指标名和例词**只住在 `WMS_METRICS` 一处**
 
-        以前它是独立抄的一份：指标表加了新指标、这张表没跟上 →
-        绑定腿的目录里就没有那个指标的说法 → 绑不上 → 判红，
+        以前有一份独立的 `WMS_METRIC_KEYWORDS`（抄一遍）→ 指标表加了新指标、
+        这份没跟上 → 绑定目录里就没有那个指标的说法 → 绑不上 → 判红，
         而红的原因离现场隔着两层。
-        """
-        from boxes.wms_design.domain import WMS_METRIC_KEYWORDS, WMS_METRICS
 
-        assert set(WMS_METRIC_KEYWORDS) == {m["name"] for m in WMS_METRICS}
+        那份字典后来退休了（关键词绑定换成 LLM 之后没人用它）。
+        所以这条守卫守的**不是那个字典**，是**性质**：
+        指标名 + 例词只有一份，任何「指标 id 列表」都必须**从 `WMS_METRICS` 派生**。
+
+        **判据是「有没有第二份硬编码」，不是「某个字典的 key 集合对不对」**——
+        后者只在那个字典还在的时候有效，字典一退休，守卫就成了空壳
+        （它会一直绿，却什么都拦不住）。
+        """
+        import ast
+        import pathlib
+
+        from boxes.wms_design import schemas
+        from boxes.wms_design.domain import WMS_METRICS
+
+        names = {m["name"] for m in WMS_METRICS}
+
+        # ① 指标 id 列表必须是**派生**的，不是手抄的
+        assert schemas.WMS_METRIC_KINDS == tuple(m["name"] for m in WMS_METRICS)
+
+        # ② 盒子里任何**模块级赋值**都不许有一份「以指标名为 key/元素」的容器
+        #    （定义处 `WMS_METRICS` 本身除外）
+        #
+        #    **只抓顶层**：`WMS_REPORTS` 里那条
+        #    `carries_metrics: ["wms_expiring_soon_sku_count"]`
+        #    是**关系**（这张看板承载哪些指标），不是抄表——
+        #    把它一起判红，守卫就成了「制造假红」的那种。
+        offenders: list[str] = []
+        for path in sorted(pathlib.Path("boxes").rglob("*.py")):
+            tree = ast.parse(path.read_text())
+            for node in tree.body:
+                if isinstance(node, ast.AnnAssign):
+                    targets = [node.target] if isinstance(node.target, ast.Name) else []
+                elif isinstance(node, ast.Assign):
+                    targets = list(node.targets)
+                else:
+                    continue
+                names_bound = [t.id for t in targets if isinstance(t, ast.Name)]
+                if "WMS_METRICS" in names_bound:
+                    continue  # 定义处本身不算抄
+                value = node.value
+                if isinstance(value, ast.Dict):
+                    keys = {
+                        k.value for k in value.keys
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    }
+                    if keys and keys <= names:
+                        offenders.append(
+                            f"{path}:{node.lineno} {names_bound} 是以指标名为 key 的映射"
+                        )
+                elif isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+                    items = {
+                        e.value for e in value.elts
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                    }
+                    if items and items <= names:
+                        offenders.append(
+                            f"{path}:{node.lineno} {names_bound} 是以指标名为元素的列表"
+                        )
+        assert not offenders, "指标名抄了第二份：\n" + "\n".join(offenders)
 
     def test_每个指标都有例词(self):
         """例词是给绑定腿看的——没有例词，LLM 看不见这个指标

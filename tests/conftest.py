@@ -131,7 +131,7 @@ def stub_wms_binder(prompt: str, **kw) -> dict:
     from boxes.wms_design.domain import (
         WMS_CONSTRAINTS,
         WMS_ENTITIES,
-        WMS_METRIC_KEYWORDS,
+        WMS_METRICS,
         WMS_REPORTS,
         requirement_sentences,
     )
@@ -174,10 +174,12 @@ def stub_wms_binder(prompt: str, **kw) -> dict:
                             kinds.append({"kind": kind, "evidence": evidence})
                         break
         elif rtype == "metric":
-            for name, keywords in WMS_METRIC_KEYWORDS.items():
-                _, evidence = _match_keyword(description, keywords)
+            # **例词从 WMS_METRICS 读，不另抄一份**——
+            # 桩和产品共用同一张表，桩才不会比产品多知道/少知道一个指标。
+            for m in WMS_METRICS:
+                _, evidence = _match_keyword(description, m["keywords"])
                 if evidence:
-                    kinds.append({"kind": name, "evidence": evidence})
+                    kinds.append({"kind": m["name"], "evidence": evidence})
                     break
         bindings.append({"requirement_id": rid, "kinds": kinds})
     return {"bindings": bindings}

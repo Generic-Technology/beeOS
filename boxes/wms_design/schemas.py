@@ -33,11 +33,17 @@ from core.models import FieldDef, SchemaDef
 from boxes.wms_design.domain import (
     WMS_CONSTRAINT_KINDS,
     WMS_ENTITY_KINDS,
-    WMS_METRIC_KEYWORDS,
+    WMS_METRICS,
     WMS_REPORT_KINDS,
 )
 
-WMS_METRIC_KINDS: tuple[str, ...] = tuple(WMS_METRIC_KEYWORDS)
+# 指标的 id 列表。**跟另外三张表一个模式**：从 `WMS_METRICS` 直接派生。
+#
+# 以前这里是 `tuple(WMS_METRIC_KEYWORDS)`——借一份「关键词字典」的 key。
+# 那份字典本来是给**已退休的关键词绑定器**用的（绑定早就换成 LLM 了），
+# 留着它只为了取 key，等于让一份投影继续活着。
+# 判据：它该从哪张表来，就从哪张表来——不借中间产物。
+WMS_METRIC_KINDS: tuple[str, ...] = tuple(m["name"] for m in WMS_METRICS)
 
 # **全部 WMS 概念**（实体 / 约束 / 指标 / 报表）。
 #
