@@ -19,6 +19,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "build>=1.2",
+    "setuptools>=61.0",
+    "wheel",
 ]
 
 [build-system]
@@ -48,8 +51,38 @@ packages = [
     "boxes.wms_testing",
     "runtime",
     "kanban",
+    "domains",
+    "domains.wms",
+    "domains.learning",
+    "workshop",
+    # **scripts 也要装**：装出来的环境里跑得动
+    # `tests/test_chain_script.py`（它按仓根找 scripts/run_chain.py）
+    # 和 `tests/test_new_box_scaffold.py`（它 import scripts.new_box）。
+    # 漏了 → 装好的环境里这两个测试**在收集阶段就炸**，
+    # 那是「装出来的包跑不了自己的测试」。
+    "scripts",
     "tests",
+    # **tests 的子包也是包**：漏了 → 装出来的环境里
+    # `import tests.fixtures.sample_box` 直接 ModuleNotFoundError。
+    "tests.fixtures",
+    "tests.fixtures.sample_box",
 ]
+
+[tool.setuptools.package-data]
+# 每个包目录里的说明文档（盒子 README、模块 README）。
+# 用通配键而不是逐个包写一遍——逐个写的话，新增一只盒子就多一行，
+# 而漏掉的那一行 = 装出来的 wheel 里那只盒子没有说明书。
+"*" = ["*.md"]
+"boxes.wms_system" = ["baseline/*.json"]
+"kanban" = ["vendor/*.js", "vendor/addons/environments/*.js"]
+# 部署脚本：它是**运行产物的一部分**（不是文档）——
+# 漏了它，装出来的环境里没有部署入口。
+"scripts" = ["*.sh"]
+# 夹具里的**图片和真值表**：小票语料 + 样例图。
+# 漏了 → 装好的环境里票据相关的测试拿不到样本（不是「跳过」，是「报错」）。
+# 这里写目录通配而不是逐个文件名：漏一个文件名 = 装好的环境里那条测试直接炸，
+# 而「通配」让新增语料自动进包。
+"tests.fixtures" = ["*.jpg", "*.heic", "receipts/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

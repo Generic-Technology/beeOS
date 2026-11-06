@@ -274,6 +274,25 @@ def check_schema_compatibility(
                     f"下游必填字段 {name!r}，上游产出形状里没有这个字段", here
                 )
             continue
+        # 上游把它声明成**可选** → 上游可能不产出它 →
+        # 下游的必填要求就**保证不了**。
+        #
+        # **为什么不能当 compatible**：这个函数问的是
+        # 「下游的接料形状能不能被上游的产出形状**保证**满足」。
+        # 上游说「这个字段我可能不给」= 它明确说了自己会给不全，
+        # 这不是「推不出来」（unknown），是**能推出来**——
+        # 推出来的是「不保证」。
+        #
+        # **该修的是上游的声明**（把它标成 required），不是放宽这条判定：
+        # 放宽 = 装配期放行一份保证不了的接线，
+        # 后果是运行时才缺字段（那时看板已经照常渲染了）。
+        if dfield.required and not ufield.required:
+            return _bad(
+                f"下游必填字段 {name!r}，上游把它声明成可选——"
+                f"上游可能不产出它，交接会缺字段"
+                f"（该把上游的声明标成必填）",
+                here,
+            )
         res = _field_compatibility(
             ufield, dfield, up_schemas, down_schemas, here
         )
@@ -345,6 +364,13 @@ def _field_compatibility(
                         f"下游 object 必填子字段 {p.name!r}，上游没有", here
                     )
                 continue
+            # 跟顶层同一个道理：上游说「这个子字段我可能不给」
+            if p.required and not u.required:
+                return _bad(
+                    f"下游 object 必填子字段 {p.name!r}，上游把它声明成可选——"
+                    f"上游可能不产出它，交接会缺字段",
+                    here,
+                )
             res = _field_compatibility(u, p, up_schemas, down_schemas, here)
             if res.status != COMPATIBLE:
                 return res

@@ -267,12 +267,18 @@ OPS_RECORD_SCHEMA = SchemaDef(
                  ])),
         # **合并后的观测**（分析盒直接消费这一份）
         #
+        # `required=True`：打包器**无条件**写这个键（没有就写空列表），
+        # 而分析盒的接料形状把它声明成必填。
+        # 写松了（`required=False`）等于上游说「我可能不给」——
+        # 域装配的 D3c 会判成「不保证喂得进」，那是对的：
+        # **该把上游的声明改准，不是把下游的要求放宽**。
+        #
         # 合并规则（机械的，不靠感觉）：
         # - 验收实例上的观测打底
         # - **生产上的确定结论（pass / fail）覆盖它**——生产是现场
         # - 生产上「验不了」（indeterminate）**不覆盖**：它没有信息量，
         #   拿它盖掉一条实测，等于把一条真的观测抹了
-        FieldDef(name="observations", type="array", required=False,
+        FieldDef(name="observations", type="array", required=True,
                  items=FieldDef(
                      name="observation", type="object", properties=[
                          FieldDef(name="expectation_id", type="string"),

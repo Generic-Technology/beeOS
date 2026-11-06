@@ -2,55 +2,210 @@
 
 > Business Fulfillment Operating System — 业务履约操作系统
 
-beeOS 是一个面向业务的履约操作系统：把一次业务履约（business fulfillment）
-建模为可验证的产物，而不是一段胶水脚本。
+beeOS 用明确的输入、业务结果、验收标准和例外规则，把一项业务责任组织成可运行、可核对的 **beeBox（业务履约盒子）**。
+每次运行留下产物、执行轨迹与验收结论，供业务负责人和开发者检查交付是否成立。
 
-## 三句话架构宣言
+**当前处于早期开发阶段**，适合本地体验、业务建模和集成验证。生产采用前请阅读[成熟度与限制](#成熟度与限制)。
 
-- **beeOS**：提供让业务履约可被定义、可被运行、可被验收的基础设施
-- **beeBox**：单一业务履约盒子的完整定义 + 实现 + 验收契约
-- **Business Fulfillment fulfills under explicit contract and policy,
-  producing verifiable result**：履约按明确合同与政策发生，
-  产出可被验收的业务结果
+[快速开始](#快速开始) · [运行示例](#运行示例) · [业务场景](#业务场景) · [文档](#文档导航) · [许可证](#许可证)
 
-## 仓库结构
+## 为什么使用 beeOS
 
-```mermaid
-flowchart TB
-    Repo[beeOS repo]
-    Repo --> Docs[docs/ 规格与设计稿]
-    Repo --> Core[core/ 内核数据结构]
-    Repo --> Boxes[boxes/ 业务履约盒子]
-    Repo --> Runtime[runtime/ 执行内核]
-    Repo --> Kanban[kanban/ 运行看板]
-    Repo --> Scripts[scripts/ 部署与校验]
-    Repo --> Tests[tests/ 守卫]
+当一个业务任务需要串联模型、程序和人工决策时，团队需要共同约定：输入是否合格、交付什么、怎样验收、异常由谁接手。
+beeOS 把这些约定写进盒子的声明，并在执行前后检查。
 
-    Boxes --> B1[wms_requirement 需求捕获]
-    Boxes --> B2[wms_design 仓储设计]
-    Boxes --> B3[wms_development 代码生成]
-    Boxes --> B4[wms_testing 场景验证]
-    Boxes --> B5[wms_ops 运维核对]
-    Boxes --> B6[wms_analysis 效果分析]
-    Boxes --> B7[wms_system 系统档案]
-    Boxes --> B8[receipt 小票识别]
-    Boxes --> B9[learning_math 数学]
-    Boxes --> B10[learning_chinese 语文]
-    Boxes --> B11[learning_english 英语]
-    Boxes --> B12[learning_growth 成长档案]
+| 业务问题 | beeOS 中的实现 |
+|---|---|
+| 什么输入可以开始处理？ | Schema 与输入契约校验 |
+| 应该交付什么、怎么算合格？ | Result 与 Acceptance 验收规则 |
+| 每次任务经过了哪些步骤？ | beeline 作业路线与 operation 执行轨迹 |
+| 出错后拒绝、等待人工还是重试？ | 例外条款、Queen 决策与运行状态 |
+| 上下游怎样交接？ | 域声明与产物引用校验 |
+| 怎样检查声明和查看运行结果？ | Workshop 体检台与 Kanban 看板 |
 
-    Runtime --> R1[executor + TaskRun + Acceptance]
-    Runtime --> R2[contract 投料闸 + handoff 盒间接力]
-    Runtime --> R3[runner 分派机制 + llm 客户端]
-    Kanban --> K1[CLI 看板 + Web 看板]
-    Kanban --> K2[trigger 投料口 + BOX_REGISTRY]
+业务实现放在盒子内，运行时负责执行与验收机制。适合希望把业务规则、AI 调用和交付证据放在同一套契约下维护的开发团队。
+
+## 快速开始
+
+需要 **Python 3.11+**、Git 和可访问依赖源的网络。以下为 macOS / Linux 的 Bash 命令，请在同一终端执行。
+
+```bash
+git clone https://github.com/Generic-Technology/beeOS.git
+cd beeOS
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[dev]'
+python -m kanban.web
 ```
 
-## 布局说明
+如使用更高版本 Python，请将 `python3.11` 替换为对应解释器命令。
+打开 [Kanban 看板](http://localhost:8765) 查看盒子与运行记录；打开 [Workshop 体检台](http://localhost:8765/workshop) 检查声明。
+新安装尚无履约历史，可在下方示例运行后刷新看板。停止服务使用 `Ctrl+C`；端口被占用时可用 `python -m kanban.web --port 8766`。
 
-- **`docs/`** — 规格与设计稿（11 份）
+启动页面和下方手工输入示例**不需要模型密钥**。自然语言抽取、WMS 概念绑定、照片识别等能力需要 LLM，见[模型配置](#模型配置)。
+
+## 运行示例
+
+在另一个终端进入仓库并激活 `.venv`，运行以下命令。它把一次数学练习整理为带出处的学习事件，检查得分率，并将本次运行写入本地记录。
+
+```bash
+source .venv/bin/activate
+python - <<'PY'
+from kanban.trigger import trigger_task
+from runtime.store import TaskRunStore
+
+run = trigger_task(
+    box_id="learning_math_box",
+    task_type="run_math",
+    payload={
+        "activity": "数学单元练习",
+        "observed_at": "2026-11-06T16:30:00+08:00",
+        "evidence": "示例练习卷 P1（演示数据）",
+        "source_kind": "reported",
+        "score": 18,
+        "total": 20,
+    },
+    store=TaskRunStore(path="logs/task_runs.jsonl"),
+)
+print("status:", run["status"])
+print("acceptance:", run["acceptance_status"])
+print("mastery:", run["result"]["mastery"])
+PY
+```
+
+预期输出：
+
+```text
+status: completed
+acceptance: accepted
+mastery: 0.9
+```
+
+这里的 `mastery` 是本次得分率（18 ÷ 20），用于演示可复算的验收规则。它不代表对学习能力的评价。
+运行记录写入 `logs/task_runs.jsonl`；这是显式标注的演示数据，请在独立的本地环境体验。
+查看输入和产出定义：[数学盒说明](boxes/learning_math/README.md)。
+
+## 业务场景
+
+| 场景 | 当前仓库内容 | 入口 |
+|---|---|---|
+| WMS 软件履约 | 需求捕获、仓储设计、代码生成、场景验证、运维核对、效果分析与系统档案 | [需求盒](boxes/wms_requirement/README.md)、[闭环实测记录](docs/wms-closure-plan.md) |
+| 小票识别 | 从图片生成结构化小票，并检查金额等业务约束 | [小票盒](boxes/receipt/README.md) |
+| 学习记录 | 数学、语文、英语事件与成长档案，保留记录出处 | [数学](boxes/learning_math/README.md)、[语文](boxes/learning_chinese/README.md)、[英语](boxes/learning_english/README.md)、[成长档案](boxes/learning_growth/README.md) |
+
+WMS 域已定义并串联如下履约链，各阶段产物同时汇入系统档案盒：
+
+```text
+需求捕获 → 仓储设计 → 代码生成 → 场景验证 → 运维核对 → 效果分析
+   ↑                                                     │
+   └──────────────── 下一轮需求种子 ──────────────────────┘
+```
+
+完整链路需要模型服务及相应的 WMS 项目、构建和目标环境配置。上述本地示例只验证单盒闭环。
+各盒子的验收规则与声明成熟度见页尾[仓库参考](#仓库参考)，运行时体检结论可在 Workshop 查看。
+
+## 架构概览
+
+**beeOS 提供基础设施，beeBox 承接业务责任，TaskRun 记录一次履约。**
+每个盒子包含输入与结果定义、作业路线、处理实现、验收和例外规则；域声明描述盒子之间的关系。
+
+```mermaid
+flowchart LR
+    Input[业务输入] --> Contract[输入契约校验]
+    Contract --> Run[执行盒内 beeline]
+    Run --> Result[业务产物]
+    Result --> Acceptance[验收与例外决策]
+    Acceptance --> Record[记录产物与履约结论]
+    Record --> Kanban[Kanban 运行看板]
+    Definition[beeBox 声明] --> Contract
+    Definition --> Acceptance
+    Definition --> Workshop[Workshop 声明体检]
+```
+
+| 位置 | 职责 |
+|---|---|
+| `core/` | 数据模型、契约与声明校验、装配 |
+| `boxes/` | 业务定义、处理实现与指标计算 |
+| `domains/` | 域成员、交接与反馈关系 |
+| `runtime/` | 执行、验收、恢复与持久化 |
+| `kanban/` / `workshop/` | 运行观察与声明体检 |
+
+## 成熟度与限制
+
+当前 Python 项目版本为 `0.1.0`，接口与声明仍在演进。盒子声明中的 `live` 是项目内部的成熟度标记，不代表生产认证或 SLA 承诺。
+
+- **可本地验证**：契约校验、盒内执行、验收、人工等待与恢复、盒间交接、JSONL 记录、CLI / Web 看板和只读体检台。
+- **生产接入仍需补齐**：Web 看板尚无认证；任务同步执行，本地 JSONL 存储尚不能替代分布式任务与数据基础设施。请仅在可信本地环境启动体验服务。
+- **尚未完成**：补偿反向操作、独立发布与版本实体、第三方盒子安装与隔离、盒子市场及商业认证体系。
+- **业务验证边界**：WMS 的部分运营指标尚无真实生产流量可验证，链路运行成功与验收通过不能作为商业收益证明。详见[闭环实测记录](docs/wms-closure-plan.md)。
+
+后续工程加固顺序与验收标准见[稳定性计划](docs/stability-plan.md)。商业产品方向见 [GTM 草稿](docs/beeos-gtm.md)，其中规划内容以本页的实现边界为准。
+
+## 模型配置
+
+调用模型前，在启动 beeOS 的终端设置以下环境变量，再启动服务：
+
+```bash
+export BEEOS_LLM_API_KEY='<你的真实密钥>'
+export BEEOS_LLM_BASE_URL='https://api.minimaxi.com/v1'
+python -m kanban.web
+```
+
+当前调用默认使用 MiniMax 模型。端点、默认模型与协议细节以 [LLM 客户端](runtime/llm.py) 为准，替换服务时需核对兼容性。
+模型调用会把相关业务文本或图片发送给配置的服务，并产生该服务的调用费用。
+
+环境变量样板见 [`.env.example`](.env.example)。直接使用 `.env` 需要额外安装 `python-dotenv`；上面的 `export` 方式不依赖它。
+样板还保留了部分早期规划配置，不代表相应基础设施已经实现。
+
+## 文档导航
+
+| 想了解什么 | 文档 |
+|---|---|
+| 概念与契约 | [beeBox 设计](docs/beebox-design.md)、[Definition Schema](docs/beebox-definition-schema.md) |
+| 作业路线与执行 | [beeline](docs/beeline.md)、[运行时说明](runtime/README.md) |
+| 盒子装配与域关系 | [脚手架协议](docs/architecture-upgrade.md)、[域声明](docs/domain-declaration.md) |
+| 观察任务与检查声明 | [Kanban](kanban/README.md)、[Workshop](workshop/README.md) |
+| WMS 链路的验证依据 | [闭环计划与实测记录](docs/wms-closure-plan.md) |
+| 产品与商业方向 | [GTM 草稿](docs/beeos-gtm.md) |
+
+设计稿包含未来形态；实现状态以本页、对应代码和可复现的检查结果为准。
+
+## 开发与参与
+
+完成上面的开发依赖安装后，在仓库根目录运行：
+
+```bash
+python -m pytest tests/ -q
+python -m kanban.cli
+python scripts/new_box.py --help
+```
+
+测试中的 LLM 桩用于隔离外部服务，测试通过不等于真实模型与生产环境已经验证。
+欢迎通过 [GitHub Issues](https://github.com/Generic-Technology/beeOS/issues) 报告问题、讨论场景和提出合作需求，通过 Pull Request 提交改进。
+报告问题时请附复现步骤、Python 版本与必要的脱敏日志；不要公开密钥或业务隐私数据。
+
+## 商业使用与合作
+
+本仓库代码采用 MIT 许可证，可用于商业项目。行业盒子定制、系统集成或商业支持需求可先通过 [GitHub Issues](https://github.com/Generic-Technology/beeOS/issues) 联系维护者。
+当前仓库没有公布付费套餐、托管服务或支持 SLA；交付范围与服务承诺需另行约定。
+
+## 许可证
+
+采用 [MIT License](LICENSE)。使用、修改与分发时请遵守许可证要求，保留版权与许可声明；软件按现状提供。
+第三方依赖和随附资源还需遵守各自的许可，外部模型服务按其服务条款使用。
+
+## 仓库参考
+
+<details>
+<summary>展开文件导航与盒子声明清单</summary>
+
+以下为维护者导航。判据数量与成熟度来自盒子声明，实际运行质量需结合验收证据判断。
+
+- **`docs/`** — 规格、设计稿与加固计划
   - `architecture-upgrade.md` — **盒子脚手架化**的定稿：协议 / 校验清单 / 迁移计划
-  - `domain-declaration.md` — **域声明**设计稿（尚未实现）：盒子之间关系的唯一事实源
+  - `domain-declaration.md` — **域声明**设计与实现边界：盒子之间关系的唯一事实源
+  - `stability-plan.md` — 按 SOLID 分批加固组件的顺序与验收标准
   - `beebox-design.md` — 主设计稿（架构宣言 / 核心契约 / 执行语义 / 实现设计）
   - `beebox-definition-schema.md` — beeBox Definition 数据形状
   - `beebox-beeline-schema.md` — beeline / Operation 数据形状
@@ -171,64 +326,4 @@ flowchart TB
   > 这份清单是**导航**，不是契约——真实的条数以
   > `.venv/bin/python -m pytest tests/ -q` 报的为准。
 
-## 当前状态
-
-```mermaid
-flowchart LR
-    Done[已完成]
-    Done --> S1[Definition + beeline + TaskRun 顶层数据]
-    Done --> S2[盒子注册进 BOX_REGISTRY]
-    Done --> S3[盒间接力通道 + ref 深校验]
-    Done --> S4[开发盒按方案生成代码 判据跑外部神谕]
-    Done --> S5[测试盒真实例真单据流四种结论分开]
-    Done --> S6[运维盒读生产数据并回写系统档案]
-    Done --> S7[需求盒人读需求文档投影]
-    Done --> S8[Kanban CLI + Web 看板]
-    Done --> S9[守卫全绿]
-```
-
-> 测试规模：**千条量级**。真实条数以 `.venv/bin/python -m pytest tests/ -q` 报的为准——
-> 本文不写死数字（写死的数字必然过期，仓库里有一条守卫专门盯着这件事）。
-
-WMS 域的盒子已串成一条可运行的链：
-
-```
-需求捕获 → 仓储设计 → 代码生成 → 场景验证 → 运维核对 → 效果分析
-   ↑                                          │
-   └────────  下一轮需求种子（效果分析反馈）────┘
-```
-
-上面每一跳**同时汇进系统档案盒**（`wms_system_box`）——它是 WMS 域的汇点，
-过程产物留在各自盒子里，档案只沉淀「这套系统此刻是什么样」。
-
-未完成的部分见 `docs/wms-closure-plan.md` 的「诚实边界」一节：
-四个 WMS 指标（拣货准确率等）在 WMS 系统里**还没实现**，
-线上 WMS 还没有业务流量，生产实测值暂时采不到。
-
-## 开发
-
-```bash
-# Python 3.11+
-.venv/bin/python -m pytest tests/ -q
-
-# 加载一只盒子
-.venv/bin/python -c "from boxes.wms_design import get_definition; d = get_definition(); print(d.id, d.version)"
-
-# 端到端冒烟（设计盒）
-.venv/bin/python -c "
-from boxes.wms_design import get_definition, get_beeline
-from boxes.wms_design.runner import RUNNER
-from runtime import create_task_run, BeelineExecutor, evaluate_acceptance
-box = get_definition(); beeline = get_beeline()
-input_data = {'set_id': 'r1', 'business_goal': 'test', 'requirements': [{'requirement_id': 'req_obj_1', 'description': 'x', 'requirement_type': 'object', 'priority': 'must_have'}]}
-tr = create_task_run('pm', 'handle_design_request', box.result.result_schema, f'{box.id}@v{box.version}', beeline.id, beeline.version, 'rt', 'in')
-tr = BeelineExecutor(RUNNER).execute(tr, beeline, input_data)
-print('wms_design:', tr.status.value, tr.result)
-"
-
-# 跑 Kanban CLI 看板
-.venv/bin/python -m kanban.cli
-
-# 跑 Kanban Web 看板（浏览器打开 http://localhost:8765）
-.venv/bin/python -m kanban.web
-```
+</details>

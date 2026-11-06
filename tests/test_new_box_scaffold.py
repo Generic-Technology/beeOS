@@ -38,6 +38,7 @@ from scripts.new_box import (
     render,
     write_box,
 )
+from tests.conftest import requires_checkout
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
@@ -557,8 +558,14 @@ class TestTheDomainFragment:
         assert "placement" not in text
 
 
+@requires_checkout
 class TestTheRegistrationInsertion:
-    """注册那段插入**不许把 trigger.py 插坏**——插坏了整个看板起不来"""
+    """注册那段插入**不许把 trigger.py 插坏**——插坏了整个看板起不来
+
+    **只在仓库里成立**：它从 `git show HEAD:...` 取一份干净副本
+    （工作区那份可能已经注册过这只盒子）。
+    装好的环境里没有 `.git`，也没有根 README / pyproject 可改。
+    """
 
     def _copies(self, tmp_path):
         """从 **git HEAD** 取一份干净的副本

@@ -116,8 +116,8 @@ class AssembledDomain:
 
     @property
     def ok(self) -> bool:
-        """装配期没有挑出问题"""
-        return not self.problems
+        """声明检查与域业务规则全部通过。"""
+        return not self.problems and all(r.ok for r in self.rules_reading)
 
     def to_dict(self) -> dict:
         return {
@@ -266,6 +266,13 @@ def assemble_domain(
     readings = tuple(
         _evaluate_rule(rule, declaration, wiring) for rule in declaration.rules
     )
+    for reading in readings:
+        if not reading.ok:
+            problems.append(DomainProblem(
+                "R1",
+                f"域规则 {reading.kind} 未通过（{reading.passed}/{reading.total}）："
+                f"{reading.detail}",
+            ))
 
     # 展示适用性（③）：画不成图**不是**声明不合法，
     # 但它得被看见——否则看板上一片空白，没人知道为什么。

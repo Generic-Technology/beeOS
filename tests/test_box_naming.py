@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 import pathlib
 import re
 import tomllib
@@ -27,6 +28,7 @@ import pytest
 
 from domains import domains_of
 from kanban.trigger import BOX_REGISTRY
+from tests.conftest import requires_checkout
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 BOXES_DIR = REPO / "boxes"
@@ -152,6 +154,7 @@ class TestTheDirectoryNameMatchesTheBox:
 
 
 class TestThePackagingListMatchesDisk:
+    @requires_checkout
     def test_the_declared_packages_all_exist(self):
         """pyproject 里写的包必须真的存在
 
@@ -163,6 +166,7 @@ class TestThePackagingListMatchesDisk:
         missing = [p for p in packages if not (REPO / p.replace(".", "/")).is_dir()]
         assert not missing, f"pyproject 里这些包在磁盘上不存在：{missing}"
 
+    @requires_checkout
     def test_every_box_package_is_declared(self):
         """每个盒子目录都得在打包清单里
 
@@ -177,6 +181,90 @@ class TestThePackagingListMatchesDisk:
         }
         missing = sorted(on_disk - packages)
         assert not missing, f"这些盒子目录没写进 pyproject 的 packages：{missing}"
+
+    @requires_checkout
+    def test_every_package_on_disk_is_declared(self):
+        """磁盘上**每一个包**都得在打包清单里——不只是盒子
+
+        **这条守卫是补一次真漏**：打包清单漏了 `domains`（域声明）、
+        `workshop`、`tests.fixtures`——装出来的 wheel 里
+        **一个域声明都没有**，`from domains import DOMAIN_REGISTRY`
+        直接 ModuleNotFoundError。而本地跑测试是绿的
+        （测试从仓根跑，仓根什么都有）。
+
+        **判据是「磁盘上带 `__init__.py` 的目录」**，
+        不是「我这次想到的几个」——后者每次都会漏。
+        """
+        data = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+        packages = set(data["tool"]["setuptools"]["packages"])
+
+        on_disk: set[str] = set()
+        for init in REPO.rglob("__init__.py"):
+            parts = init.relative_to(REPO).parts[:-1]
+            if any(p in ("__pycache__", ".venv", "build", "dist") for p in parts):
+                continue
+            on_disk.add(".".join(parts))
+
+        missing = sorted(on_disk - packages)
+        assert not missing, (
+            f"这些包没写进 pyproject 的 packages：{missing}\n"
+            f"漏一个 = 装出来的 wheel 里没有它（本地测试照样全绿）"
+        )
+
+    @requires_checkout
+    def test_every_package_data_file_is_declared(self):
+        """包里的**非 .py 文件**都得被 package-data 声明
+
+        漏一个 → 装出来的 wheel 里没有那个文件，而本地照样绿：
+        - `kanban/vendor/*.js` → 看板的三维场景起不来
+        - `boxes/wms_system/baseline/*.json` → 系统档案盒读不到基线
+        - `tests/fixtures/` 的图片和真值表 → 票据语料测试拿不到样本
+          （是「报错」，不是「跳过」）
+
+        **怎么判**：一个文件归哪个包，取决于它所在目录是不是一个包
+        （带 `__init__.py`）。不是包的那些子目录（比如 `fixtures/receipts/`）
+        归它的**上一级包**管。
+        """
+        data = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+        packages = set(data["tool"]["setuptools"]["packages"])
+        package_data = data["tool"]["setuptools"].get("package-data", {})
+        # `"*"` 是 setuptools 的通配键（对每个包都生效）——它也要算进来
+        wildcard = package_data.get("*", [])
+
+        missing: list[str] = []
+        for pkg in sorted(packages):
+            pkg_dir = REPO / pkg.replace(".", "/")
+            patterns = list(package_data.get(pkg, [])) + list(wildcard)
+            for path in sorted(pkg_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                if path.suffix == ".py":
+                    continue
+                if any(p in ("__pycache__", ".pytest_cache") for p in path.parts):
+                    continue
+                if path.name == ".DS_Store":
+                    continue
+                # 它属于哪个包：往上找**最深**那个带 __init__.py 的子目录。
+                # （注意：`rel.parents` 里第一项是 `.`，
+                #   那不是子目录——踩过这个坑：一度把
+                #   「直接躺在包目录里的文件」全当成子包的，跳过了。）
+                rel = path.relative_to(pkg_dir)
+                parts = rel.parts[:-1]
+                owner = pkg
+                for i in range(len(parts), 0, -1):
+                    if (pkg_dir / pathlib.Path(*parts[:i]) / "__init__.py").exists():
+                        owner = f"{pkg}.{'.'.join(parts[:i])}"
+                        break
+                if owner != pkg:
+                    continue  # 归子包管
+                rel_str = str(rel)
+                if not any(fnmatch.fnmatch(rel_str, pat) for pat in patterns):
+                    missing.append(f"{pkg}/{rel_str}")
+
+        assert not missing, (
+            "这些文件没写进 package-data（装出来的 wheel 里没有它们）：\n  "
+            + "\n  ".join(missing)
+        )
 
 
 class TestTheNamingRuleIsNotASecondTable:

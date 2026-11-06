@@ -420,8 +420,13 @@ def check_domain_edges(
                 f"归档归属不是数据交接，不该有通道"
             )
 
-        # D12：要么有通道，要么显式声明没有
-        if e.via and e.no_channel:
+        # handoff 必须有通道；反馈才允许明确声明没有通道。
+        if e.kind == EdgeKind.handoff and (not e.via or e.no_channel):
+            problems.append(
+                f"D12 交接边 {e.from_box!r} → {e.to_box!r} 必须声明 via，"
+                "且不得声明 no_channel=True"
+            )
+        elif e.via and e.no_channel:
             problems.append(
                 f"D12 边 {e.from_box!r} → {e.to_box!r} 同时写了 via={e.via!r} "
                 f"和 no_channel=True——两者互斥"

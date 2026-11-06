@@ -10,9 +10,42 @@
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 
 import pytest
+
+#: 我们是不是在**仓库里**（而不是装好的 site-packages 里）
+#:
+#: 仓里有一批守卫验的是「**仓库本身**」：根 README 的清单跟磁盘对不对、
+#: 脚手架会不会写进真仓、打包清单长什么样。
+#: 这些在装好的环境里**本来就不成立**（没有根 README、没有真仓可写）。
+#:
+#: **为什么不给它们一律 skip 了事**：装出来的 wheel 里带着 `tests`，
+#: 人家在装好的环境里跑一遍 pytest，看到一片红，
+#: 只会以为这个包坏了。所以它们得**明说自己不适用**，
+#: 而不是红着装作「这里有 21 个问题」。
+IN_CHECKOUT = (Path(__file__).resolve().parents[1] / "pyproject.toml").exists()
+
+#: 装好的环境里跳过「只对仓库成立」的守卫
+requires_checkout = pytest.mark.skipif(
+    not IN_CHECKOUT,
+    reason="这条守卫验的是仓库本身（根 README / 真仓 / 打包清单），装好的环境里不适用",
+)
+
+#: 有没有配 LLM 凭证
+#:
+#: 有一条测试**故意不 stub LLM**（它要验真模型那条路）。
+#: 没配凭证时那条路走不通——那是环境问题，不是产品坏了。
+HAS_LLM_CREDENTIALS = bool(
+    os.environ.get("BEEOS_LLM_API_KEY")
+    or (Path(__file__).resolve().parents[1] / ".env").exists()
+)
+requires_llm = pytest.mark.skipif(
+    not HAS_LLM_CREDENTIALS,
+    reason="这条测试要真 LLM（没 stub），没配凭证跑不了——环境问题，不是产品坏了",
+)
 
 
 def stub_compliant_llm(prompt: str, **kw) -> dict:

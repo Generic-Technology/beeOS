@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import requires_checkout
+
 ROOT = Path(__file__).resolve().parents[1]
 SELF = Path(__file__).resolve()
 
@@ -190,6 +192,7 @@ def _python_blocks(text: str) -> list[str]:
 # --------------------------------------------------------------------------
 # 1. 路径存在性
 # --------------------------------------------------------------------------
+@requires_checkout
 @pytest.mark.parametrize("md", _md_files(), ids=_rel)
 def test_md_referenced_paths_exist(md: Path) -> None:
     text = md.read_text(encoding="utf-8")
@@ -303,6 +306,7 @@ def _registered_box_ids() -> list[str]:
     return sorted(BOX_REGISTRY)
 
 
+@requires_checkout
 def test_readme_mentions_every_registered_box() -> None:
     """README 必须提到每一只已注册的盒子。
 
@@ -520,6 +524,7 @@ _STALE_COUNT = re.compile(
 )
 
 
+@requires_checkout
 def test_readme_has_no_hardcoded_test_count() -> None:
     """README 里出现「120 个测试通过」这种话，就是一份会过期的事实。
 
@@ -540,6 +545,7 @@ def test_readme_has_no_hardcoded_test_count() -> None:
 _STALE_BOX_COUNT = re.compile(r"\d+\s*只(?:盒子|盒)\b")
 
 
+@requires_checkout
 def test_readme_has_no_hardcoded_box_count() -> None:
     """根 README 不许写死「N 只盒子」
 
@@ -569,6 +575,7 @@ _ROOT_TABLE_ROW = re.compile(
 )
 
 
+@requires_checkout
 def test_the_root_readme_box_table_matches_the_definitions() -> None:
     """根 README 盒子清单里的**条数和成熟度**必须等于实际 definition
 
@@ -718,6 +725,7 @@ def _actual_dir_files(directory: str) -> set[str]:
 
 
 @pytest.mark.parametrize("directory", _LISTED_DIRS, ids=lambda d: d.rstrip("/"))
+@requires_checkout
 def test_the_root_readme_directory_listing_matches_the_disk(directory: str) -> None:
     """根 README 的目录清单必须等于实际目录内容。
 

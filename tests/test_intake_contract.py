@@ -25,6 +25,7 @@ from runtime.acceptance import _classify_failure
 from runtime.contract import validate_payload
 from runtime.models import RejectionClass
 from runtime.store import TaskRunStore
+from tests.conftest import requires_llm
 
 
 # ============================================================
@@ -264,6 +265,7 @@ class TestRejectionClassification:
 
 
 class TestAcceptanceOutcomeCarriesReason:
+    @requires_llm
     def test_accepted_has_no_rejection_class(self, store: TaskRunStore):
         r = trigger_task(
             "wms_design_box", "handle_design_request",
