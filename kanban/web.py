@@ -1685,7 +1685,7 @@ async function fetchData() {{
 // 业务知识，改了盒子忘了改 JS，看板就会把一只盒子归错域，而且不报错。
 //
 // 空串（没声明 domain）显示成「未归域」：不假装它属于任何真域。
-const UNASSIGNED_SCOPE = '（未归域）';
+const UNASSIGNED_SCOPE = '（未归范围）';
 // 「全部域」的哨兵值。**不能用 ''**——'' 同时是「未归域」那组的 key，
 // 于是两个 chip 会一起亮成 active，看起来像「同时选中了全部域和未归域」。
 const ALL_SCOPES = '__all__';
@@ -1820,7 +1820,7 @@ function renderFilters(data) {{
     const active = (_view === v) && !blocked && !taskBlock;
     if (taskBlock) {{
       html += '<span class="seg-item disabled" aria-disabled="true"'
-        + ' title="选了任务：拓扑画的是域的接线，不是这件任务走过的路">'
+        + ' title="选了任务：拓扑画的是协作范围的接线，不是这件任务走过的路">'
         + esc(label) + '<span class="seg-flag">不适用</span></span>';
       continue;
     }}
@@ -3042,7 +3042,7 @@ function renderRadial(layout, stats) {{
       // 汇点标签挂在卡**下面**当铭牌，不当浮在卡上的贴纸：
       // 放卡顶时它正好压在卡片边框上，而那条向心虚线又从同一个方向过来，
       // 三个东西叠在同一行——「汇点」两个字最后谁都看不清。
-      + (isCenter ? '<div class="center-tag">汇点 · 本域所有产出落进这里</div>' : '')
+      + (isCenter ? '<div class="center-tag">汇点 · 本协作范围所有产出落进这里</div>' : '')
       + '</a>';
   }};
 
@@ -4608,7 +4608,7 @@ function render(data) {{
         html += renderCube(b);
       }}
       html += `</div>`;
-      html += `<div class="empty" id="scope-empty" style="display:none">(该域下没有盒子)</div>`;
+      html += `<div class="empty" id="scope-empty" style="display:none">(该范围下没有盒子)</div>`;
       html += `</div>`;
     }}
   }} else {{

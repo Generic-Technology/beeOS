@@ -351,7 +351,7 @@ _PAGE = r"""<!DOCTYPE html>
     // 归属标签**带前缀**且去重：域和价值流可能是同一个词
     // （学习域的盒子域和价值流都叫 Learning），两个一样的裸标签看着像重复。
     var seen = {};
-    [["价值流", box.value_stream], ["协作范围", box.fulfillment_scope]].forEach(function (pair) {
+    [["价值流", box.value_stream], ["协作边界", box.fulfillment_scope]].forEach(function (pair) {
       var value = pair[1];
       if (!value || seen[value]) return;
       seen[value] = true;
