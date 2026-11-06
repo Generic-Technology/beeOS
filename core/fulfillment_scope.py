@@ -35,7 +35,7 @@ FulfillmentScopeDeclaration  ──assemble_fulfillment_scope──▶  Assemble
 `rules_reading` 说的是**声明完整不完整**，**不是**「事实发生了没有」。
 比如 `all_archived` 读数 5/5，证明的是**五只盒子都写了归档归属声明**，
 **不证明**产物进了档案——真归档由 `runtime/store.py` 的 `subject_ref` 机制负责
-（见 `docs/domain-declaration.md` §1.7）。
+（见 `docs/fulfillment-scope.md` §1.7）。
 
 **声明层与事实层必须分开看。**
 """

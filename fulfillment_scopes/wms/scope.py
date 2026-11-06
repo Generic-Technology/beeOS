@@ -19,7 +19,7 @@
 它的作用是让协作边界图有个中心。
 
 > **规则读数要这样读**：`all_archived 5/5` 证明的是**五只盒子都写了归档归属声明**，
-> **不证明**产物进了档案。声明层与事实层分开看（`docs/domain-declaration.md` §1.7）。
+> **不证明**产物进了档案。声明层与事实层分开看（`docs/fulfillment-scope.md` §1.7）。
 """
 
 from __future__ import annotations

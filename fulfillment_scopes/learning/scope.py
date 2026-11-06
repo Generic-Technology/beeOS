@@ -15,7 +15,7 @@ Learning 的汇点是 `learning_growth_box`——它**收上游产出**
 
 **「汇点」只是拓扑位置（边界内没有下游的那只），不是角色。**
 决定边是什么性质的是 `kind`，不是「指向不指向汇点」
-（`docs/domain-declaration.md` §5.5）。
+（`docs/fulfillment-scope.md` §5.5）。
 
 **三条边共用同一个通道字段** `subject_result`——三科产出三个不同 schema，
 但字段完全相同，符合**同一份「学科结果」形状**。

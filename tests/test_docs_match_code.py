@@ -176,6 +176,10 @@ RETIRED_MODULES = ("beelines",)
 RETIRED_PATHS = {
     "core/field_map.py",
     "tests/test_field_map.py",
+    # 内核里的 op 实现曾经住在这儿，搬进盒子之后就没了——
+    # 代码注释里提到它们是**历史说明**（说「从这儿搬来的」）。
+    "runtime/mock_runner.py",
+    "runtime/capture_runner.py",
 }
 # 退休的**测试文件名**（裸文件名形式）
 RETIRED_TEST_FILES = {
@@ -185,6 +189,15 @@ RETIRED_TEST_FILES = {
 # 路径 token：允许前缀目录 / 相对路径 / 通配
 PATH_TOKEN = re.compile(
     r"(?:\.\./)*(?:\./)?(?:" + "|".join(PATH_PREFIXES) + r")/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*"
+)
+# 代码注释里的路径：比文档那条**多一个词边界**——
+# 文档里 `score/total` 这种词组不会越界（行首就断了），
+# 代码注释里它可能长在句子中间（`数学 score/total、语文 reading_score`），
+# 不加边界会把 `core/total` 切出来当成路径。
+CODE_PATH_TOKEN = re.compile(
+    r"(?<![\w.\-])(?:\.\./|\./)?(?:"
+    + "|".join(PATH_PREFIXES)
+    + r")/[A-Za-z0-9_.\-/]+"
 )
 # 裸测试文件名（没有 tests/ 前缀）
 TEST_FILE_TOKEN = re.compile(r"\btest_[a-z0-9_]+\.py\b")
@@ -262,6 +275,74 @@ def test_md_referenced_paths_exist(md: Path) -> None:
                 target = (ROOT / raw).resolve()
             if not target.exists():
                 bad.append(f"{_rel(md)}:{lineno}: 文档提到 {raw} —— 仓库里没有这个路径")
+    assert not bad, "\n".join(bad)
+
+
+@requires_checkout
+def test_code_referenced_paths_exist() -> None:
+    """**代码注释里**引用的仓库内路径必须真的存在
+
+    为什么单列一条：上面的路径守卫只扫**文档**（`_md_files()`）——
+    **代码注释里的路径没人管**。
+
+    实测踩过（2026-11-06）：`docs/domain-declaration.md` 改名为
+    `docs/fulfillment-scope.md` 之后，**代码里 7 处注释还指着旧路径**——
+    指向一个不存在的文件，**没有任何一条报错**。
+    读代码的人点进去才发现。
+
+    **为什么用 `tokenize` 而不是 `ast`**：Python 的语法树里**没有注释**——
+    `ast` 扫不到注释里写的路径。这条要扫注释，就得上词法层。
+
+    **只认真路径**：带 `*` / `<` / `>` 的是通配或占位符，不是某个具体文件。
+    """
+    import io
+    import tokenize
+
+    bad: list[str] = []
+    for path in sorted(ROOT.rglob("*.py")):
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        if path.resolve() == SELF:
+            continue  # 这条守卫自己住在这儿（它会提到那些路径）
+        try:
+            with open(path, "rb") as fh:
+                tokens = list(tokenize.tokenize(fh.readline))
+        except (SyntaxError, tokenize.TokenError, UnicodeDecodeError):
+            continue
+        for tok in tokens:
+            if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+                continue
+            text = tok.string
+            for match in CODE_PATH_TOKEN.finditer(text):
+                raw = match.group(0)
+                if any(ch in raw for ch in "*<>"):
+                    continue  # 通配 / 占位符
+                if text[: match.start()].endswith("api/"):
+                    continue  # HTTP 接口路径，不是仓内路径
+                # **只认真路径**：具体文件（.py / .md）或显式目录（结尾是 /）。
+                #
+                # 不这么收就会把普通词组当成路径——
+                # 「数学 score/total」里的 `core` 会被切出来当成 `core/total`，
+                # 「runtime/classify 按 REQUIREMENT_TYPES 建全部 key」
+                # 里的 `runtime/classify` 也不是文件。
+                if not (raw.endswith((".py", ".md")) or raw.endswith("/")):
+                    continue
+                if raw in RETIRED_PATHS:
+                    # 退休路径：它必须真的不在仓库里了
+                    assert not (ROOT / raw).exists(), (
+                        f"{_rel(path)}:{tok.start[0]}: {raw} 是退休路径，"
+                        f"但它又出现在仓库里了——旧名复活了"
+                    )
+                    continue
+                if raw.startswith(("./", "../")):
+                    target = (path.parent / raw).resolve()
+                else:
+                    target = (ROOT / raw).resolve()
+                if not target.exists():
+                    bad.append(
+                        f"{_rel(path)}:{tok.start[0]}: 代码注释提到 {raw}"
+                        f" —— 仓库里没有这个路径"
+                    )
     assert not bad, "\n".join(bad)
 
 

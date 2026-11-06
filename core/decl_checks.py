@@ -330,7 +330,7 @@ def check_skeleton_is_honest(
 # **边界级要更多信息**（别的盒子声明了什么），所以由调用方
 # （注册表 / 装配器）把信息收集好传进来——core 仍然不认识任何一只盒子。
 #
-# **判定分三层**（见 `docs/domain-declaration.md` §5.7）：
+# **判定分三层**（见 `docs/fulfillment-scope.md` §5.7）：
 #   ① 声明合法性（D1–D4 / D7–D8 / D10 / D12 / D14–D15）← 本模块
 #   ② 边界业务规则（rules）                                 ← `core/fulfillment_scope.py`
 #   ③ 展示适用性（汇点唯一 / 环上相邻有交接）              ← `core/wiring.py`
@@ -463,7 +463,7 @@ def check_domain_channels(
 
     **D3c 用的是「声明层兼容判定」**（`core.contract.check_schema_compatibility`），
     不是「拿一份样例去试」——后者只能证明「**存在**一个合规产出能过」，
-    不能证明「**所有**合规产出都能过」（`docs/domain-declaration.md` §5.6）。
+    不能证明「**所有**合规产出都能过」（`docs/fulfillment-scope.md` §5.6）。
     """
     problems: list[str] = []
     for e in declaration.edges:

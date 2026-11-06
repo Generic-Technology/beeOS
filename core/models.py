@@ -606,7 +606,7 @@ class Rule(BaseModel):
 class FulfillmentScopeDeclaration(BaseModel):
     """一个协作边界的声明——**盒子之间关系的唯一事实源**
 
-    **成员是声明的，不是推导的**（见 `docs/domain-declaration.md` §12.1）：
+    **成员是声明的，不是推导的**（见 `docs/fulfillment-scope.md` §12.1）：
     「档案盒属于 WMS 协作边界」是**业务判断**，靠接线推不出来。
     """
 

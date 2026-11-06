@@ -15,7 +15,7 @@
 
 `STANDALONE_BOXES` 是**显式**的「我不参与任何协作边界」。
 **它必须是一份清单，不能靠「不在任何协作边界里」来推断**——
-否则「忘了加进协作边界」和「有意独立」就分不开了（见 `docs/domain-declaration.md` §6.2）。
+否则「忘了加进协作边界」和「有意独立」就分不开了（见 `docs/fulfillment-scope.md` §6.2）。
 """
 
 from __future__ import annotations

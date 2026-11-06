@@ -183,7 +183,7 @@ class BoxDeclaration(BaseModel):
     # **这里没有 `domain` / `feeds_into` / `feedback_into`**（2026-11-06 退休）。
     #
     # 盒子之间怎么连，是**协作边界**的事实，住在 `fulfillment_scopes/<边界>/` 的声明里——
-    # 不再是每只盒子各写一遍。理由见 `docs/domain-declaration.md`：
+    # 不再是每只盒子各写一遍。理由见 `docs/fulfillment-scope.md`：
     # 照抄 `feeds_into` 会漏掉真实依赖（8 条交接里只有 5 条被声明过），
     # 而两份事实并存必然漂，漂了不报错。
 
