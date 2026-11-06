@@ -857,15 +857,22 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 |---|---|---|---|
 | 1 | `core/<domain>.py`：`DomainDeclaration` / `Edge` / `assemble_domain` | 新协议只有形状，零业务词 | ✅ `core/domain.py` + `core/models.py` |
 | 2 | 建 `domains/<wms>/` `domains/<learning>/`（域声明 + 盒子 + 边） | 边**按完整数据依赖图**搬（8 条，**不是 `feeds_into` 那 5 条**）——见 §1.6；并按 `kind` 分类 | ✅ WMS 14 条边 + Learning 3 条 |
-| 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 | ⏳ **待做**（迁移期双写，由 `tests/test_domain_declaration.py` 钉住不矛盾）|
+| 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 | ✅ 12 只盒子全摘（守卫：`tests/test_docs_match_code.py` 的「退休字段不得回代码」+ `tests/test_domain_declaration.py`）|
 | 4 | `core/wiring.py` 改成吃域声明 | 派生层仍然不拥有事实 | ✅ `core/wiring.py` |
 | 5 | 看板改读新来源 | 画布上的虚线边界只是它的一张照片 | ✅ `kanban/trigger.py` |
 | 6 | 补 D1–D12 守卫 + 「域声明必须真的在装配」守卫 | 声明了却没人装 = 没迁移 | ✅ `core/decl_checks.py` + `tests/test_domain_declaration.py` |
 
-> **第 3 步为什么还没做**：盒子还没全部迁到新协议（`BoxDeclaration`），
-> 摘掉旧字段会让看板读不到接线。**过渡期靠守卫钉住**：
-> 旧字段与域声明**不得矛盾**（`tests/test_domain_declaration.py`）——
-> 两份事实并存时，矛盾比漂更容易被发现。
+> **第 3 步做完了**（2026-11-06）：12 只盒子的旧接线字段全摘干净，
+> `PlacementDef` 那个壳也整体退休——它当年存在的理由
+> （「接线是描述的一部分」）随着接线搬进域声明就不成立了。
+> 展示位（显示名 / 价值流 / 角色）摊平到 `BeeBoxDefinition` 顶层。
+>
+> **过渡期靠的是什么**：迁移期两边并存时，守卫钉的是「**不矛盾**」
+> 而不是「完全一样」——域声明比旧字段**多** 3 条真实交接，
+> 要求「完全一样」等于逼着人把真实依赖藏起来。
+> 旧字段摘干净后，这条守卫换成更硬的那条：
+> **不许再定义**这三个名字（判据是「定义」，不是「字符串里不许有」——
+> 兼容层读旧产出时提到旧名是正当的）。
 
 **第 2 步的真正活有两件：补齐真实依赖 + 按 `kind` 分类。**
 
@@ -946,9 +953,10 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 
 | 现在的名字 | 之后 | 是什么 |
 |---|---|---|
-| `placement.domain` | **退休** | 盒子归属 → 域声明的 `boxes` |
-| `placement.feeds_into` | **退休** | 交接边 → 域声明的 `edges`（`kind=handoff`）|
-| `placement.feedback_into` | **退休** | 闭环边 → 域声明的 `edges`（`kind=feedback`）|
+| `placement.domain` | **已退休**（2026-11-06） | 盒子归属 → 域声明的 `boxes` |
+| `placement.feeds_into` | **已退休**（2026-11-06） | 交接边 → 域声明的 `edges`（`kind=handoff`）|
+| `placement.feedback_into` | **已退休**（2026-11-06） | 闭环边 → 域声明的 `edges`（`kind=feedback`）|
+| `PlacementDef`（那个壳） | **已退休**（2026-11-06） | 展示位摊平到 `BeeBoxDefinition` 顶层 |
 | （新）| 域声明 `DomainDeclaration` | **唯一事实源**（住在 `domains/<域>/`）|
 | （新）| 装配产物 `AssembledDomain` | 装好的域（与 `AssembledBox` 对称）|
 | `BeeBoxMap` | `WiringView` | 拓扑投影（派生）|
@@ -1122,9 +1130,15 @@ domains/wms/
 3. **`standalone` 标记放哪？** 盒子自己的字段（`BoxDeclaration`），还是独立清单？
 4. **WMS 词表升格不升格？** 现在只被设计盒自己用 → 留在盒子里；
    一旦开发盒/测试盒也要读，就升格到 `domains/<wms>/`。
-5. **旧协议的 `PlacementDef` 怎么退休？** 11 只盒子还在用旧的
-   `BeeBoxDefinition.placement: PlacementDef`，新协议已把字段摊平。
-   三个字段退休时，旧协议的那份要不要一起标退休？
+5. ~~**旧协议的 `PlacementDef` 怎么退休？**~~ → **2026-11-06 已定：整体退休**
+   - `PlacementDef` **整体退休**——不留「只剩三个字段」的壳子
+   - **理由**：它当年存在的理由是「调用方得能知道盒子接谁、投给谁——
+     接线是描述的一部分」。接线搬进域声明后，这个理由**不成立**了
+   - 展示位（显示名 / 价值流 / 角色）**摊平**到 `BeeBoxDefinition` 顶层
+   - `BoxDeclaration`（新协议）里那三个字段**直接删**：
+     不留空壳，也不留 deprecated 别名（能写但没人读的字段 = 两套接线并存）
+   - 接线读取的**唯一入口**放 `domains/`（业务层）：
+     `core` 与 `runtime` 都不再碰接线（runtime 里的接线校验移交域装配器 D2）
 6. **（新增，口径 2026-11-05 已改）类型兼容规则下沉到 `core/<contract>.py`？**
    - **原口径是「把 `validate_payload` 整个下沉」——已改**：
      D3c 要用的是 **`check_schema_compatibility`**（声明层），
