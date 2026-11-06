@@ -48,7 +48,7 @@
 
 - **`Component`** —— 一跳。声明 `op_id` / `input_from` / `input` / `output` /
   `next` / `handler` / `idempotency` / `leaves_artifact`。
-- **`BoxDeclaration`** —— 这只盒子是什么。声明 id / 归属（域、价值流、角色、接线）/
+- **`BoxDeclaration`** —— 这只盒子是什么。声明 id / 归属（协作边界、价值流、角色、接线）/
   投料入口 / 产出契约（schema、判据、例外、形态、成熟度）/ 作业路线标识 / 政策 / 度量。
 
 ### 3.2 core 提供什么
@@ -155,7 +155,7 @@ RUNNER = HandlerRunner(MODEL_HANDLERS, owner="wms_design_box")
    - ✅ **已迁（2026-11-03）**：7 跳 / 8 判据 / 5 例外 / ref 交接全部走新协议。
      差分验证：迁移前后**声明 + 作业路线逐字节相同**，
      **真跑一次链路的产出也逐字节相同**。
-2. 学习域 4 只 → 票据 → WMS 其余。
+2. 学习协作边界 4 只 → 票据 → WMS 其余。
 3. 每迁一只：跑全量 + 真跑一次链路 + 对比迁移前后的产出。
 4. 最后删旧路径，**不留兼容层**。
 

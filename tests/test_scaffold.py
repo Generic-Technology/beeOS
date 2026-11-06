@@ -379,11 +379,11 @@ class TestC12SubjectRefIsObtainable:
 
 
 class TestWiringDeclaration:
-    """接线**不在盒子的声明里**了——它是域的事实
+    """接线**不在盒子的声明里**了——它是协作边界的事实
 
     原来这里守着「闭环边不许混进交接边」（`feeds_into` 与
-    `feedback_into` 不许指向同一只盒子）。接线搬到域声明之后，
-    这条判定归**域装配器**（`core/decl_checks.py` 的 D7/D11）。
+    `feedback_into` 不许指向同一只盒子）。接线搬到协作边界声明之后，
+    这条判定归**协作边界装配器**（`core/decl_checks.py` 的 D7/D11）。
     """
 
     @pytest.mark.parametrize("field", ["domain", "feeds_into", "feedback_into"])
@@ -554,7 +554,7 @@ def _uses_legacy_path(module: str) -> bool:
 #:
 #: **每迁走一只，就从这里划掉一条**——迁到最后这个清单是空的。
 #:
-#: **2026-11-04：台账清空**——WMS 域 6 只全部迁完（analysis / development /
+#: **2026-11-04：台账清空**——WMS 协作边界 6 只全部迁完（analysis / development /
 #: ops / requirement / system / testing），仓库里没有一只盒子还在旧写法。
 LEGACY_BOX_MODULES = ()
 

@@ -112,22 +112,22 @@ class TestTheShapesStayCompatible:
 
 
 # ------------------------------------------------------------------
-# 2. 学习域是放射形状
+# 2. 学习协作边界是放射形状
 # ------------------------------------------------------------------
 class TestTheLearningDomainIsAStar:
     def test_the_archive_is_the_only_sink(self):
-        """成长记录盒是这个域**唯一**的汇点"""
+        """成长记录盒是这个协作边界**唯一**的汇点"""
         m = fulfillment_scope_wiring("Learning")
         assert m.center == GROWTH_BOX, f"汇点算成了 {m.center}"
         assert m.shape == "star", (
-            f"学习域的形状是 {m.shape}——三科之间没有交接，它该是放射"
+            f"学习协作边界的形状是 {m.shape}——三科之间没有交接，它该是放射"
         )
         assert m.handoffs == (), "放射形状里不该有交接边"
 
     def test_every_subject_hands_off_to_the_archive(self):
-        """三科都把产出交给成长记录盒——**从域声明读**
+        """三科都把产出交给成长记录盒——**从协作边界声明读**
 
-        接线住在 `domains/<域>/`，不在盒子自己身上了。
+        接线住在 `fulfillment_scopes/<边界>/`，不在盒子自己身上了。
         """
         from fulfillment_scopes import box_wiring
 

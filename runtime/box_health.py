@@ -357,7 +357,7 @@ def inspect_box(inspection: BoxInspection) -> BoxHealth:
         "display_fields_filled",
         "展示位填了",
         "展示位留空串跟没声明一样——铭牌照样显示「—」。"
-        "接线不在这里（它在域声明里），这里管的是「这只盒子叫什么、"
+        "接线不在这里（它在协作边界声明里），这里管的是「这只盒子叫什么、"
         "在价值流哪一段、什么职责」。",
         _display_problems(d),
     ))
@@ -406,14 +406,15 @@ def wiring_problems(inspections: Sequence[BoxInspection]) -> list[str]:
     """接线指向的盒子都在吗
 
     **接线不在盒子的声明里了**（2026-11-06 退休）——
-    它是**域**的事实，住在 `domains/<域>/`。
+    它是**协作边界**的事实，住在 `fulfillment_scopes/<边界>/`。
 
-    所以「指着一个不存在的盒子」现在由**域装配器**判
-    （`core/decl_checks.py` 的 D2：边两端都得在域的成员清单里），
-    而域装配器判得更早、也更全（它还查 `to_task` 是不是真的 task 入口）。
+    所以「指着一个不存在的盒子」现在由**协作边界装配器**判
+    （`core/decl_checks.py` 的 D2：边两端都得在协作边界的成员清单里），
+    而协作边界装配器判得更早、也更全（它还查 `to_task` 是不是真的 task 入口）。
 
     **这里再判一遍 = 两份判定**，而两份判定迟早给出不同答案。
-    所以这段只保留一个**结论**：接线归域管，不在盒子的体检项里。
+    所以这段只保留一个**结论**：接线由别处管，不在盒子的体检项里
+    （runtime 不知道「协作边界」是什么——它只需要知道那不是这只盒子的体检项）。
     """
     return []
 
@@ -548,7 +549,7 @@ def _display_problems(d: BeeBoxDefinition) -> list[str]:
     """展示位填了吗
 
     **原来这里还管接线**（`placement.feeds_into` / `feedback_into`）——
-    接线退休后归域声明，这里只管展示位。
+    接线退休后归协作边界声明，这里只管展示位。
     """
     problems: list[str] = []
     for key in ("display_name", "value_stream", "role"):

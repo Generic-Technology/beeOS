@@ -1,10 +1,10 @@
 """tests.test_fulfillment_scope - 协作边界声明的守卫
 
-**域声明是盒子之间关系的唯一事实源**（住在 `domains/<域>/`）。
+**协作边界声明是盒子之间关系的唯一事实源**（住在 `fulfillment_scopes/<边界>/`）。
 这份守卫盯的是那件最容易悄悄坏掉的事：
 **声明写在文件里，却没人真的用它**。
 
-一份没人装配的域声明，跟没有声明一模一样——
+一份没人装配的协作边界声明，跟没有声明一模一样——
 看板照常渲染（读的是别的来源），图看起来完全正常，
 只是有一只盒子接错了对象，而**没有任何东西会报错**。
 
@@ -12,17 +12,17 @@
 
 | 守卫 | 抓什么 |
 |---|---|
-| 装配总闸 | 域声明本身不合法（域级装配器当场拒）|
-| 真的在装配 | 注册表里的声明就是模块里那个，域装配器确实跑了 |
-| 全局归属 | 每只盒子要么在域里，要么**显式**独立；不能两处都算 |
+| 装配总闸 | 协作边界声明本身不合法（边界级装配器当场拒）|
+| 真的在装配 | 注册表里的声明就是模块里那个，协作边界装配器确实跑了 |
+| 全局归属 | 每只盒子要么在边界里，要么**显式**独立；不能两处都算 |
 | 退休 | 旧接线字段**不得复活**（一只盒子不许同时留两套）|
 
 ## 旧字段已经退休（2026-11-06）
 
 `placement.domain` / `feeds_into` / `feedback_into` 这三个字段**退休了**。
 
-迁移期它们跟域声明**双写**，那时候这里守的是「不矛盾」
-（域声明比旧字段**多** 3 条真实交接：需求→测试、设计→测试、开发→运维，
+迁移期它们跟协作边界声明**双写**，那时候这里守的是「不矛盾」
+（协作边界声明比旧字段**多** 3 条真实交接：需求→测试、设计→测试、开发→运维，
 那 3 条以前藏在编排脚本里。要求「完全一样」等于逼着人把真实依赖藏起来）。
 
 现在旧字段已经摘干净，这条守卫换成**更硬**的那条：
@@ -54,12 +54,12 @@ RETIRED_WIRING_FIELDS = ("placement", "domain", "feeds_into", "feedback_into")
 # ============================================================
 
 class TestEveryDomainAssembles:
-    """域声明不合法 → 装配期就拒（不许「看板照常渲染，只是接错了」）"""
+    """协作边界声明不合法 → 装配期就拒（不许「看板照常渲染，只是接错了」）"""
 
     def test_every_domain_declares_at_least_one_box(self):
         for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
             assert declaration.boxes, (
-                f"域 {domain_id!r} 一只盒子都没有——"
+                f"协作边界 {domain_id!r} 一只盒子都没有——"
                 f"它要么从注册表里删掉，要么把成员写上"
             )
 
@@ -69,14 +69,14 @@ class TestEveryDomainAssembles:
         for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
             assembled = assemble_fulfillment_scope(declaration, facts)
             assert assembled.ok, (
-                f"域 {domain_id!r} 装配不过：\n"
+                f"协作边界 {domain_id!r} 装配不过：\n"
                 + "\n".join(f"  · {p}" for p in assembled.problems)
             )
 
     def test_the_domain_id_matches_the_module_it_lives_in(self):
-        """域 id 与目录名对得上——看板按 id 筛域名，前端按目录找文件"""
+        """协作边界 id 与目录名对得上——看板按 id 筛协作边界名，前端按目录找文件"""
         for domain_id in FULFILLMENT_SCOPE_REGISTRY:
-            assert domain_id, "域 id 不能是空串"
+            assert domain_id, "协作边界 id 不能是空串"
 
     def test_the_rules_are_not_vacuous(self):
         """每条规则都得**真的在数东西**
@@ -90,30 +90,30 @@ class TestEveryDomainAssembles:
             assembled = assemble_fulfillment_scope(declaration, box_facts())
             for reading in assembled.rules_reading:
                 assert reading.total > 0, (
-                    f"域 {domain_id!r} 的规则 {reading.kind!r} 读数是 0/0——"
+                    f"协作边界 {domain_id!r} 的规则 {reading.kind!r} 读数是 0/0——"
                     f"它什么也没守住，还永远绿"
                 )
 
     def test_every_domain_declares_at_least_one_rule(self):
-        """一个域一条规则都不写 = 它声明了连线，没声明任何业务断言
+        """一个协作边界一条规则都不写 = 它声明了连线，没声明任何业务断言
 
-        域级规则正是这套协议存在的理由（域声明不只是「谁连着谁」，
-        还有「这个域额外要求什么」）。
-        规则清空不会报任何错——只有看板上的「域级规则」那块空了，
+        边界级规则正是这套协议存在的理由（协作边界声明不只是「谁连着谁」，
+        还有「这个协作边界额外要求什么」）。
+        规则清空不会报任何错——只有看板上的「边界级规则」那块空了，
         而**没人知道刚才那条业务断言被谁删了**。
 
         最少该有的是 `each_handoff_has_channel`：
-        每条交接边都得有能走通的通道，**任何域都成立**。
+        每条交接边都得有能走通的通道，**任何协作边界都成立**。
         """
         for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
             assert declaration.rules, (
-                f"域 {domain_id!r} 一条域级规则都没写——"
-                f"域声明只声明了连线，没声明任何业务断言"
+                f"协作边界 {domain_id!r} 一条边界级规则都没写——"
+                f"协作边界声明只声明了连线，没声明任何业务断言"
             )
             kinds = {rule.kind for rule in declaration.rules}
             assert RuleKind.each_handoff_has_channel in kinds, (
-                f"域 {domain_id!r} 没有「每条交接边都要有通道」这条规则——"
-                f"它对任何域都成立"
+                f"协作边界 {domain_id!r} 没有「每条交接边都要有通道」这条规则——"
+                f"它对任何协作边界都成立"
             )
 
     def test_every_exemption_says_why(self):
@@ -122,11 +122,11 @@ class TestEveryDomainAssembles:
             for rule in declaration.rules:
                 for ex in rule.exemptions:
                     assert ex.reason.strip(), (
-                        f"域 {domain_id!r} 的规则 {rule.kind.value!r} "
+                        f"协作边界 {domain_id!r} 的规则 {rule.kind.value!r} "
                         f"对 {ex.box_id!r} 的豁免没写理由"
                     )
                     assert ex.mode in ("may", "must"), (
-                        f"域 {domain_id!r} 的豁免模式 {ex.mode!r} 不认识"
+                        f"协作边界 {domain_id!r} 的豁免模式 {ex.mode!r} 不认识"
                     )
 
 
@@ -150,15 +150,15 @@ class TestTheDeclarationIsActuallyUsed:
         assert FULFILLMENT_SCOPE_REGISTRY[learning.SCOPE.id] is learning.SCOPE
 
     def test_the_board_actually_assembles_every_domain(self):
-        """看板那套装配要把每个域都装一遍——少装一个，那个域就是死的"""
+        """看板那套装配要把每个协作边界都装一遍——少装一个，那个协作边界就是死的"""
         assemblies = fulfillment_scope_assemblies()
         assert set(assemblies) == set(FULFILLMENT_SCOPE_REGISTRY), (
-            f"看板装配的域 {sorted(assemblies)} "
+            f"看板装配的协作边界 {sorted(assemblies)} "
             f"跟注册表 {sorted(FULFILLMENT_SCOPE_REGISTRY)} 对不上"
         )
         for domain_id, assembled in assemblies.items():
             assert assembled.ok, (
-                f"域 {domain_id!r} 在看板那套装配里不过：\n"
+                f"协作边界 {domain_id!r} 在看板那套装配里不过：\n"
                 + "\n".join(f"  · {p}" for p in assembled.problems)
             )
 
@@ -168,35 +168,35 @@ class TestTheDeclarationIsActuallyUsed:
 # ============================================================
 
 class TestEveryBoxBelongsSomewhere:
-    """每只盒子要么在域里，要么**显式**独立——不能「没人管」"""
+    """每只盒子要么在边界里，要么**显式**独立——不能「没人管」"""
 
     def test_no_box_is_in_a_domain_and_also_declared_standalone(self):
         members = {b for d in FULFILLMENT_SCOPE_REGISTRY.values() for b in d.boxes}
         both = members & set(STANDALONE_BOXES)
         assert not both, (
-            f"这些盒子既在域里、又显式声明独立：{sorted(both)}——"
+            f"这些盒子既在边界里、又显式声明独立：{sorted(both)}——"
             f"两边都算，看板上它归哪儿？"
         )
 
     def test_every_registered_box_is_in_a_domain_or_standalone(self):
-        """忘了归域 → 盒子不在任何域里，却没人知道"""
+        """忘了归协作边界 → 盒子不在任何协作边界里，却没人知道"""
         members = {b for d in FULFILLMENT_SCOPE_REGISTRY.values() for b in d.boxes}
         registered = set(BOX_REGISTRY)
         missing = sorted(registered - members - set(STANDALONE_BOXES))
         assert not missing, (
-            f"这些盒子既不在任何域里、也没显式声明独立：{missing}——"
-            f"要么把它们加进域声明，要么在 STANDALONE_BOXES 里点名"
+            f"这些盒子既不在任何协作边界里、也没显式声明独立：{missing}——"
+            f"要么把它们加进协作边界声明，要么在 STANDALONE_BOXES 里点名"
         )
 
     def test_a_standalone_box_really_is_standalone(self):
-        """显式独立的那只，不能在域声明里偷偷有边"""
+        """显式独立的那只，不能在协作边界声明里偷偷有边"""
         members = {b for d in FULFILLMENT_SCOPE_REGISTRY.values() for b in d.boxes}
         for box_id in STANDALONE_BOXES:
             assert box_id in BOX_REGISTRY, (
                 f"STANDALONE_BOXES 里点了名 {box_id!r}，注册表里却没有它"
             )
             assert box_id not in members, (
-                f"{box_id!r} 显式声明独立，却又出现在域成员里"
+                f"{box_id!r} 显式声明独立，却又出现在协作边界成员里"
             )
 
 
@@ -217,7 +217,7 @@ class TestTheRetiredWiringFieldsAreGone:
         for box_id in BOX_REGISTRY:
             definition = BOX_REGISTRY[box_id][0]()
             assert not hasattr(definition, "placement"), (
-                f"{box_id!r} 身上还有 placement——接线住在域声明里，"
+                f"{box_id!r} 身上还有 placement——接线住在协作边界声明里，"
                 f"盒子身上再留一份 = 两套接线并存"
             )
 
@@ -258,12 +258,12 @@ class TestTheRetiredWiringFieldsAreGone:
         )
 
     def test_the_domain_declaration_is_the_only_wiring_source(self):
-        """域声明里的边 = 接线事实；盒子上再没有第二份"""
+        """协作边界声明里的边 = 接线事实；盒子上再没有第二份"""
         from fulfillment_scopes import box_wiring
 
         for box_id in BOX_REGISTRY:
             wiring = box_wiring(box_id)
-            # 归档、交接、反馈三组都只从域声明来
+            # 归档、交接、反馈三组都只从协作边界声明来
             for group in ("handoffs", "handoff_from", "feedback", "feedback_from"):
                 assert isinstance(wiring[group], list)
 
@@ -286,7 +286,7 @@ class TestTheEdgesSayWhatTheyAre:
                 if edge.kind != EdgeKind.archive:
                     continue
                 assert not edge.via, (
-                    f"域 {declaration.id!r} 的归档边 "
+                    f"协作边界 {declaration.id!r} 的归档边 "
                     f"{edge.from_box!r} → {edge.to_box!r} 带了通道 "
                     f"{edge.via!r}——归档不是数据交接"
                 )
@@ -298,7 +298,7 @@ class TestTheEdgesSayWhatTheyAre:
                 if edge.kind != EdgeKind.handoff:
                     continue
                 assert edge.via, (
-                    f"域 {declaration.id!r} 的交接边 "
+                    f"协作边界 {declaration.id!r} 的交接边 "
                     f"{edge.from_box!r} → {edge.to_box!r} 没有通道——"
                     f"交接没有通道 = 下游拿不到这份产出"
                 )
@@ -309,12 +309,12 @@ class TestTheEdgesSayWhatTheyAre:
             for edge in declaration.edges:
                 if edge.via:
                     assert edge.kind == EdgeKind.handoff, (
-                        f"域 {declaration.id!r} 的边 "
+                        f"协作边界 {declaration.id!r} 的边 "
                         f"{edge.from_box!r} → {edge.to_box!r} 带了通道 "
                         f"{edge.via!r}，kind 却是 {edge.kind.value!r}"
                     )
                 else:
                     assert edge.kind != EdgeKind.handoff, (
-                        f"域 {declaration.id!r} 的交接边 "
+                        f"协作边界 {declaration.id!r} 的交接边 "
                         f"{edge.from_box!r} → {edge.to_box!r} 没有通道"
                     )

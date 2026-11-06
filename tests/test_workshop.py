@@ -6,7 +6,7 @@ tests.test_workshop - BeeBox Workshop（工作台）的守卫
 这组守卫盯三件事：
 
 1. **页面里不许出现某一只盒子的名字**——加盒子不用改页面；
-2. **页面不许把业务事实的值重新敲一遍**——归属、域、价值流都住在盒子里；
+2. **页面不许把业务事实的值重新敲一遍**——归属、价值流、协作边界的值都住在盒子里；
 3. **页面和守卫说的是同一件事**——它们读的是同一份判定
    （`runtime/box_health.py`），不是各说各话。
 
@@ -91,7 +91,7 @@ class TestTheWorkshopNamesNoBox:
 
 class TestTheWorkshopRetypesNoBusinessFact:
     def test_no_business_fact_is_written_into_the_workshop(self):
-        """归属、域、价值流的值都住在盒子里（或域声明里），工作台只读
+        """归属、价值流、协作边界的值都住在盒子里（或协作边界声明里），工作台只读
 
         跟看板那条守卫同一条规矩：值重敲一遍 = 第二份真相。
         """
@@ -121,7 +121,7 @@ class TestTheWorkshopRetypesNoBusinessFact:
                     offenders.append(f"{path.name}:{node.lineno} {node.value!r}")
         assert not offenders, (
             "工作台里又敲了一遍业务事实的值：\n  " + "\n  ".join(offenders)
-            + "\n它们应该只住在各盒 definition（或域声明）里"
+            + "\n它们应该只住在各盒 definition（或协作边界声明）里"
         )
 
 

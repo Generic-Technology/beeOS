@@ -1,20 +1,20 @@
-"""core.fulfillment_scope —— 域装配器：把域声明装成产物，**装配期就报错**
+"""core.fulfillment_scope —— 协作边界装配器：把协作边界声明装成产物，**装配期就报错**
 
-域声明是**盒子之间关系的唯一事实源**（住在 `domains/<域>/`）。
+协作边界声明是**盒子之间关系的唯一事实源**（住在 `fulfillment_scopes/<边界>/`）。
 本模块把它装成 `AssembledFulfillmentScope`：
 
 ```
 FulfillmentScopeDeclaration  ──assemble_fulfillment_scope──▶  AssembledFulfillmentScope
                                           ├─ declaration   装好的声明
                                           ├─ wiring        接线投影（派生）
-                                          ├─ rules_reading 域级规则的读数
+                                          ├─ rules_reading 边界级规则的读数
                                           └─ problems      装配期结论
 ```
 
 ## 为什么要「装配期就报错」
 
-域声明是**手写**的（成员清单 + 边 + 规则），手写就会写错。
-而域声明错了的代价特别大：**看板照常渲染**，图看起来完全正常，
+协作边界声明是**手写**的（成员清单 + 边 + 规则），手写就会写错。
+而协作边界声明错了的代价特别大：**看板照常渲染**，图看起来完全正常，
 只是有一只盒子接错了对象——**没有任何东西会报错**。
 
 所以跟盒子协议一样：**装配期就拒**。
@@ -25,7 +25,7 @@ FulfillmentScopeDeclaration  ──assemble_fulfillment_scope──▶  Assemble
 | 层 | 判什么 | 住在 |
 |---|---|---|
 | **① 声明合法性** | 这份声明本身对不对（D1–D15）| `core/decl_checks.py` |
-| **② 域业务规则** | **这个域**自己额外要求的（`rules`）| 本模块 |
+| **② 边界业务规则** | **这个协作边界**自己额外要求的（`rules`）| 本模块 |
 | **③ 展示适用性** | 能不能画成环/放射 | `core/wiring.py` |
 
 **「汇点唯一」属于 ③，不属于 ①**——那是画图的要求，不是声明合法性的要求。
@@ -75,7 +75,7 @@ class DomainProblem:
 
 @dataclass(frozen=True)
 class RuleReading:
-    """一条域级规则的读数
+    """一条边界级规则的读数
 
     `passed` / `total` 是**声明层**的数；`exempt` 是被点名豁免的盒子。
     """
@@ -107,7 +107,7 @@ class RuleReading:
 
 @dataclass(frozen=True)
 class AssembledFulfillmentScope:
-    """装好的域——与 ``AssembledBox`` 对称"""
+    """装好的协作边界——与 ``AssembledBox`` 对称"""
 
     declaration: FulfillmentScopeDeclaration
     wiring: WiringView
@@ -116,7 +116,7 @@ class AssembledFulfillmentScope:
 
     @property
     def ok(self) -> bool:
-        """声明检查与域业务规则全部通过。"""
+        """声明检查与边界业务规则全部通过。"""
         return not self.problems and all(r.ok for r in self.rules_reading)
 
     def to_dict(self) -> dict:
@@ -144,7 +144,7 @@ def _evaluate_rule(
     declaration: FulfillmentScopeDeclaration,
     wiring: WiringView,
 ) -> RuleReading:
-    """算一条域级规则的读数"""
+    """算一条边界级规则的读数"""
     exempt = _exempted(rule)
     members = [b for b in declaration.boxes if b not in exempt]
 
@@ -157,7 +157,7 @@ def _evaluate_rule(
                 passed=0,
                 total=len(members),
                 exempt=tuple(sorted(exempt)),
-                detail="域里没有汇点——归档归属指向谁？",
+                detail="边界里没有汇点——归档归属指向谁？",
             )
         non_center = [b for b in members if b != center]
         archive_to_center = {
@@ -178,7 +178,7 @@ def _evaluate_rule(
         )
 
     if rule.kind == RuleKind.all_handoff:
-        # 每只非汇点成员都要**在交接链上**——即在本域至少有一条 handoff 边
+        # 每只非汇点成员都要**在交接链上**——即在本边界至少有一条 handoff 边
         #（作为上游**或**下游）。
         #
         # **为什么不是「都要有出边」**：链的末端那只（分析盒）没有交接出边——
@@ -233,15 +233,15 @@ def assemble_fulfillment_scope(
     declaration: FulfillmentScopeDeclaration,
     boxes: Mapping[str, BoxFacts],
 ) -> AssembledFulfillmentScope:
-    """把一份域声明装成 `AssembledFulfillmentScope`
+    """把一份协作边界声明装成 `AssembledFulfillmentScope`
 
     Args:
-        declaration: 域声明（业务事实）
+        declaration: 协作边界声明（业务事实）
         boxes: 所有盒子的事实（由调用方从注册表收集）——
             `core` 不认识注册表，也不认识任何一只盒子
 
     Returns:
-        装好的域。**`problems` 非空 = 装配期就拒**，
+        装好的协作边界。**`problems` 非空 = 装配期就拒**，
         里面有它就等于「这份声明不能用」。
     """
     problems: list[DomainProblem] = []
@@ -262,7 +262,7 @@ def assemble_fulfillment_scope(
         [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges],
     )
 
-    # 域级规则的读数（声明层）
+    # 边界级规则的读数（声明层）
     readings = tuple(
         _evaluate_rule(rule, declaration, wiring) for rule in declaration.rules
     )
@@ -270,7 +270,7 @@ def assemble_fulfillment_scope(
         if not reading.ok:
             problems.append(DomainProblem(
                 "R1",
-                f"域规则 {reading.kind} 未通过（{reading.passed}/{reading.total}）："
+                f"边界规则 {reading.kind} 未通过（{reading.passed}/{reading.total}）："
                 f"{reading.detail}",
             ))
 
@@ -278,7 +278,7 @@ def assemble_fulfillment_scope(
     # 但它得被看见——否则看板上一片空白，没人知道为什么。
     if wiring.reason and wiring.reason_code not in ("star",):
         problems.append(
-            DomainProblem("W1", f"域 {declaration.id!r} 画不成场图：{wiring.reason}")
+            DomainProblem("W1", f"协作边界 {declaration.id!r} 画不成场图：{wiring.reason}")
         )
 
     return AssembledFulfillmentScope(
@@ -301,7 +301,7 @@ def handoff_channels(
 
     **这就是编排层要填的那几个通道**——`via` 就是下游投料里的字段名。
     编排层不再自己抄一份「来源 + 目标字段」：
-    抄的那份会跟域声明漂，而漂了的后果是**运行时才发现接不上**
+    抄的那份会跟协作边界声明漂，而漂了的后果是**运行时才发现接不上**
     （投料被拒，或者更糟：接上了但接错了对象）。
     """
     return tuple(

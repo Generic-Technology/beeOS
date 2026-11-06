@@ -190,11 +190,11 @@ RUNNER_REGISTRY: dict[str, HandlerRunner] = {
 # 原先这里有一张 BOX_META 表，写着每只盒子的 display_name / value_stream /
 # role / feeds_into。展示位搬回了各盒自己的 definition；
 # **接线（交接/反馈/归档）在 2026-11-06 又搬了一次**——
-# 搬进了**域声明**（`domains/<域>/`）。
+# 搬进了**协作边界声明**（`fulfillment_scopes/<边界>/`）。
 #
-# 为什么接线不跟着盒子走：接线是**域**的事实，不是「这只盒子是什么」的一部分。
+# 为什么接线不跟着盒子走：接线是**协作边界**的事实，不是「这只盒子是什么」的一部分。
 # 盒子自己那份只声明了 5 条交接，真实链路有 8 条——差的 3 条藏在编排脚本里。
-# 照抄那份 = 域声明号称是唯一事实源，而它其实不是。
+# 照抄那份 = 协作边界声明号称是唯一事实源，而它其实不是。
 
 
 def box_meta(box_id: str) -> dict[str, str]:
@@ -277,13 +277,13 @@ def declared_beeline_ops(box_id: str, beeline_id: str | None = None) -> list[str
 
 
 def box_fulfillment_scopes(box_ids: Iterable[str]) -> dict[str, list[str]]:
-    """按域分组盒子——**成员来自域声明**（唯一事实源）
+    """按协作边界分组盒子——**成员来自协作边界声明**（唯一事实源）
 
-    域成员住在 `domains/<域>/` 的声明里（`FulfillmentScopeDeclaration.boxes`）。
+    协作边界成员住在 `fulfillment_scopes/<边界>/` 的声明里（`FulfillmentScopeDeclaration.boxes`）。
     **不再从各盒自己的声明派生**——
-    域归属也是域声明的事实；盒子自己那份已经退休，两边并存必然漂。
+    协作边界归属也是协作边界声明的事实；盒子自己那份已经退休，两边并存必然漂。
 
-    `""`（不在任何域里）单独归到「未归域」，不假装它属于某个域。
+    `""`（不在任何协作边界里）单独归到「未归范围」，不假装它属于某个协作边界。
     """
     wanted = set(box_ids)
     groups: dict[str, list[str]] = {}
@@ -291,7 +291,7 @@ def box_fulfillment_scopes(box_ids: Iterable[str]) -> dict[str, list[str]]:
         members = [b for b in declaration.boxes if b in wanted]
         if members:
             groups[domain_id] = members
-    # 没进任何域的盒子（包括显式独立的）归到「未归域」
+    # 没进任何协作边界的盒子（包括显式独立的）归到「未归范围」
     unassigned = [b for b in box_ids if b not in _all_domain_members()]
     if unassigned:
         groups[""] = sorted(unassigned)
@@ -299,7 +299,7 @@ def box_fulfillment_scopes(box_ids: Iterable[str]) -> dict[str, list[str]]:
 
 
 def _all_domain_members() -> set[str]:
-    """全部域声明里的盒子（并集）"""
+    """全部协作边界声明里的盒子（并集）"""
     out: set[str] = set()
     for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
         out.update(declaration.boxes)
@@ -316,13 +316,13 @@ def fulfillment_scope_layout(fulfillment_scope: str) -> dict[str, Any]:
 
     规则（都跟「WMS」「system box」这些具体名字无关）：
 
-    - **中心 = 唯一汇点**：域内出度 0 且入度 > 0。恰好一个才成立；
+    - **中心 = 唯一汇点**：边界内出度 0 且入度 > 0。恰好一个才成立；
       零个或多个都**不猜**，`center=None` 且 `reason` 说清楚，退回平铺。
-      今天 WMS 域推导出来恰好是 system box，但推导规则跟它无关——
+      今天 WMS 协作边界推导出来恰好是 system box，但推导规则跟它无关——
       写死 `center = "wms_system_box"` 就等于在看板层声明了业务事实，
       跟 BOX_META 一模一样的病，只是换了张脸。
     - **两类边**：指向中心的边是**累积**（这次产出进档案），
-      其余域内边是**交接**（交出去让下一只验）。混成一条就看不出
+      其余边界内边是**交接**（交出去让下一只验）。混成一条就看不出
       「流水线」和「记账」是两件事。
     - **环序**：交接边的拓扑序，同层按 box_id 字母序（稳定）。
 
@@ -339,19 +339,19 @@ ALL_SCOPES = "__all__"
 
 # ===== Map（BeeBox Map）=====
 #
-# Map是**派生**的：唯一事实源是**域声明**（域归属 + 接线），
+# Map是**派生**的：唯一事实源是**协作边界声明**（协作边界归属 + 接线），
 # 这里把它推成一份**可复用的结构**，而不是看板内部的一种画法。
 # 画布上的虚线边界只是它的一张照片。
 #
-# 「再手写一张域接线表」= 第二份事实 = 必然漂，而且漂了不报错。
-# 所以Map永远从域声明推；想让Map变，就去改域声明。
+# 「再手写一张协作边界接线表」= 第二份事实 = 必然漂，而且漂了不报错。
+# 所以Map永远从协作边界声明推；想让Map变，就去改协作边界声明。
 
 
 def box_facts() -> dict[str, BoxFacts]:
-    """注册表里每只盒子的**事实**（域装配器要的那些）
+    """注册表里每只盒子的**事实**（协作边界装配器要的那些）
 
     **core 不认识注册表，也不认识任何一只盒子**——
-    由这里把盒子抄成 `BoxFacts` 再交给域装配器。
+    由这里把盒子抄成 `BoxFacts` 再交给协作边界装配器。
     """
     facts: dict[str, BoxFacts] = {}
     for bid in registered_box_ids():
@@ -367,10 +367,10 @@ def box_facts() -> dict[str, BoxFacts]:
 
 
 def fulfillment_scope_assemblies() -> dict[str, AssembledFulfillmentScope]:
-    """把每个域**装配一遍**——装配期就报错
+    """把每个协作边界**装配一遍**——装配期就报错
 
-    域声明是手写的（成员 + 边 + 规则），手写就会写错；
-    而域声明错了的代价特别大：**看板照常渲染**，图看起来完全正常。
+    协作边界声明是手写的（成员 + 边 + 规则），手写就会写错；
+    而协作边界声明错了的代价特别大：**看板照常渲染**，图看起来完全正常。
     所以这里当场拒。
     """
     facts = box_facts()
@@ -430,14 +430,14 @@ def _layout_from_map(m: WiringView) -> dict[str, Any]:
 
 
 def scope_layout(scope: str) -> dict[str, Any]:
-    """一个**范围**（不一定是单个域）的布局
+    """一个**范围**（不一定是单个协作边界）的布局
 
-    「视图」和「范围」是两个独立的轴：网格/拓扑由读者选，域只决定看哪些盒子。
-    所以这里必须能回答「全部域」这种跨域范围——以前没有这种情况，
-    是因为点域 chip 顺手把视图也换了，两个轴被焊死成一个。
+    「视图」和「范围」是两个独立的轴：网格/拓扑由读者选，范围只决定看哪些盒子。
+    所以这里必须能回答「全部范围」这种跨边界范围——以前没有这种情况，
+    是因为点范围 chip 顺手把视图也换了，两个轴被焊死成一个。
 
-    **跨域范围一律不出环，而且这不是偷懒**：见 `_layout_for` 里
-    multi_domain 那段，域内唯一汇点的规则跨了几条互不相干的流水线之后
+    **跨边界范围一律不出环，而且这不是偷懒**：见 `_layout_for` 里
+    multi_domain 那段，边界内唯一汇点的规则跨了几条互不相干的流水线之后
     就不成立了，硬凑一个中心等于替业务声明一条不存在的拓扑。
     """
     return _layout_from_map(scope_wiring(scope))
@@ -446,7 +446,7 @@ def scope_layout(scope: str) -> dict[str, Any]:
 def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     """按业务流向排盒子：产出方在前，消费方在后（需求捕获 → 业务建模）
 
-    顺序从**域声明的边**推导，不按 box_id 字母序也不按注册顺序。
+    顺序从**协作边界声明的边**推导，不按 box_id 字母序也不按注册顺序。
     字母序会把 wms_design_box 排在 wms_requirement_box 前面，
     而实际流程正好相反；注册顺序则只是开发历史的偶然（谁先加谁在前）。
 
@@ -459,7 +459,7 @@ def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     兜底：边声明成环时不抛错，剩下的按传入顺序收尾——看板不能白屏。
 
     **`archive` 边要算进来**：它是「这一环的产物进档案」——
-    档案盒（域的汇点）是这条流的**终点**，名册上它该排在最后。
+    档案盒（协作边界的汇点）是这条流的**终点**，名册上它该排在最后。
     只算交接边的话，档案盒没有任何交接入边，会被排到第一层，
     名册就成了「档案盒、需求盒、设计盒……」——**顺序反了，而且没人会报错**。
 
@@ -473,8 +473,8 @@ def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     ids = sorted(box_ids)
     # preds[b] = 哪些盒子把产出投给 b（b 的上游）
     #
-    # **依据是域声明的边**——
-    # 域声明是唯一事实源。而且它比盒子自己那份旧接线声明**多 3 条真实交接**
+    # **依据是协作边界声明的边**——
+    # 协作边界声明是唯一事实源。而且它比盒子自己那份旧接线声明**多 3 条真实交接**
     # （需求→测试、设计→测试、开发→运维），所以这个顺序更接近真实流水线。
     preds: dict[str, set[str]] = {b: set() for b in ids}
     for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
@@ -538,7 +538,7 @@ def _sample_field(field: FieldDef, schemas: Any = None) -> Any:
         # - 更早一步就拒：`subject_ref_field` 必须能取出**非空 id 串**，
         #   空串 = 「这次履约归不到任何工作单元」，intake 直接不收
         #
-        # 当时没被发现，是因为**有手写示例的那几只盒子**（学习域 3 只 +
+        # 当时没被发现，是因为**有手写示例的那几只盒子**（学习协作边界 3 只 +
         # 设计盒）都绕过了这一层；没手写示例的 4 只 WMS 盒
         # （analysis / development / ops / testing）全靠兜底生成，
         # 于是在看板上「填入示例」给的是一份**投出去就报错**的东西。
@@ -643,7 +643,7 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
     },
 
     # ============================================================
-    # WMS 域（analysis / development / ops / testing）
+    # WMS 协作边界（analysis / development / ops / testing）
     # ============================================================
     #
     # 下面四份示例讲的是**同一条仓储业务线**：
@@ -1115,7 +1115,7 @@ def box_manifest(box_id: str) -> dict[str, Any]:
         "description": definition.description,
         "display_name": box_meta(box_id).get("display_name", box_id),
         "value_stream": box_meta(box_id).get("value_stream", ""),
-        # **这里没有接线**——接线住在域声明里，
+        # **这里没有接线**——接线住在协作边界声明里，
         # 由 `box_context` 的 handoffs / archive 两栏分别呈现。
         # 留一个空的接线键 = 声明了却拿不到。
         "tasks": tasks,
@@ -1211,14 +1211,14 @@ def box_context(
         })
 
     result_schema = definition.get_schema(result.result_schema)
-    # **接线从域声明读**（`domains/<域>/`）——不再从盒子自己的字段读。
+    # **接线从协作边界声明读**（`fulfillment_scopes/<边界>/`）——不再从盒子自己的字段读。
     # 那份字段已经退休：照抄它会漏掉真实依赖，而两份事实并存必然漂。
     wiring = box_wiring(box_id)
     return {
         "value_stream": definition.value_stream,
         "role": definition.role,
         "self_name": definition.display_name or box_id,
-        # 上游 = 域声明里「投给我」的那几条交接边。
+        # 上游 = 协作边界声明里「投给我」的那几条交接边。
         # 「上游接着做」和「上一轮结论回到起点」是两件事，
         # 所以反馈单列，不并进 fed_by。
         "fed_by": [_hop(src) for src in wiring["handoff_from"]],

@@ -1,13 +1,13 @@
-"""守卫：接线投影（Wiring View）是从**域声明**派生的结构，不是手写的表
+"""守卫：接线投影（Wiring View）是从**协作边界声明**派生的结构，不是手写的表
 
 为什么要有这一组：
-- 「一个域的接线」是真实存在的东西——它有名字之后，很多话才说得通
-  （这件任务在域上走了哪几步）。但**它不能是一张人手维护的表**：
-  域声明（成员 + 边）已经是唯一事实源，再写一张域接线表就是第二份事实，
+- 「一个协作边界的接线」是真实存在的东西——它有名字之后，很多话才说得通
+  （这件任务在范围上走了哪几步）。但**它不能是一张人手维护的表**：
+  协作边界声明（成员 + 边）已经是唯一事实源，再写一张协作边界接线表就是第二份事实，
   必然漂，而且漂了不报错。
 - 所以守三件事：
-  ① 接线的每条边都能追到域声明里的某条边（派生，不是抄）；
-  ② 画不出来时**说清楚为什么**（跨域 / 没有汇点 / 汇点不唯一 / 成环）；
+  ① 接线的每条边都能追到协作边界声明里的某条边（派生，不是抄）；
+  ② 画不出来时**说清楚为什么**（跨边界 / 没有汇点 / 汇点不唯一 / 成环）；
   ③ 它是一个**结构**：能被 API 读出来，不只是画布上的一张照片。
 
 **边按 `kind` 分三类**（这是 2026-11-05 的实测结论）：
@@ -48,7 +48,7 @@ def test_the_edges_come_from_the_declaration():
     """改一条边，接线的边跟着变
 
     这条是「派生」二字的机械证据：接线不是另抄了一份表，
-    它读的就是域声明。
+    它读的就是协作边界声明。
     """
     base_boxes = ["a", "b", "c", "d"]
     base = [_e("a", "b"), _e("b", "c"), _e("c", "d", ARCHIVE)]
@@ -115,13 +115,13 @@ def test_the_wiring_module_carries_no_hardcoded_box_names():
     src = (Path(__file__).resolve().parent.parent / "core" / "wiring.py").read_text()
     for box_id in BOX_REGISTRY:
         assert box_id not in src, f"core/wiring.py 里写死了 {box_id}"
-    assert "wms_" not in src, "core/wiring.py 里出现了具体域/盒子的名字"
+    assert "wms_" not in src, "core/wiring.py 里出现了具体协作边界/盒子的名字"
 
 
 # ---------- 画不出来时要说清楚 ----------
 
 def test_a_scope_spanning_two_domains_has_no_wiring():
-    """跨域 → 没有接线图，但要把原因写出来
+    """跨边界 → 没有接线图，但要把原因写出来
 
     硬凑一个汇点等于替业务声明一条没人声明过的拓扑。
     """
@@ -129,10 +129,10 @@ def test_a_scope_spanning_two_domains_has_no_wiring():
         "WMS": _derive(["a", "b"], [_e("a", "b")]),
         "OPS": _derive(["c", "d"], [_e("c", "d")]),
     }
-    m = wiring_of_scope("全部域", {"WMS": ["a", "b"], "OPS": ["c", "d"]}, wirings)
+    m = wiring_of_scope("全部范围", {"WMS": ["a", "b"], "OPS": ["c", "d"]}, wirings)
     assert m.center is None
     assert not m.drawable
-    assert "多个域" in m.reason
+    assert "多个协作边界" in m.reason
     assert m.reason_code == "cross_scope"
     # 盒子还是列出来：「这个范围里有哪几只盒子」是事实，缺的只是图
     assert set(m.boxes) == {"a", "b", "c", "d"}
@@ -172,9 +172,9 @@ def test_a_cyclic_handoff_chain_is_reported_not_guessed():
 
 
 def test_a_branched_domain_is_not_drawn_as_a_ring():
-    """**分叉的域画不出环** —— 而且要说清是哪一对没交接
+    """**分叉的协作边界画不出环** —— 而且要说清是哪一对没交接
 
-    拓扑排序对分叉的域照样能排出一个顺序（那是个合法的拓扑序），
+    拓扑排序对分叉的协作边界照样能排出一个顺序（那是个合法的拓扑序），
     但那个顺序里相邻的两只可能根本没有交接边——
     而看板画出来的是「环」，读者会以为相邻就是相连。
     **画出来的是一张撒谎的图**，所以这里不画。
@@ -207,9 +207,9 @@ def test_a_proper_chain_is_still_drawn():
 def test_the_verdict_is_machine_readable_not_just_a_sentence():
     """`reason` 是给人读的一句话；**判定码**是给程序用的
 
-    为什么要有码：「域还小」和「接线坏了」在 `reason` 里是两句不同的话，
+    为什么要有码：「边界还小」和「接线坏了」在 `reason` 里是两句不同的话，
     但程序不能靠认句子来判断——脚手架要区分：
-    接一个**新域**的第一只盒子时，域里就一只，画不出环是**正常状态**，
+    接一个**新协作边界**的第一只盒子时，边界里就一只，画不出环是**正常状态**，
     不该因此拒绝；分叉 / 成环 / 两个汇点才是真的坏了。
 
     所以判定码必须是**结构化**的：脚手架读它，不读那句人话。
@@ -220,11 +220,11 @@ def test_the_verdict_is_machine_readable_not_just_a_sentence():
     )
     assert ok.reason_code == "ok"
 
-    # **新域的第一只盒子**：域还小，不是接线坏了
+    # **新协作边界的第一只盒子**：边界还小，不是接线坏了
     small = _derive(["only_one"], [], domain="QA")
     assert not small.drawable
     assert small.reason_code == "too_small", (
-        f"一只盒子的域该判 too_small，实际 {small.reason_code}"
+        f"一只盒子的范围该判 too_small，实际 {small.reason_code}"
     )
 
     branched = _derive(
@@ -261,8 +261,8 @@ def test_a_star_domain_is_drawn_as_a_fan_not_as_a_ring():
 
     这是**另一种成立的形状**，不是「接线坏了」：
     三只学科盒之间**没有交接**（数学的产出不是语文的输入），
-    各自直投汇点。以前这里会判成「不是一条链」→ 域退回平铺 →
-    「接一个新域」永远接不进来。
+    各自直投汇点。以前这里会判成「不是一条链」→ 协作边界退回平铺 →
+    「接一个新协作边界」永远接不进来。
 
     放射里源盒**不能摆在环上相邻的位置**——环上「相邻 = 有交接」
     是环的前提，在放射里摆成环就是在暗示不存在的接线关系。
@@ -303,10 +303,10 @@ def test_a_star_domain_with_an_isolated_box_is_refused():
 
 
 def test_two_independent_chains_are_still_refused():
-    """**两条独立的链**在一个域里 → 仍然判「不是一条链」
+    """**两条独立的链**在一个协作边界里 → 仍然判「不是一条链」
 
     这条是「放射别把真分叉一起放过」的守卫：
-    放射的前提是「域内**一条交接边都没有**」。
+    放射的前提是「边界内**一条交接边都没有**」。
     只要有交接边，环序相邻就必须真的有交接——否则画出来的是撒谎的环。
     """
     m = _derive(
@@ -333,7 +333,7 @@ def test_the_layout_tells_the_frontend_which_shape_it_is():
 
     lay = fulfillment_scope_layout("Learning")
     assert lay["shape"] in ("ring", "star", "")
-    # 环形状的域（WMS）仍然是环
+    # 环形状的协作边界（WMS）仍然是环
     assert fulfillment_scope_layout("WMS")["shape"] == "ring"
 
 
@@ -349,7 +349,7 @@ def test_the_star_layout_does_not_put_the_sources_on_a_ring():
 
     src = _extract_js_function("renderRadial")
     assert "layout.shape === 'star'" in src, (
-        "前端没读 shape —— 它不知道这个域是放射形状"
+        "前端没读 shape —— 它不知道这个协作边界是放射形状"
     )
     star_branch = src[src.index("if (isStar) {"): src.index("} else {")]
     assert "polar(" not in star_branch, (
@@ -363,20 +363,20 @@ def test_the_star_layout_does_not_put_the_sources_on_a_ring():
 # ---------- 它是一个结构，不只是一张图 ----------
 
 def test_the_registered_domains_all_have_a_wiring():
-    """每个域都推得出接线，盒子的集合 == 域声明的盒子集合"""
-    assert FULFILLMENT_SCOPE_REGISTRY, "一个域都没有声明"
+    """每个协作边界都推得出接线，盒子的集合 == 协作边界声明的盒子集合"""
+    assert FULFILLMENT_SCOPE_REGISTRY, "一个协作边界都没有声明"
     for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
         m = fulfillment_scope_wiring(domain_id)
         assert set(m.boxes) == set(declaration.boxes)
         assert m.scope == domain_id
         if len(declaration.boxes) >= 3:
-            assert m.drawable, f"{domain_id} 域推不出接线：{m.reason}"
+            assert m.drawable, f"{domain_id} 协作边界推不出接线：{m.reason}"
 
 
 def test_the_board_layout_is_the_same_wiring():
     """看板用的布局 == 接线（同一份事实，不是两份推导）
 
-    两边各推一次的话，改了域声明其中一边会忘改——
+    两边各推一次的话，改了协作边界声明其中一边会忘改——
     而看板上看不出来。
     """
     m = fulfillment_scope_wiring("WMS")
@@ -392,12 +392,12 @@ def test_the_wiring_is_readable_as_a_structure(tmp_path: Path):
     from kanban.web import wirings_payload
 
     payload = wirings_payload()
-    assert "maps" in payload and payload["maps"], "没有各域的接线"
+    assert "maps" in payload and payload["maps"], "没有各协作边界的接线"
     wms = payload["maps"]["WMS"]
     assert wms["center"]
-    assert wms["handoffs"], "WMS 域的交接边不该是空的"
+    assert wms["handoffs"], "WMS 协作边界的交接边不该是空的"
     assert wms["drawable"] is True
-    # 跨域范围也有一条结论：没有图 + 原因
+    # 跨边界范围也有一条结论：没有图 + 原因
     assert payload["scope_all"]["drawable"] is False
     assert payload["scope_all"]["reason"]
 
@@ -429,14 +429,14 @@ def test_the_radial_canvas_uses_the_vertical_centre():
 
 
 def test_the_field_boundary_is_drawn_and_follows_the_cards():
-    """域边界的虚线要画出来，而且跟着卡片走
+    """范围边界的虚线要画出来，而且跟着卡片走
 
     边界写死位置的话，环上多一只盒子，它就骑在框线上。
     """
     import kanban.web as W
 
     page = W.HTML_PAGE
-    assert 'class="edge-field"' in page, "域边界没画"
+    assert 'class="edge-field"' in page, "范围边界没画"
     assert "fieldHalfX" in page and "fieldHalfY" in page, (
         "边界必须由卡片位置算出来，不能写死"
     )
@@ -455,6 +455,6 @@ def test_the_boundary_is_labelled_with_the_products_own_name():
 
     page = W.HTML_PAGE
     assert "' · BeeBox Map'" in page, (
-        "边界的标签应该写「<域> · BeeBox Map」"
+        "边界的标签应该写「<范围> · BeeBox Map」"
     )
     assert "' · 场'" not in page, "别再用自造的词「场」当标签"

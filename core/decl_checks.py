@@ -225,7 +225,7 @@ def check_subject_ref(
     所以这不只是「少了个号」，而是「这只盒子跑一次就废一次」。
     装配期就该拦住。
 
-    已犯过（2026-11-05）：学习域 4 只盒子的产出里明明有 `record_id`
+    已犯过（2026-11-05）：学习协作边界 4 只盒子的产出里明明有 `record_id`
     （required=True，「同一件事重记还是同一个号」），却**没声明**
     `subject_ref_from_result`——于是记录归不到任何工作单元，
     任务列表里看不见它们，看板上只剩「这只盒子跑过 N 次」。
@@ -322,17 +322,17 @@ def check_skeleton_is_honest(
 
 
 # ============================================================
-# 域级校验（D1–D15）
+# 边界级校验（D1–D15）
 #
 # 盒子级判的是「一只盒子自不自洽」（C1–C12），
-# 域级判的是「**一个域的结构对不对**」（D1–D15）。
+# 边界级判的是「**一个协作边界的结构对不对**」（D1–D15）。
 #
-# **域级要更多信息**（别的盒子声明了什么），所以由调用方
+# **边界级要更多信息**（别的盒子声明了什么），所以由调用方
 # （注册表 / 装配器）把信息收集好传进来——core 仍然不认识任何一只盒子。
 #
 # **判定分三层**（见 `docs/domain-declaration.md` §5.7）：
 #   ① 声明合法性（D1–D4 / D7–D8 / D10 / D12 / D14–D15）← 本模块
-#   ② 域业务规则（rules）                                 ← `core/domain.py`
+#   ② 边界业务规则（rules）                                 ← `core/fulfillment_scope.py`
 #   ③ 展示适用性（汇点唯一 / 环上相邻有交接）              ← `core/wiring.py`
 #
 # **D5（汇点唯一）不在 ①**：那是**画图**的要求，不是**声明合法**的要求。
@@ -345,10 +345,10 @@ def check_domain_boxes(
 ) -> list[str]:
     """D1 + 「孤岛必须显式点名」
 
-    **D1**：域声明里写的盒子，都得真实存在。
-    **孤岛**：域里的盒子在本域一条边都没有 → 要么是「加进域忘了接边」，
+    **D1**：协作边界声明里写的盒子，都得真实存在。
+    **孤岛**：边界里的盒子在本边界一条边都没有 → 要么是「加进协作边界忘了接边」，
     要么是「它业务上就是独立的」——**后者必须显式点名**，
-    否则「加进域忘了接边」会静默通过。
+    否则「加进协作边界忘了接边」会静默通过。
     """
     problems: list[str] = []
     member_ids = set(declaration.boxes)
@@ -356,11 +356,11 @@ def check_domain_boxes(
     for box_id in declaration.boxes:
         if box_id not in boxes:
             problems.append(
-                f"D1 域 {declaration.id!r} 的成员 {box_id!r} 不在注册表里——"
-                f"域声明写了一个不存在的盒子"
+                f"D1 协作边界 {declaration.id!r} 的成员 {box_id!r} 不在注册表里——"
+                f"协作边界声明写了一个不存在的盒子"
             )
 
-    # 孤岛：在本域里既不是任何边的上游，也不是任何边的下游
+    # 孤岛：在本边界里既不是任何边的上游，也不是任何边的下游
     touched: set[str] = set()
     for e in declaration.edges:
         touched.add(e.from_box)
@@ -372,7 +372,7 @@ def check_domain_boxes(
     for box_id in declaration.boxes:
         if box_id not in touched and box_id not in named:
             problems.append(
-                f"孤岛：域 {declaration.id!r} 的成员 {box_id!r} 在本域一条边都没有。"
+                f"孤岛：协作边界 {declaration.id!r} 的成员 {box_id!r} 在本边界一条边都没有。"
                 f"要么给它接上边，要么在某条规则的豁免里**显式点名**"
                 f"（不能静默地孤着——那分不清是「忘了接边」还是「它就是独立的」）"
             )
@@ -404,12 +404,12 @@ def check_domain_edges(
         # D2 / D10：边的两端
         if not e.external and e.from_box not in member_ids:
             problems.append(
-                f"D2 边 {e.from_box!r} → {e.to_box!r}：上游 {e.from_box!r} 不在本域 "
+                f"D2 边 {e.from_box!r} → {e.to_box!r}：上游 {e.from_box!r} 不在本边界 "
                 f"{declaration.id!r} 的成员里（要么加进成员，要么声明 external=True）"
             )
         if e.to_box not in member_ids:
             problems.append(
-                f"D2 边 {e.from_box!r} → {e.to_box!r}：下游 {e.to_box!r} 不在本域 "
+                f"D2 边 {e.from_box!r} → {e.to_box!r}：下游 {e.to_box!r} 不在本边界 "
                 f"{declaration.id!r} 的成员里"
             )
 
@@ -544,11 +544,11 @@ def check_domain_rules(
 
     for rule in declaration.rules:
         for ex in rule.exemptions:
-            # D14：豁免的盒子得在这个域里
+            # D14：豁免的盒子得在这个协作边界里
             if ex.box_id not in member_ids:
                 problems.append(
                     f"D14 规则 {rule.kind.value!r} 的豁免点名了 {ex.box_id!r}，"
-                    f"但它不在域 {declaration.id!r} 的成员里"
+                    f"但它不在协作边界 {declaration.id!r} 的成员里"
                 )
             if not ex.reason.strip():
                 problems.append(

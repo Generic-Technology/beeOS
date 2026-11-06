@@ -6,7 +6,7 @@
 `tests/test_docs_match_code.py` 的条数解析也直接拿来用。
 
 **为什么值得这么较真**：脚手架的全部价值就是
-「新域接入只写业务，不写样板」。它值不值这个钱，
+「新协作边界接入只写业务，不写样板」。它值不值这个钱，
 取决于它生成的盒子**是不是真的合规**——不是「看起来像」。
 
 **不许真的往仓里写**：盒子生成在临时目录，靠给 `boxes.__path__`
@@ -54,7 +54,7 @@ def _spec(
     """按脚手架的**真实入口**造一份 spec（不手搓字段）
 
     默认是**一个新协作边界的第一只盒子**（`--scope FIXTURE --sink`）：
-    这正是脚手架要支持的头号场景（接一个新域只写业务）。
+    这正是脚手架要支持的头号场景（接一个新协作边界只写业务）。
     它**不改任何别的盒子** → 守卫跑起来跟「仓里原样」一样干净。
     """
     return build_spec(argparse.Namespace(
@@ -62,7 +62,7 @@ def _spec(
         scope=scope,
         display_name="脚手架样例盒",
         value_stream="Software Delivery",
-        role="样例域的履约",
+        role="样例协作边界的履约",
         description="脚手架自测用的一只盒子",
         handoff_to=handoff_to,
         insert_after=insert_after,
@@ -139,7 +139,7 @@ class TestTheScaffoldedBoxPassesTheRealGuards:
         """注册进去之后，看板层不许因此变红
 
         （看板不许自己持有「每只盒子是什么」——它从注册表读。
-        新盒子一注册，看板的分域、渲染器回退都得照样成立。）
+        新盒子一注册，看板的分范围、渲染器回退都得照样成立。）
         """
         from tests.test_box_standard import (
             TestArtifactView,
@@ -348,7 +348,7 @@ class TestTheScaffoldItself:
     def test_the_wiring_must_be_spelled_out(self):
         """**不许留空接线**
 
-        空着的交接边让新盒子变成本域的**第二个终点** →
+        空着的交接边让新盒子变成本边界的**第二个终点** →
         圆心算不出来 → 看板拓扑直接禁用。
         这个坑是端到端跑出来的：脚手架第一版留了空列表，
         一次就把 9 条真守卫跑红了。
@@ -386,7 +386,7 @@ class TestTheScaffoldItself:
     def test_a_branch_wiring_is_refused(self):
         """从链中间**分叉**出去 → 拒绝
 
-        拓扑排序对分叉的域照样排得出顺序，但那个顺序里相邻的两只
+        拓扑排序对分叉的协作边界照样排得出顺序，但那个顺序里相邻的两只
         根本没有交接边——而看板画出来的是环，读者会以为相邻就是相连。
         **画出来的是一张撒谎的图**，所以脚手架不产这种盒子。
         """
@@ -451,13 +451,13 @@ class TestTheScaffoldItself:
 
 
 class TestANewDomainIsAFirstClassCase:
-    """**接一个新域**是脚手架的头号场景，不能被「域还太小」堵死
+    """**接一个新协作边界**是脚手架的头号场景，不能被「边界还太小」堵死
 
-    第一版脚手架只问「画得出环吗」——新域刚开始时域里就一只盒子，
-    画不出环是**正常状态**（域才刚开），不是「谁接错了」。
+    第一版脚手架只问「画得出环吗」——新协作边界刚开始时边界里就一只盒子，
+    画不出环是**正常状态**（边界才刚开），不是「谁接错了」。
     于是脚手架把自己支持的头号场景堵死了：
-    域还小（`too_small`）和接线坏了（分叉 / 成环 / 两个汇点）
-    **不是一回事**，混在一起就等于「新域永远接不进来」。
+    边界还小（`too_small`）和接线坏了（分叉 / 成环 / 两个汇点）
+    **不是一回事**，混在一起就等于「新协作边界永远接不进来」。
     """
 
     def test_the_first_box_of_a_new_scope_is_allowed(self):
@@ -466,17 +466,17 @@ class TestANewDomainIsAFirstClassCase:
         assert spec.handoff_to == []
 
     def test_a_new_scope_box_is_not_a_wms_box(self):
-        """新域的盒子不许占 `wms_` 前缀
+        """新协作边界的盒子不许占 `wms_` 前缀
 
-        「wms_* = WMS 域」是读者判断归属的依据；
-        新域的盒子抢这个前缀 = 让那条规则失效
+        「wms_* = WMS 协作边界」是读者判断归属的依据；
+        新协作边界的盒子抢这个前缀 = 让那条规则失效
         （`tests/test_box_naming.py` 管着这条）。
         """
         spec = _spec("qa_probe_box", scope="QA", sink=True)
         assert not spec.module.startswith("wms_")
 
     def test_a_broken_wiring_is_still_refused(self):
-        """域还小 ≠ 什么都行：真的坏了的接线照样当场拒绝"""
+        """边界还小 ≠ 什么都行：真的坏了的接线照样当场拒绝"""
         args = argparse.Namespace(
             box_id="qa_probe_box", scope="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
@@ -487,11 +487,11 @@ class TestANewDomainIsAFirstClassCase:
 
 
 class TestTheDomainFragment:
-    """插在链上 → **域声明**里那条边要换成「上游 → 新盒子 → 原来的下游」
+    """插在链上 → **协作边界声明**里那条边要换成「上游 → 新盒子 → 原来的下游」
 
-    **脚手架不改盒子**——接线住在域声明里，
+    **脚手架不改盒子**——接线住在协作边界声明里，
     而改接线是改产品结构（仓里的既有原则：接线是产品事实）。
-    脚手架只把该改哪几行算清楚，写成片段让人并进域声明。
+    脚手架只把该改哪几行算清楚，写成片段让人并进协作边界声明。
 
     **但指向档案盒（汇点）的那条归档边要留着**：
     整段换掉 = 把归档边也删了 → 档案盒收不到这只盒子的产出。
@@ -509,7 +509,7 @@ class TestTheDomainFragment:
     def test_it_says_the_chain_edge_has_to_be_replaced(self):
         """原来那条边是**换掉**，不是再加一条
 
-        加一条 = 上游有两个下游 = 分叉 → 域里是一条线性链，
+        加一条 = 上游有两个下游 = 分叉 → 边界里是一条线性链，
         分叉的拓扑排不出唯一顺序。
         """
         fragment = self._fragment()
@@ -546,7 +546,7 @@ class TestTheDomainFragment:
     def test_the_generated_box_declares_no_wiring_of_its_own(self):
         """生成出来的盒子**自己不带接线**
 
-        接线住在域声明里。盒子身上再留一份 = 两套接线并存，
+        接线住在协作边界声明里。盒子身上再留一份 = 两套接线并存，
         而两份接线迟早给出不同答案。
         """
         spec = _spec("qa_probe_box", scope="QA", sink=True)

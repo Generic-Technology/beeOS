@@ -47,7 +47,7 @@ def _registry_roster() -> list[str]:
     而红的不是它，是「名册该从注册表来」这条守卫——
     改产品的人不该替守卫还债。
 
-    真发生过：脚手架接一个新域（= 加一只盒子），
+    真发生过：脚手架接一个新协作边界（= 加一只盒子），
     4 条看板守卫一起红，红的却是一条「手抄的名单」。
     名册是**机械事实**（注册表里有哪些盒子），
     产品事实（WMS 链长什么样）另有守卫钉着，不该混在一起。
@@ -127,8 +127,8 @@ class TestDashboardData:
             "box_stats",
             "fulfillment_scopes",
             # scope_layouts 不是 fulfillment_scope_layouts：键是**范围**，除了每个协作边界
-            # 还带一条「全部域」。以前只有真域，「全部域」查不到布局，
-            # 视图于是被域隐式决定了。
+            # 还带一条「全部范围」。以前只有真协作边界，「全部范围」查不到布局，
+            # 视图于是被协作边界隐式决定了。
             "scope_layouts",
             "status_counts",
             "acceptance_counts",
@@ -143,27 +143,27 @@ class TestDashboardData:
         }
 
     def test_the_all_domains_scope_is_in_the_layout_table(self, tmp_path: Path):
-        """「全部域」必须有一份诚实的布局，而不是让前端自行猜测
+        """「全部范围」必须有一份诚实的布局，而不是让前端自行猜测
 
         缺了它，前端拿不到 `scope_layouts['__all__']`，就退回到
-        「有没有 radial 记录」来判断视图——域于是又偷偷决定了视图。
+        「有没有 radial 记录」来判断视图——范围于是又偷偷决定了视图。
         """
         from kanban.trigger import ALL_SCOPES
 
         store = TaskRunStore(path=tmp_path / "x.jsonl")
         lays = dashboard_data(store)["scope_layouts"]
         assert ALL_SCOPES in lays, (
-            "scope_layouts 里没有「全部域」这一条——"
-            "前端会退回按域隐式决定视图，两个轴又焊回去了"
+            "scope_layouts 里没有「全部范围」这一条——"
+            "前端会退回按协作边界隐式决定视图，两个轴又焊回去了"
         )
         assert set(lays) == {ALL_SCOPES, *lays.keys()} | set(
             dashboard_data(store)["fulfillment_scopes"]
-        ), "scope_layouts 的键应恰好是「全部域」+ 每个域"
+        ), "scope_layouts 的键应恰好是「全部范围」+ 每个协作边界"
 
     def test_a_cross_domain_scope_never_becomes_a_ring(self, tmp_path: Path):
-        """跨域范围一律不出环——而且不能只靠「碰巧推不出来」
+        """跨边界范围一律不出环——而且不能只靠「碰巧推不出来」
 
-        「全部域」确实算得出唯一汇点（wms_system_box），因为域内汇点
+        「全部范围」确实算得出唯一汇点（wms_system_box），因为边界内汇点
         那条规则跨了几条互不相干的流水线之后**照样成立**：它只看图结构。
         于是费用报销线的 receipt_capture_box 会被画成 WMS 流水线的一环，
         还画了条边投给它——**假的**，而图上看不出任何异常。
@@ -175,12 +175,12 @@ class TestDashboardData:
         store = TaskRunStore(path=tmp_path / "x.jsonl")
         lay = dashboard_data(store)["scope_layouts"][ALL_SCOPES]
         assert lay["layout"] == "flat", (
-            "跨域范围被画成了环——那等于替业务声明了一个不存在的拓扑"
+            "跨边界范围被画成了环——那等于替业务声明了一个不存在的拓扑"
         )
         assert lay["center"] is None, "退回平铺就不要再报中心"
         assert lay["reason"], "退回平铺必须说清为什么"
         assert lay["handoffs"] == [] and lay["feeds_center"] == [] and lay["feedback"] == [], (
-            "跨域范围不该画出任何边——边是接线的事实，跨域的边没人声明过"
+            "跨边界范围不该画出任何边——边是接线的事实，跨边界的边没人声明过"
         )
 
     def test_box_filter_applied(self, tmp_path: Path):
@@ -535,7 +535,7 @@ class TestKanbanServer:
 
     def test_box_context_exposes_box_level_facts(self, server_url: tuple[str, TaskRunStore]):
         """盒子上下文是四栏共同依赖的底座——不是第五个先后步骤。
-        上游从**域声明**反推，不另写一遍。"""
+        上游从**协作边界声明**反推，不另写一遍。"""
         url, _ = server_url
         conn = HTTPConnection(url.replace("http://", ""))
         conn.request("GET", "/api/data?box=wms_design_box")
@@ -543,7 +543,7 @@ class TestKanbanServer:
         conn.close()
         ctx = body["box_stats"][0]["box_context"]
         assert ctx["self_name"] == "WMS Design Box"
-        # 上游 = 域声明里把产出交给本盒的那只盒
+        # 上游 = 协作边界声明里把产出交给本盒的那只盒
         assert [h["id"] for h in ctx["fed_by"]] == ["wms_requirement_box"]
         # 上游名字必须跟着 id 出，不能让前端自己补——单盒过滤时它只有一只盒的名字表
         assert ctx["fed_by"][0]["name"] == "WMS Requirement Box"
@@ -593,7 +593,7 @@ class TestTriggerApi:
                 "set_id": "req_api_1",
                 "business_goal": "把入库上架和拣货出库管清楚",
                 # description 是真 WMS 需求。以前这里是 "x" 和「设计退款流程」——
-                # 现在盒子只服务 WMS 域，喂非 WMS 需求被 wms_binding 打回是对的，
+                # 现在盒子只服务 WMS 协作边界，喂非 WMS 需求被 wms_binding 打回是对的，
                 # 而这条测试要验的是「有效触发 → accepted」，所以得给真需求。
                 "requirements": [
                     {"requirement_id": "r_obj", "description": "库存按 SKU 和库位记账",
@@ -1094,7 +1094,7 @@ class TestTheRosterComesFromTheRegistry:
         pos = {b: i for i, b in enumerate(order)}
 
         def _handoffs(box_id: str) -> list[str]:
-            """交接下游——**从域声明读**（接线不在盒子自己身上了）"""
+            """交接下游——**从协作边界声明读**（接线不在盒子自己身上了）"""
             from fulfillment_scopes import box_wiring
 
             return list(box_wiring(box_id)["handoffs"])
@@ -1187,13 +1187,13 @@ class TestViewAndScopeAreTwoSeparateAxes:
     """视图（怎么摆）和范围（摆哪些）必须是两个独立的选择
 
     以前代码里根本没有「视图」：渲染分支写的是
-    `lay && lay.layout === 'radial' ? 环形 : 平铺`——也就是**点域 chip
+    `lay && lay.layout === 'radial' ? 环形 : 平铺`——也就是**点范围 chip
     顺手把整页布局换掉**。读者以为自己在筛选，实际在换页面，而 URL 里
     只有 `scope` 没有 `view`，换视图这件事根本看不出来。
 
-    更贵的代价是两个轴被焊死：全部域下永远看不到环形，WMS 下永远看不了网格。
+    更贵的代价是两个轴被焊死：全部范围下永远看不到环形，WMS 下永远看不了网格。
 
-    这条守卫守的就是「视图由 _view 决定，域只决定能不能画」。
+    这条守卫守的就是「视图由 _view 决定，范围只决定能不能画」。
     """
 
     def test_both_axes_are_read_from_the_url(self):
@@ -1222,11 +1222,11 @@ class TestViewAndScopeAreTwoSeparateAxes:
 
         assert "_view === VIEW_TOPOLOGY && canRadial" in body, (
             "渲染分支必须先判断读者选了哪个视图。"
-            "写成只看 lay.layout 就是域在替读者决定视图"
+            "写成只看 lay.layout 就是范围在替读者决定视图"
         )
         assert "lay.layout" not in body, (
             "render() 里不该再出现 lay.layout —— "
-            "「点域 chip 顺手换整页布局」的老写法，两个轴又焊回去了。"
+            "「点范围 chip 顺手换整页布局」的老写法，两个轴又焊回去了。"
             "能不能画环由 currentScopeLayout 算好传进来，render 只看 canRadial"
         )
 
@@ -1251,9 +1251,9 @@ class TestViewAndScopeAreTwoSeparateAxes:
         )
 
     def test_the_scope_table_covers_the_all_domains_sentinel(self):
-        """scope_layouts 必须含「全部域」——少了它前端就退回按域猜视图"""
+        """scope_layouts 必须含「全部范围」——少了它前端就退回按范围猜视图"""
         assert "ALL_SCOPES" in HTML_PAGE or "__all__" in HTML_PAGE, (
-            "scope_layouts 没覆盖「全部域」这个范围"
+            "scope_layouts 没覆盖「全部范围」这个范围"
         )
 
 
@@ -1336,7 +1336,7 @@ class TestScopeAndViewLinksAreRealQueryUrls:
     两段各自以 `&` 开头、谁也不写 `?`，拼出来是 `/&scope=WMS`——不是
     查询串，是一条路径。浏览器跳过去，服务端返 404，nginx 兜底再把首页
     原样吐回来。于是点「WMS」看着毫无反应：页面纹丝不动、高亮还留在
-    「全部域」、盒子一只没少，**而且一条错都不报**。
+    「全部范围」、盒子一只没少，**而且一条错都不报**。
 
     之前 7 条轴相关的守卫全绿也照样没抓到：它们查的是源码里有没有
     `_params.get('view')` 这类字符串，没有一条断言过 href 的形状。
@@ -1371,7 +1371,7 @@ class TestScopeAndViewLinksAreRealQueryUrls:
             from urllib.parse import parse_qs, urlsplit
 
             parts = urlsplit(overview)
-            # keep_blank_values：scope=（未归域）取到的是空串，
+            # keep_blank_values：scope=（未归范围）取到的是空串，
             # 默认的 parse_qs 会把空值整个丢掉，测试就会自己骗自己。
             q = parse_qs(parts.query, keep_blank_values=True)
 
@@ -1387,9 +1387,9 @@ class TestScopeAndViewLinksAreRealQueryUrls:
                 )
 
     def test_the_unassigned_domain_survives_the_round_trip(self):
-        """未归域（空串）必须显式写出 scope=
+        """未归范围（空串）必须显式写出 scope=
 
-        URL 里「scope=」和「不写这个参数」长得一样，于是未归域和全部域
+        URL 里「scope=」和「不写这个参数」长得一样，于是未归范围和全部范围
         会生成同一个 href，侧边栏里两项一起亮成 active——看着像同时选中了
         两个范围。
         """
@@ -1397,8 +1397,8 @@ class TestScopeAndViewLinksAreRealQueryUrls:
         unassigned = hrefs[("grid", "")][0]
         everything = hrefs[("grid", "__all__")][0]
 
-        assert "scope=" in unassigned, f"未归域没显式写进 URL：{unassigned!r}"
-        assert unassigned != everything, "未归域和全部域生成了同一个 href"
+        assert "scope=" in unassigned, f"未归范围没显式写进 URL：{unassigned!r}"
+        assert unassigned != everything, "未归范围和全部范围生成了同一个 href"
 
     def test_a_box_link_keeps_the_axes_and_has_exactly_one_question_mark(self):
         """盒子链接要保住两个轴，且只能有一个 '?'"""
@@ -1453,13 +1453,13 @@ def _js_const_array(name: str) -> str:
     raise AssertionError(f"{name} 的方括号没配平")
 
 
-# 两个范围的口径：一个真域（算得出环）、一个跨域（算不出）。
-# 「为什么跨域推不出环」是服务端 _layout_for 的推导结果，前端不另造判断。
+# 两个范围的口径：一个真协作边界（算得出环）、一个跨边界（算不出）。
+# 「为什么跨边界推不出环」是服务端 _layout_for 的推导结果，前端不另造判断。
 SCOPE_ASSIGNMENTS = {"": ["receipt_capture_box"], "WMS": ["wms_ops_box"]}
 
-# 同一份口径的两种范围：WMS 单域画得出环，__all__ 跨域画不出。
+# 同一份口径的两种范围：WMS 单边界画得出环，__all__ 跨边界画不出。
 SCOPE_LAYOUTS = {
-    "__all__": {"layout": "flat", "reason": "跨域范围推不出唯一汇点"},
+    "__all__": {"layout": "flat", "reason": "跨边界范围推不出唯一汇点"},
     "WMS": {"layout": "radial", "scope": "WMS", "ring": [], "reason": ""},
 }
 
@@ -1535,12 +1535,12 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         html = _run_filters(SCOPE_LAYOUTS, "grid", "__all__")
 
         assert '<button type="button" class="seg-item disabled" disabled' in html, (
-            f"跨域范围下拓扑该是禁用 button：{html}"
+            f"跨边界范围下拓扑该是禁用 button：{html}"
         )
         assert "view=topology" not in html, (
             f"禁用的拓扑不该留下可点的 href：{html}"
         )
-        assert "跨域范围推不出唯一汇点" in html, (
+        assert "跨边界范围推不出唯一汇点" in html, (
             f"禁用时要写明原因：{html}"
         )
 
@@ -1708,7 +1708,7 @@ class TestTheBoxContextIsACatalogCard:
     """BOX CONTEXT 是一张**目录卡**：吃什么、吐什么、跑得怎么样
 
     为什么这么定：
-    - 定位信息（域 / 价值流 / 角色 / 接线）只在**门牌**上说一次。
+    - 定位信息（协作边界 / 价值流 / 角色 / 接线）只在**门牌**上说一次。
       卡上再抄一遍 = 同一份信息两处，迟早对不上。
     - 判据不在卡上：声明值和实测值都归 ACCEPTANCE 栏。
     - 指标段要写明是**实测**——读者得知道那些数是履约历史聚合出来的，
@@ -1882,9 +1882,9 @@ class TestTheDetailPageHasAVisibleWayBack:
         assert "网格" in got["text"], f"标签要写「网格」：{got}"
 
     def test_the_unassigned_scope_round_trips_as_an_empty_domain(self):
-        """未归域是空串：退路必须写回 scope=，不能退回全部域"""
+        """未归范围是空串：退路必须写回 scope=，不能退回全部范围"""
         got = _run_back_link(SCOPE_LAYOUTS, "grid", "", True)
-        assert got["href"] == "/?scope=", f"未归域退路丢了 scope=：{got}"
+        assert got["href"] == "/?scope=", f"未归范围退路丢了 scope=：{got}"
 
     def test_the_label_never_promises_a_view_that_cannot_be_drawn(self):
         """选了拓扑但推不出环时，标签不许写「拓扑」

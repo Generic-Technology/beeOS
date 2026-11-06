@@ -5,12 +5,12 @@
 | | |
 |---|---|
 | box_id | `learning_english_box` |
-| 域 | Learning |
+| 协作边界 | Learning |
 | 价值流 | Learning |
 | 成熟度 | **live**（腿是真的） |
 | 判据 | 3 条（`mastery` ≥ 0 / `mastery` ≤ 1 / `ratio_exact`） |
 | 例外 | 2 条（`mastery > 1` / `ratio_exact == false` → escalate） |
-| 接线 | `learning_growth_box`（本域的汇点） |
+| 接线 | `learning_growth_box`（本边界的汇点） |
 
 ## 它吃什么
 

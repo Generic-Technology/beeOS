@@ -161,11 +161,11 @@ class TestPayloadKind:
 
 
 class TestTheDomainWiring:
-    """盒子之间的关系声明在**域声明**里（`domains/<域>/`），不在盒子自己身上
+    """盒子之间的关系声明在**协作边界声明**里（`fulfillment_scopes/<边界>/`），不在盒子自己身上
 
     以前住在各自 definition 的 placement 字段里；更早住在 kanban/trigger.py
     的 BOX_META。两次搬家都是往对的方向搬的：接线**横跨多只盒子**，
-    它本来就不属于任何一只盒子——它是**域**的事实。
+    它本来就不属于任何一只盒子——它是**协作边界**的事实。
 
     **归档不是交接**：产物进档案是「这一环的事实先落档案」，
     档案盒**不收上游产出**（投料里 0 个 ref 通道）。
@@ -181,7 +181,7 @@ class TestTheDomainWiring:
         而拓扑图是照着这句话画的。
 
         测试盒那条以前只存在于编排脚本里（测试盒也要知道要验哪条需求），
-        域声明把它补上了。
+        协作边界声明把它补上了。
         """
         from fulfillment_scopes import box_wiring
         assert sorted(box_wiring("wms_requirement_box")["handoffs"]) == [
@@ -193,7 +193,7 @@ class TestTheDomainWiring:
         """设计盒的交接有**两条**：开发 + 测试
 
         以前只声明了开发那一条（测试那条藏在编排脚本里）。
-        域声明把它补上了——「唯一事实源」要是漏了真实依赖，
+        协作边界声明把它补上了——「唯一事实源」要是漏了真实依赖，
         那它就不是事实源。
         """
         from fulfillment_scopes import box_wiring
@@ -217,17 +217,17 @@ class TestTheDomainWiring:
         assert box_wiring("wms_system_box")["handoffs"] == []
 
     def test_the_whole_wms_chain_is_pinned(self):
-        """把 WMS 域 7 只盒子的交接整条钉住
+        """把 WMS 协作边界 7 只盒子的交接整条钉住
 
         为什么要钉全链而不是一条条钉：接线是**产品结构**，
         改一只盒子顺手改了下游，这组测试会一片绿地带过去。
         需求 → 设计 → 开发 → 测试 → 运维 → 分析 → 系统档案，是一条
-        **生命周期链**，每一环还额外直投系统档案盒（各自领域的事实先落档案）。
+        **生命周期链**，每一环还额外直投系统档案盒（各自领协作边界的事实先落档案）。
 
         唯一的例外是**需求盒**：它不汇入档案盒。它产出的是档案的输入
         （读基线），不是档案的内容——这条边在 v2 里删掉了。
 
-        域声明比旧的那份**多 3 条真实交接**（需求→测试、设计→测试、开发→运维），
+        协作边界声明比旧的那份**多 3 条真实交接**（需求→测试、设计→测试、开发→运维），
         它们以前藏在编排脚本里。这几条现在被钉住了——
         「唯一事实源」漏掉真实依赖 = 它不是事实源。
         """
@@ -261,14 +261,14 @@ class TestTheDomainWiring:
                 f"{bid} 的归档归属变了"
             )
 
-        # 费用报销线不属于 WMS 域，自成一条独立的线
+        # 费用报销线不属于 WMS 协作边界，自成一条独立的线
         assert box_wiring("receipt_capture_box")["handoffs"] == []
 
     def test_the_system_box_is_the_only_sink_and_has_exactly_one(self):
         """系统档案盒必须**恰好是**一个汇点，且没有下游
 
         这条不是重复上一条：上一条钉的是「有哪些边」，这条钉的是
-        「域里有且仅有一个汇点」。两者会一起坏，坏法不一样：
+        「边界里有且仅有一个汇点」。两者会一起坏，坏法不一样：
 
         - 上一条能绿、这条红 = 有人加了一只新的汇点盒，
           于是拓扑不再是环形，看板的 `sinks[0] if len(sinks)==1 else None`
@@ -289,14 +289,14 @@ class TestTheDomainWiring:
         assert sorted(sinks) == [
             "wms_analysis_box", "wms_design_box", "wms_development_box",
             "wms_ops_box", "wms_testing_box",
-        ], f"WMS 域的汇点集合变了：{sorted(sinks)}"
+        ], f"WMS 协作边界的汇点集合变了：{sorted(sinks)}"
 
         # 没有下游的盒子：只有系统档案盒
         terminal = [
             b for b in domain_boxes
             if not box_wiring(b)["handoffs"] and not box_wiring(b)["archive"]
         ]
-        assert terminal == ["wms_system_box"], f"域里出现了别的终点：{terminal}"
+        assert terminal == ["wms_system_box"], f"边界里出现了别的终点：{terminal}"
 
         layout = fulfillment_scope_layout("WMS")
         assert layout["layout"] == "radial", "拓扑退化了，环形出不来"

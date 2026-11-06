@@ -128,11 +128,11 @@ HISTORICAL_DOCS = {
 
 #: **退休的接线字段名**（2026-11-06）
 #:
-#: 接线搬进了域声明（`domains/<域>/`），盒子自己那份声明就退休了。
+#: 接线搬进了协作边界声明（`fulfillment_scopes/<边界>/`），盒子自己那份声明就退休了。
 #: 三个名字一起退：`placement`（那个壳）、`domain`（域归属）、`feeds_into`（交接）。
 #:
 #: **为什么「一只盒子不许同时留两套」**：两份接线迟早给出不同答案，
-#: 而到那时没人知道该信哪份——看板读的是域声明，
+#: 而到那时没人知道该信哪份——看板读的是协作边界声明，
 #: 于是「盒子上写的那份」会静静地失效，看着一切正常。
 RETIRED_WIRING_FIELDS = ("placement", "feeds_into", "feedback_into")
 
@@ -479,7 +479,7 @@ def test_the_retired_wiring_fields_are_not_back_in_code() -> None:
     ## 为什么不留空壳
 
     留一个「能写但没人读」的字段 = **两套接线并存**。
-    两套接线迟早给出不同答案，而看板读的是域声明——
+    两套接线迟早给出不同答案，而看板读的是协作边界声明——
     所以「盒子上写的那份」会静静地失效，看着一切正常。
 
     ## `domain` 为什么不在裸名名单里
@@ -522,7 +522,7 @@ def test_the_retired_wiring_fields_are_not_back_in_code() -> None:
                             bad.append(
                                 f"{_rel(path)}:{node.lineno}: "
                                 f"{name}(...) 里写了 `{kw.arg}=`——"
-                                f"接线字段退休了，它只住在域声明里"
+                                f"接线字段退休了，它只住在协作边界声明里"
                             )
     assert not bad, "\n".join(bad)
 
@@ -576,7 +576,7 @@ def test_readme_has_no_hardcoded_test_count() -> None:
 
 
 # 盒子数量也是同一类数字：它由「仓里注册了几只盒子」决定，
-# 而盒子是**会长的**（脚手架接一个新域就是加一只）。
+# 而盒子是**会长的**（脚手架接一个新协作边界就是加一只）。
 # 写死的那一刻就开始过期，而过期的不是数字、是文档在骗人。
 _STALE_BOX_COUNT = re.compile(r"\d+\s*只(?:盒子|盒)\b")
 
@@ -601,7 +601,7 @@ def test_readme_has_no_hardcoded_box_count() -> None:
     assert not bad, "\n".join(bad)
 
 
-# 根 README 的盒子清单表：`| [`目录/`](路径) | `box_id` | 域 | 判据 | 例外 | 成熟度 |`
+# 根 README 的盒子清单表：`| [`目录/`](路径) | `box_id` | 协作边界 | 判据 | 例外 | 成熟度 |`
 _ROOT_TABLE_ROW = re.compile(
     r"^\s*\|\s*\[`[^`]+/`\]\(boxes/[^)]+\)\s*\|\s*"
     r"`(?P<box_id>[a-z0-9_]+)`\s*\|[^|]*\|\s*"
@@ -624,7 +624,7 @@ def test_the_root_readme_box_table_matches_the_definitions() -> None:
     早年的理由是「表格里有多只盒子，数字不带归属，拿不准就不查」——
     但每行都带着自己的 `box_id`，**带得准**。
 
-    域那一列不查：空域在表里显示成「未归域」，那是**显示约定**，
+    协作边界那一列不查：空协作边界在表里显示成「未归范围」，那是**显示约定**，
     不是盒子声明的值。
     """
     from kanban.trigger import BOX_REGISTRY

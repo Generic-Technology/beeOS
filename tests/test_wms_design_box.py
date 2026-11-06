@@ -44,7 +44,7 @@ def _sample_requirement_set() -> dict:
     原来是**退款域**的需求（「订单实体 / 退款必须在 7 天内」）。
     盒子变成 WMS 设计盒之后，那套语料就该被 wms_binding 打回——
     「退款必须在 7 天内」跟仓储一点关系都没有，拿它当「应该通过」的样本
-    等于教这个盒子在不属于自己的域里说通过。
+    等于教这个盒子在不属于自己的边界里说通过。
 
     换成真 WMS 需求：每一条都能落到一个 WMS 概念上。
     """
@@ -633,7 +633,7 @@ class TestModelingMockSemantics:
     def test_event_type_produces_domain_event(self):
         """event 类需求 → 领域事件元素（DDD 战术设计），计入覆盖率；不指派聚合根"""
         # 需求文案也 WMS 化了：以前是「订单 / 退款已完成 / 时长」——
-        # 那是退款域的语料，盒子变 WMS 之后它就该被 wms_binding 打回。
+        # 那是退款协作边界的语料，盒子变 WMS 之后它就该被 wms_binding 打回。
         task_run = self._run([
             {"requirement_id": "r_obj", "description": "库存按 SKU 记账", "requirement_type": "object", "priority": "must_have"},
             {"requirement_id": "r_evt", "description": "上架已完成", "requirement_type": "event", "priority": "must_have"},

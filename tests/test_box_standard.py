@@ -805,13 +805,13 @@ class TestRegistryCoverage:
         assert f"'{vs}'" in HTML_PAGE, f"{box_id}: 价值流 {vs} 在 VS_PALETTE 里没登记"
 
     def test_the_kanban_does_not_redeclare_domains(self):
-        """看板层不许把域名的值重新敲一遍
+        """看板层不许把协作边界名的值重新敲一遍
 
-        跟 value_stream 同一条规矩，域也一样：它是业务知识，住在**域声明**里
-        （`domains/<域>/`）。看板读它来分菜单，不拥有它。
+        跟 value_stream 同一条规矩，协作边界也一样：它是业务知识，住在**协作边界声明**里
+        （`fulfillment_scopes/<边界>/`）。看板读它来分菜单，不拥有它。
 
         一旦有人为了让菜单好看，在 JS 里写死一句 `if (name.includes('WMS'))`，
-        域的归属就变成第二份知识——加了新域、改了某只盒子的归属，
+        协作边界的归属就变成第二份知识——加了新协作边界、改了某只盒子的归属，
         看板会安静地按旧的那份分组，而且不报错。
         """
         declared = {
@@ -836,19 +836,19 @@ class TestRegistryCoverage:
                         and node.value in declared):
                     offenders.append(f"{path.name}:{node.lineno} {node.value!r}")
         assert not offenders, (
-            "看板层又敲了一遍域名的值：\n  " + "\n  ".join(offenders)
-            + "\n它应该只住在 domains/<域>/ 的域声明里"
+            "看板层又敲了一遍协作边界名的值：\n  " + "\n  ".join(offenders)
+            + "\n它应该只住在 fulfillment_scopes/<边界>/ 的协作边界声明里"
         )
 
     def test_the_kanban_holds_no_domain_table(self):
-        """看板层不许出现「一张按域名索引的表」
+        """看板层不许出现「一张按协作边界名索引的表」
 
-        `box_fulfillment_scopes` 是**算出来的**（遍历域声明的成员表）。
-        如果有人图省事写成 `DOMAINS = {"WMS": [...]}`，域成员就有了
-        两份来源，改盒子忘了改表，看板会按旧名单分组——而域成员一旦
+        `box_fulfillment_scopes` 是**算出来的**（遍历协作边界声明的成员表）。
+        如果有人图省事写成 `DOMAINS = {"WMS": [...]}`，协作边界成员就有了
+        两份来源，改盒子忘了改表，看板会按旧名单分组——而协作边界成员一旦
         对不上，接线视图、菜单计数、单盒面包屑会各说各话。
 
-        盯的是形状：模块级 dict，键全是已声明的域名。
+        盯的是形状：模块级 dict，键全是已声明的协作边界名。
         """
         from kanban.trigger import box_fulfillment_scopes, registered_box_ids
 
@@ -872,15 +872,15 @@ class TestRegistryCoverage:
                             continue  # 这个名字将来若真需要，得先想清楚
                         offenders.append(f"{path.name}:{node.lineno} {name}")
         assert not offenders, (
-            "看板层又出现一张按域名索引的表：\n  " + "\n  ".join(offenders)
-            + "\n域成员应该由 box_fulfillment_scopes() 从域声明算出来"
+            "看板层又出现一张按协作边界名索引的表：\n  " + "\n  ".join(offenders)
+            + "\n协作边界成员应该由 box_fulfillment_scopes() 从协作边界声明算出来"
         )
 
 
 def _wiring(box_id: str) -> dict[str, list[str]]:
-    """盒子的接线——**从域声明读**（不缓存：守卫要读到当下的值，不是导入那一刻的）
+    """盒子的接线——**从协作边界声明读**（不缓存：守卫要读到当下的值，不是导入那一刻的）
 
-    **接线住在域声明里**（`domains/<域>/`），不在盒子自己身上。
+    **接线住在协作边界声明里**（`fulfillment_scopes/<边界>/`），不在盒子自己身上。
     """
     from fulfillment_scopes import box_wiring
 
@@ -907,9 +907,9 @@ class TestRadialLayoutIsDerived:
 
     @staticmethod
     def _edges(domain: str):
-        """域声明里的边（`from, to, kind`）——**接线的唯一事实源**
+        """协作边界声明里的边（`from, to, kind`）——**接线的唯一事实源**
 
-        接线事实住在域声明里（`domains/<域>/`）——它是唯一真源。
+        接线事实住在协作边界声明里（`fulfillment_scopes/<边界>/`）——它是唯一真源。
         """
         from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
 
@@ -919,7 +919,7 @@ class TestRadialLayoutIsDerived:
         return [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges]
 
     def test_the_center_is_the_unique_sink_not_a_named_box(self):
-        """圆心 = 域内唯一汇点（出度 0 且入度 > 0），与它是谁无关"""
+        """圆心 = 边界内唯一汇点（出度 0 且入度 > 0），与它是谁无关"""
         from kanban.trigger import fulfillment_scope_layout
 
         for domain in self._domains():
@@ -941,7 +941,7 @@ class TestRadialLayoutIsDerived:
             assert center not in sources, f"{center} 是圆心，却还投给别人"
             assert fed_by, f"{center} 是圆心，却没有任何盒子投给它"
 
-            # 域内如果有第二个汇点，中心就不该被选出来
+            # 边界内如果有第二个汇点，中心就不该被选出来
             # （出度 0 = 它不投给任何人。闭环边也算出边——
             #  分析盒有 feedback 边，所以它不是终点。）
             out = {b for (b, _t, _k) in edges}
@@ -951,7 +951,7 @@ class TestRadialLayoutIsDerived:
             )
 
     def test_every_declared_edge_is_drawn_exactly_once(self):
-        """域内每条已声明的边，要么是交接要么是累积，一条都不能漏
+        """边界内每条已声明的边，要么是交接要么是累积，一条都不能漏
 
         漏画一条边 = 看板上「谁跟谁有关系」少了一条，而布局看上去是完整的。
         分类错一条 = 把「交给下一只验」画成「并进档案」，两件事的读法相反。
@@ -983,7 +983,7 @@ class TestRadialLayoutIsDerived:
         环上相邻 = 有交接边。环序错了，读者会以为相邻两只之间有交接，
         而实际中间隔着别人——比少画一条边更难发现。
 
-        **放射形状（star）另有一条**：域内没有交接边，
+        **放射形状（star）另有一条**：边界内没有交接边，
         源盒之间两两都不相连——所以「相邻」在那里根本不成立，
         该验的是「每只源盒都直投汇点」。
         """
@@ -996,7 +996,7 @@ class TestRadialLayoutIsDerived:
             handoffs = {tuple(e) for e in lay["handoffs"]}
             ring = lay["ring"]
             assert set(ring) | {lay["center"]} == set(lay["boxes"]), (
-                f"{domain!r}: 环 + 圆心没覆盖全域的盒子"
+                f"{domain!r}: 环 + 圆心没覆盖全协作边界的盒子"
             )
 
             if lay.get("shape") == "star":
@@ -1025,7 +1025,7 @@ class TestRadialLayoutIsDerived:
             # **环序是交接图的拓扑序**：有交接的两只，
             # 环上的先后必须跟交接方向一致。
             #
-            # **为什么不是「每条交接边都相邻」**：域的交接图**不一定是一条链**——
+            # **为什么不是「每条交接边都相邻」**：协作边界的交接图**不一定是一条链**——
             # 真实的数据依赖图里有「抄近路」的那几条
             # （需求→测试、设计→测试、开发→运维），
             # 它们在环上跨着位，画成弦（净空不够时画弧）。
@@ -1148,10 +1148,10 @@ class TestRadialLayoutIsDerived:
                     f"要么把中心卡缩小（radial-center 的 scale），"
                     f"要么让那条边改画朝外鼓的弧（handoffCurve）"
                 )
-        assert checked, "一个域的交接边都没算到——这条守卫没在守任何东西"
+        assert checked, "一个协作边界的交接边都没算到——这条守卫没在守任何东西"
 
     def test_the_main_chain_is_never_cyclic(self):
-        """域声明的交接边组成的**主干必须无环**——有环就是有人把闭环声明错了
+        """协作边界声明的交接边组成的**主干必须无环**——有环就是有人把闭环声明错了
 
         这是给「静默降级」上的一道闸。闭环那条边如果被声明成 `handoff`，
         拓扑排序就遇到环，于是按原顺序静默收尾：**不报错、不变红**，
@@ -1176,10 +1176,10 @@ class TestRadialLayoutIsDerived:
 
         守住「不猜」：成环时不能硬排一个顺序——硬排出来的东西看着
         像个正常的环，看不出哪里声明错了。而 reason 里必须点名，
-        否则「这个域退化成平的」和「这个域本来没有中心」长得一样。
+        否则「这个协作边界退化成平的」和「这个协作边界本来没有中心」长得一样。
 
-        **改的是域声明**（接线的唯一事实源）——不是某只盒子上的旧字段：
-        看板现在读的是域声明，改旧字段什么都不会发生，
+        **改的是协作边界声明**（接线的唯一事实源）——不是某只盒子上的旧字段：
+        看板现在读的是协作边界声明，改旧字段什么都不会发生，
         那这条守卫就成了一条**永远绿着的空守卫**。
         """
         from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
@@ -1190,7 +1190,7 @@ class TestRadialLayoutIsDerived:
              if any(e.kind.value == "feedback" for e in d.edges)),
             None,
         )
-        assert declaration, "没有声明过反馈边的域，这条守卫无从验证"
+        assert declaration, "没有声明过反馈边的协作边界，这条守卫无从验证"
 
         edge = next(e for e in declaration.edges if e.kind.value == "feedback")
         saved = edge.kind

@@ -428,8 +428,8 @@ class MetricsDef(BaseModel):
 #
 # 它当年存在的理由是：「调用方得能知道这只盒子接谁、投给谁——
 # 接线是**描述**的一部分，不是看板长什么样」。
-# 接线搬到**域声明**（`domains/<域>/`）之后，这个理由没了：
-# 接线不再是「盒子自己的字段」，而是**域的事实**。
+# 接线搬到**协作边界声明**（`fulfillment_scopes/<边界>/`）之后，这个理由没了：
+# 接线不再是「盒子自己的字段」，而是**协作边界的事实**。
 #
 # 剩下的三样（`display_name` / `value_stream` / `role`）是**展示位**，
 # 新协议里本来就在顶层，所以旧协议也跟着摊平——
@@ -460,7 +460,7 @@ class BeeBoxDefinition(BaseModel):
     机制层独立：
     - task[].beeline_id + version（不作为顶层独立字段）
 
-    **接线不在这里**：盒子之间怎么连，是**域**的事实（`domains/<域>/`），
+    **接线不在这里**：盒子之间怎么连，是**协作边界**的事实（`fulfillment_scopes/<边界>/`），
     不再是盒子自己的字段。旧协议里的 `placement` 已退休（2026-11-06）。
     """
 
@@ -494,16 +494,16 @@ class BeeBoxDefinition(BaseModel):
         return None
 
 # ============================================================
-# 域声明（Domain Declaration）
+# 协作边界声明（Fulfillment Scope Declaration）
 #
 # **盒子之间关系的唯一事实源。**
 #
-# 这部分类型住 `core/models.py`，因为它们是「盒子和域共用的公共类型」——
-# 盒子协议（`BeeBoxDefinition` / `BoxDeclaration`）和域协议
+# 这部分类型住 `core/models.py`，因为它们是「盒子和协作边界共用的公共类型」——
+# 盒子协议（`BeeBoxDefinition` / `BoxDeclaration`）和协作边界协议
 # （`FulfillmentScopeDeclaration`）都要用同一批形状类（`SchemaDef` / `FieldDef`），
-# 装在一个模块里，依赖是单向的（域 → 盒子，不反向）。
+# 装在一个模块里，依赖是单向的（协作边界 → 盒子，不反向）。
 #
-# **域声明住在 `domains/<域>/`**——那才是业务事实的地方；
+# **协作边界声明住在 `fulfillment_scopes/<边界>/`**——那才是业务事实的地方；
 # 这里只定形状，不含任何业务词。
 # ============================================================
 
@@ -523,7 +523,7 @@ class EdgeKind(str, Enum):
 
 
 class Edge(BaseModel):
-    """域里的一条边
+    """边界里的一条边
 
     **判重键是「完整通道标识」**（`from_box` / `to_box` / `to_task` / `via` / `kind`），
     **不是 `(from, to, kind)`**——同一个来源可以填下游的**两个不同字段**，
@@ -546,8 +546,8 @@ class Edge(BaseModel):
     via: Optional[str] = Field(default=None, description="下游投料里的哪个 ref 字段")
     no_channel: bool = Field(default=False, description="显式声明「这条边没有数据通道」")
 
-    # 跨域入口边：from_box 在本域之外。
-    external: bool = Field(default=False, description="from_box 在本域之外")
+    # 跨边界入口边：from_box 在本边界之外。
+    external: bool = Field(default=False, description="from_box 在本边界之外")
 
     @property
     def channel_key(self) -> tuple[str, str, str, str, str]:
@@ -562,7 +562,7 @@ class Edge(BaseModel):
 
 
 class RuleKind(str, Enum):
-    """域级规则的种类——**全都是「完备性规则」**
+    """边界级规则的种类——**全都是「完备性规则」**
 
     约束的是「**应该被声明、但可能还没被声明**的东西」，
     而不是「已经声明的东西的对不对」——后者是 `decl_checks` 的活。
@@ -595,7 +595,7 @@ class RuleExemption(BaseModel):
 
 
 class Rule(BaseModel):
-    """一条域级规则"""
+    """一条边界级规则"""
 
     model_config = _FORBID_EXTRA
 
@@ -604,28 +604,28 @@ class Rule(BaseModel):
 
 
 class FulfillmentScopeDeclaration(BaseModel):
-    """一个域的声明——**盒子之间关系的唯一事实源**
+    """一个协作边界的声明——**盒子之间关系的唯一事实源**
 
     **成员是声明的，不是推导的**（见 `docs/domain-declaration.md` §12.1）：
-    「档案盒属于 WMS 域」是**业务判断**，靠接线推不出来。
+    「档案盒属于 WMS 协作边界」是**业务判断**，靠接线推不出来。
     """
 
     model_config = _FORBID_EXTRA
 
-    id: str = Field(description="域唯一标识")
+    id: str = Field(description="协作边界唯一标识")
     display_name: str = Field(description="给人看的名字")
-    boxes: list[str] = Field(default_factory=list, description="本域有哪些盒子（唯一一份）")
+    boxes: list[str] = Field(default_factory=list, description="本边界有哪些盒子（唯一一份）")
     edges: list[Edge] = Field(default_factory=list, description="盒子之间怎么连（业务事实）")
-    rules: list[Rule] = Field(default_factory=list, description="域级完备性规则（业务断言）")
+    rules: list[Rule] = Field(default_factory=list, description="边界级完备性规则（业务断言）")
 
 
 @dataclass(frozen=True)
 class BoxFacts:
-    """一只盒子的事实（域装配器与接线投影共用一份）
+    """一只盒子的事实（协作边界装配器与接线投影共用一份）
 
-    **只抄跟域声明有关的那几项**——这样 `core` 不必认识任何一只盒子，
+    **只抄跟协作边界声明有关的那几项**——这样 `core` 不必认识任何一只盒子，
     也不必认识注册表：注册表在 `kanban/trigger.py`，由它把盒子抄成这个
-    视图再交给域装配器。
+    视图再交给协作边界装配器。
     """
 
     box_id: str

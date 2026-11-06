@@ -5,12 +5,12 @@
 | | |
 |---|---|
 | box_id | `learning_growth_box` |
-| 域 | Learning |
+| 协作边界 | Learning |
 | 价值流 | Learning |
 | 成熟度 | **live**（腿是真的） |
 | 判据 | 4 条（`mastery` ≥ 0 / `mastery` ≤ 1 / `source_kind` / `source_record_present`） |
 | 例外 | 2 条（`source_record_present == false` / `mastery > 1` → escalate） |
-| 接线 | **本域的终点**（汇点：三只学科盒的产出都落进这里） |
+| 接线 | **本边界的终点**（汇点：三只学科盒的产出都落进这里） |
 
 ## 它吃什么
 

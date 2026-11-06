@@ -112,7 +112,7 @@ for bid, (loader, beelines) in sorted(BOX_REGISTRY.items()):
         "stub_ops": stub_ops,
         "metrics": len(d.metrics.quality) + len(d.metrics.latency),
         "free_text": free_text,
-        # 交接边数按**域声明**算——接线只住在 domains/<域>/，不回到盒子自己身上
+        # 交接边数按**协作边界声明**算——接线只住在 fulfillment_scopes/<边界>/，不回到盒子自己身上
         "feeds": len(box_wiring(bid)["handoffs"]),
     })
 

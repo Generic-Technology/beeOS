@@ -57,9 +57,9 @@ print(box.id, box.version, box.result.maturity)
 
 ## 边界
 
-本盒**未归域**——票据识别还没划进哪个业务域，
+本盒**未归范围**——票据识别还没划进哪个业务范围，
 但合同、判据、例外都已就位并注册进看板。
 
 （归属是**协作边界声明**的事：`fulfillment_scopes/<边界>/scope.py` 的成员表。
 不属于任何边界的盒子要在 `fulfillment_scopes/__init__.py` 的 `STANDALONE_BOXES` 里**点名**——
-「忘了加进域」和「有意独立」不能分不开。）
+「忘了加进协作边界」和「有意独立」不能分不开。）

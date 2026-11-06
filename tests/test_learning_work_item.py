@@ -1,8 +1,8 @@
 """
-tests.test_learning_work_item - 学习域的履约得归得到「一件任务」
+tests.test_learning_work_item - 学习协作边界的履约得归得到「一件任务」
 
 **这个 bug 是怎么被发现的**（2026-11-05）：
-看板上选了 Learning 域，数学盒明明「RUNS 2」，左边的任务列表却是空的。
+看板上选了 Learning 协作边界，数学盒明明「RUNS 2」，左边的任务列表却是空的。
 
 查下去发现：那两次运行��� `subject_ref = None`——**没有工作项号**。
 而任务列表的定义就是「按工作项归拢」：
@@ -15,7 +15,7 @@ tests.test_learning_work_item - 学习域的履约得归得到「一件任务」
 于是运行时取不到，这条记录在归档里归不到任何工作单元。
 
 WMS 的需求盒早就是对的（`subject_ref_from_result="set_id"` +
-`subject_kind="requirement"`）。学习域是**漏了**。
+`subject_kind="requirement"`）。学习协作边界是**漏了**。
 
 这组守卫盯三件事：
 1. 学科盒跑完，记录**真的带上了它自己造出来的那个号**；

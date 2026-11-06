@@ -33,7 +33,7 @@ SAMPLE_BOX = BeeBoxDefinition(
     schemas=ALL_SCHEMAS,
 
     # **展示位摊平在顶层**（原来住在 placement 里，退休后搬上来）。
-    # **这里没有接线**——夹具盒不属于任何域。
+    # **这里没有接线**——夹具盒不属于任何协作边界。
     display_name="Sample Fixture Box",
     value_stream="Testing",
     role="Sample Fixture Fulfillment",

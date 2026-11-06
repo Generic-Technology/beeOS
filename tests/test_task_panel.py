@@ -330,7 +330,7 @@ def test_the_failed_state_says_whether_anybody_picked_it_up():
 
 
 def test_the_topology_view_is_not_used_for_a_task():
-    """选了任务不画拓扑：拓扑画的是域的接线（环），不是这件任务
+    """选了任务不画拓扑：拓扑画的是协作边界的接线（环），不是这件任务
 
     环上缺段还叫拓扑，那是骗人。所以拓扑 chip 标「不适用」，
     中间改画平铺，并写明原因。
@@ -346,7 +346,7 @@ def test_the_topology_view_is_not_used_for_a_task():
 def test_the_task_selection_lives_in_the_url():
     """任务的选择要进 URL：能分享、能后退
 
-    以前域和视图都进了 URL，任务不进的���话——点进去再退回来，
+    以前范围和视图都进了 URL，任务不进的���话——点进去再退回来，
     「看的是哪件任务」就丢了。
     """
     assert "taskHref" in HTML_PAGE

@@ -3,7 +3,7 @@ runtime.queen - Queen 决策（bounded autonomy）
 
 **Queen 的权力来自盒子自己的声明，runtime 只做通用求值**（2026-11-01 实测撞出来的）：
 
-以前这里写死了 `refund_amount >` —— 一个**退款领域的词躺在 runtime 里**。
+以前这里写死了 `refund_amount >` —— 一个**退款领协作边界的词躺在 runtime 里**。
 后果不只是"脏"：
 
 - 六只盒子声明的升级规则（`build_failed == true`、`rollback_ready == false`、

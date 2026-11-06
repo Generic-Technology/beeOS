@@ -11,8 +11,8 @@
 （BOX_META 那张表被搬回各盒的 definition），目录名是同一族。
 
 这组守卫把规则钉死，且**规则本身从代码推出来，不另立一张表**：
-- WMS 域的盒子：目录名 == box_id 去掉 `_box`
-- 非 WMS 域的盒子：不许占用 `wms_` 前缀
+- WMS 协作边界的盒子：目录名 == box_id 去掉 `_box`
+- 非 WMS 协作边界的盒子：不许占用 `wms_` 前缀
 - 打包清单（pyproject）里的包，必须跟磁盘上的目录一一对应
 """
 
@@ -73,13 +73,13 @@ def _package_of(box_id: str) -> str:
 class TestTheDirectoryNameMatchesTheBox:
     @pytest.mark.parametrize("box_id", sorted(BOX_REGISTRY))
     def test_a_wms_box_lives_in_a_directory_named_after_its_id(self, box_id):
-        """WMS 域的盒子：目录名 == box_id 去掉 `_box`
+        """WMS 协作边界的盒子：目录名 == box_id 去掉 `_box`
 
         wms_design_box → boxes/wms_design
         wms_requirement_box → boxes/wms_requirement
         """
         if "WMS" not in fulfillment_scopes_of(box_id):
-            pytest.skip("不是 WMS 域的盒子，不受这条约束")
+            pytest.skip("不是 WMS 协作边界的盒子，不受这条约束")
         expected = box_id[:-len("_box")]
         assert _package_of(box_id) == expected, (
             f"{box_id} 住在 boxes/{_package_of(box_id)}/，"
@@ -88,18 +88,18 @@ class TestTheDirectoryNameMatchesTheBox:
 
     @pytest.mark.parametrize("box_id", sorted(BOX_REGISTRY))
     def test_only_wms_boxes_take_the_wms_prefix(self, box_id):
-        """非 WMS 域的盒子不许占用 `wms_` 前缀
+        """非 WMS 协作边界的盒子不许占用 `wms_` 前缀
 
-        否则「wms_* = WMS 域的盒子」这条规则又会失效——
-        而读者正是靠它来判断一只盒子属于哪个域。
+        否则「wms_* = WMS 协作边界的盒子」这条规则又会失效——
+        而读者正是靠它来判断一只盒子属于哪个协作边界。
         """
         package = _package_of(box_id)
         if "WMS" in fulfillment_scopes_of(box_id):
             assert package.startswith("wms_")
         else:
             assert not package.startswith("wms_"), (
-                f"{box_id}（域={', '.join(fulfillment_scopes_of(box_id)) or '未归域'}）"
-                f"用了 wms_ 前缀——这会让「wms_* 就是 WMS 域」这条规则失效"
+                f"{box_id}（协作边界={', '.join(fulfillment_scopes_of(box_id)) or '未归范围'}）"
+                f"用了 wms_ 前缀——这会让「wms_* 就是 WMS 协作边界」这条规则失效"
             )
 
     def test_no_directory_still_uses_the_old_names(self):
@@ -186,9 +186,9 @@ class TestThePackagingListMatchesDisk:
     def test_every_package_on_disk_is_declared(self):
         """磁盘上**每一个包**都得在打包清单里——不只是盒子
 
-        **这条守卫是补一次真漏**：打包清单漏了 `domains`（域声明）、
+        **这条守卫是补一次真漏**：打包清单漏了 `domains`（协作边界声明）、
         `workshop`、`tests.fixtures`——装出来的 wheel 里
-        **一个域声明都没有**，`from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY`
+        **一个协作边界声明都没有**，`from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY`
         直接 ModuleNotFoundError。而本地跑测试是绿的
         （测试从仓根跑，仓根什么都有）。
 
@@ -269,7 +269,7 @@ class TestThePackagingListMatchesDisk:
 
 class TestTheNamingRuleIsNotASecondTable:
     def test_the_rule_is_derived_not_declared(self):
-        """规则从 box_id 和**域声明**推出来，不另立一张对照表
+        """规则从 box_id 和**协作边界声明**推出来，不另立一张对照表
 
         另立一张表 = **第二份事实**：它会跟盒子自己的声明漂，
         而漂了没人报错——跟以前 BOX_META 那张表一个下场。

@@ -20,7 +20,7 @@ beeOS 把这些约定写进盒子的声明，并在执行前后检查。
 | 应该交付什么、怎么算合格？ | Result 与 Acceptance 验收规则 |
 | 每次任务经过了哪些步骤？ | beeline 作业路线与 operation 执行轨迹 |
 | 出错后拒绝、等待人工还是重试？ | 例外条款、Queen 决策与运行状态 |
-| 上下游怎样交接？ | 域声明与产物引用校验 |
+| 上下游怎样交接？ | 协作边界声明与产物引用校验 |
 | 怎样检查声明和查看运行结果？ | Workshop 体检台与 Kanban 看板 |
 
 业务实现放在盒子内，运行时负责执行与验收机制。适合希望把业务规则、AI 调用和交付证据放在同一套契约下维护的开发团队。
@@ -94,7 +94,7 @@ mastery: 0.9
 | 小票识别 | 从图片生成结构化小票，并检查金额等业务约束 | [小票盒](boxes/receipt/README.md) |
 | 学习记录 | 数学、语文、英语事件与成长档案，保留记录出处 | [数学](boxes/learning_math/README.md)、[语文](boxes/learning_chinese/README.md)、[英语](boxes/learning_english/README.md)、[成长档案](boxes/learning_growth/README.md) |
 
-WMS 域已定义并串联如下履约链，各阶段产物同时汇入系统档案盒：
+WMS 协作边界已定义并串联如下履约链，各阶段产物同时汇入系统档案盒：
 
 ```text
 需求捕获 → 仓储设计 → 代码生成 → 场景验证 → 运维核对 → 效果分析
@@ -108,7 +108,7 @@ WMS 域已定义并串联如下履约链，各阶段产物同时汇入系统档�
 ## 架构概览
 
 **beeOS 提供基础设施，beeBox 承接业务责任，TaskRun 记录一次履约。**
-每个盒子包含输入与结果定义、作业路线、处理实现、验收和例外规则；域声明描述盒子之间的关系。
+每个盒子包含输入与结果定义、作业路线、处理实现、验收和例外规则；协作边界声明描述盒子之间的关系。
 
 ```mermaid
 flowchart LR
@@ -213,7 +213,7 @@ python scripts/new_box.py --help
   - `beebox-runtime-schema.md` — Runtime 数据形状
   - `beeline.md` — beeline 是什么、为什么住在盒子里
   - `beeos-gtm.md` — 商业定位 / Catalog / Certification / 飞轮
-  - `wms-closure-plan.md` — WMS 域「一个需求走完全链」的补齐计划与实测记录
+  - `wms-closure-plan.md` — WMS 协作边界「一个需求走完全链」的补齐计划与实测记录
   - `examples/order-exception-box.md` — 订单异常履约盒完整示例
 
 - **`core/`** — 基础设施内核（只有数据结构，不含业务语义）
@@ -245,7 +245,7 @@ python scripts/new_box.py --help
   以为存在一种可复用的跨盒路线，实际上一条都没有。
   路线细节见 [`docs/beeline.md`](docs/beeline.md)。
 
-  | 目录 | box_id | 域 | 判据 | 例外 | 状态 |
+  | 目录 | box_id | 协作边界 | 判据 | 例外 | 状态 |
   |---|---|---|---|---|---|
   | [`wms_requirement/`](boxes/wms_requirement/README.md) | `wms_requirement_box` | WMS | 4 | 2 | live |
   | [`wms_design/`](boxes/wms_design/README.md) | `wms_design_box` | WMS | 8 | 5 | live |
@@ -254,7 +254,7 @@ python scripts/new_box.py --help
   | [`wms_ops/`](boxes/wms_ops/README.md) | `wms_ops_box` | WMS | 5 | 2 | live |
   | [`wms_analysis/`](boxes/wms_analysis/README.md) | `wms_analysis_box` | WMS | 4 | 2 | live |
   | [`wms_system/`](boxes/wms_system/README.md) | `wms_system_box` | WMS | 5 | 3 | live |
-  | [`receipt/`](boxes/receipt/README.md) | `receipt_capture_box` | 未归域 | 6 | 2 | live |
+  | [`receipt/`](boxes/receipt/README.md) | `receipt_capture_box` | 未归范围 | 6 | 2 | live |
   | [`learning_math/`](boxes/learning_math/README.md) | `learning_math_box` | Learning | 3 | 2 | live |
   | [`learning_chinese/`](boxes/learning_chinese/README.md) | `learning_chinese_box` | Learning | 3 | 2 | live |
   | [`learning_english/`](boxes/learning_english/README.md) | `learning_english_box` | Learning | 3 | 2 | live |
@@ -293,7 +293,7 @@ python scripts/new_box.py --help
 - **`scripts/`** — 部署与校验
   - `deploy.sh` — 部署上线（同步 → 重启服务 → 线上自检）
   - `run_chain.py` — 端到端串跑多只盒子
-  - `new_box.py` — 造一只合规的新盒子（接新域只写业务，不写样板）
+  - `new_box.py` — 造一只合规的新盒子（接新协作边界只写业务，不写样板）
   - `_sync_release.py` — 把**提交树**同步到服务器（不带工作区在途改动）
   - `verify_mermaid.py` — 文档里的 mermaid 块渲染校验
   - `standardization_audit.py` — 标准化审计

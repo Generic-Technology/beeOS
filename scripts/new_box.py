@@ -3,7 +3,7 @@
 
 ## 为什么要有这个脚本
 
-接一个新域要手抄 6 个文件（definition / beeline / schemas / runner /
+接一个新协作边界要手抄 6 个文件（definition / beeline / schemas / runner /
 measure / __init__）+ 在 `kanban/trigger.py` 注册 3 处 + 根 README 加一行。
 
 **难的不是抄文件，是每处都要跟别处对得上**：
@@ -43,11 +43,11 @@ measure / __init__）+ 在 `kanban/trigger.py` 注册 3 处 + 根 README 加一�
 判据是什么、产出长什么样、腿怎么实现——那些是业务知识，住在盒子里，
 不进内核。脚手架只保证**盒子长得对**。
 
-## 接一个**新域**也能走通
+## 接一个**新协作边界**也能走通
 
-新域刚开始时，域里只有这一只盒子——**画不出环**是正常状态，
+新协作边界刚开始时，边界里只有这一只盒子——**画不出环**是正常状态，
 不是「谁接错了」。所以脚手架只拒绝**真的坏了**的接线
-（分叉、成环、冒出第二个终点、哪都不接的孤岛），域还小不算。
+（分叉、成环、冒出第二个终点、哪都不接的孤岛），边界还小不算。
 
 接线合法性问的是看板自己那套场图推导（`core/wiring.py`），
 脚手架不抄一份拓扑规则。
@@ -112,14 +112,14 @@ PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 # 场图的判定码里，**哪些算「接线坏了」**（`core/wiring.py` 给的）。
 #
 # 另一半是**正常状态**：
-#   `too_small` —— 域还小（新域的第一只盒子就在这儿）
+#   `too_small` —— 边界还小（新协作边界的第一只盒子就在这儿）
 #   `star`     —— 多源单汇（放射）：多只盒子各自直投一个汇点，
 #                 它们之间**没有交接**（例：数学/语文/英语 → 成长记录）。
 #                 这也是一种成立的形状，不是「谁接错了」。
 #
 # 只认人话那句 reason 分不开这几者，所以 core 给机器可读的判定码。
 WIRING_DEFECTS = frozenset({
-    "no_sink",         # 域内没有汇点
+    "no_sink",         # 边界内没有汇点
     "multiple_sinks",  # 冒出了第二个终点 → 圆心不唯一
     "cycle",           # 交接边成环
     "not_a_chain",     # 分叉：环上相邻却没有交接边
@@ -140,18 +140,18 @@ class BoxSpec:
     prefix: str
     const: str
     display_name: str
-    #: 它属于哪个域（域声明的 id）。**接线住在域声明里，不在这只盒子身上**——
-    #: 所以这只盒子只回答「我在哪个域」，不回答「我跟谁连」。
+    #: 它属于哪个协作边界（协作边界声明的 id）。**接线住在协作边界声明里，不在这只盒子身上**——
+    #: 所以这只盒子只回答「我在哪个协作边界」，不回答「我跟谁连」。
     scope_id: str
     value_stream: str
     role: str
     description: str
-    # **它投给谁**（域声明里的交接边）。空着 = 它成了本域的**第二个终点** →
+    # **它投给谁**（协作边界声明里的交接边）。空着 = 它成了本边界的**第二个终点** →
     # 圆心算不出来 → 看板拓扑直接禁用。所以接线必须在生成时就问清楚，
     # 不能留个空列表让后人想起来再填。
     handoff_to: list[str] = field(default_factory=list)
     # **它插在链上哪一段之后**（上游那只盒子的下游被它接手）。
-    # 域里是一条**线性链**：新盒子要么插进链里，要么自己开一条新链，
+    # 边界里是一条**线性链**：新盒子要么插进链里，要么自己开一条新链，
     # 不能从中间分叉（分叉 → 环序排不出来 → 拓扑画不出来）。
     insert_after: str = ""
 
@@ -214,7 +214,7 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
     handoff_to = [b.strip() for b in (args.handoff_to or "").split(",") if b.strip()]
     if args.sink and (handoff_to or insert_after):
         raise ValueError(
-            "--sink（它是本域的终点）和接线互斥：终点没有下游"
+            "--sink（它是本边界的终点）和接线互斥：终点没有下游"
         )
     if insert_after and handoff_to:
         raise ValueError(
@@ -228,13 +228,13 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
     elif not handoff_to and not args.sink:
         raise ValueError(
             "**新盒子必须说清它站在哪**——不说的接线有两种坏法：\n"
-            "  · 在已有链的域里，它成了本域的**第二个终点** → 圆心算不出来"
+            "  · 在已有链的边界里，它成了本边界的**第二个终点** → 圆心算不出来"
             "（看板拓扑直接禁用）\n"
-            "  · 在新域里，它成了一只**没接线的孤盒子** → 谁都不知道它跟谁有关\n"
+            "  · 在新协作边界里，它成了一只**没接线的孤盒子** → 谁都不知道它跟谁有关\n"
             "所以生成时就问清楚：\n"
             "  --insert-after <box_id>   插在它后面（接手它的下游）\n"
             "  --handoff-to <box_id>      它投给谁（自己开一条链时用）\n"
-            "  --sink                    它是本域的终点（没有下游）"
+            "  --sink                    它是本边界的终点（没有下游）"
         )
     _validate_handoff_to(handoff_to)
     spec = BoxSpec(
@@ -255,7 +255,7 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
         raise ValueError(
             "**这条接线画不出拓扑**（用的是看板自己那套场图推导）：\n"
             f"{reason}\n\n"
-            "域里是一条线性链："
+            "边界里是一条线性链："
             "新盒子要么**插在链上**（--insert-after <上游盒子>），"
             "要么**自己开一条链**（--feeds-into <终点>），"
             "要么**自己是终点**（--sink）。"
@@ -264,7 +264,7 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
 
 
 def _downstream_of(box_id: str) -> list[str]:
-    """那只盒子现在投给谁 —— **从域声明读**，不从盒子自己身上读
+    """那只盒子现在投给谁 —— **从协作边界声明读**，不从盒子自己身上读
 
     接线事实只有一份，住在 `fulfillment_scopes/<边界>/`。
     盒子自己那份声明已经退休了：它只声明了 5 条交接，
@@ -333,10 +333,10 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
     把新盒子加进去，再问一遍画不画得出来。
 
     **为什么拿「判定码」而不是人话**：场图有两种「画不出来」——
-    **接线坏了**（分叉、成环、两个汇点）和**这个域还太小**
-    （新域的第一只盒子，域里就一只，撑不起环）。
+    **接线坏了**（分叉、成环、两个汇点）和**这个协作边界还太小**
+    （新协作边界的第一只盒子，边界里就一只，撑不起环）。
     前者必须有人来改，后者是**正常状态**：
-    接一个新域的第一步本来就该被允许。
+    接一个新协作边界的第一步本来就该被允许。
     只看人话那句话，脚本分不开这两者——
     所以 core 给的是**机器可读的判定码**，脚手架只拒绝「接线坏了」那几种。
 
@@ -351,8 +351,8 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
 
     declaration = FULFILLMENT_SCOPE_REGISTRY.get(spec.scope_id)
     if declaration is None:
-        # **新域**：域里还没有接线。
-        # 「域还小」不是「接线坏了」——接一个新域的第一只盒子本来就该被允许。
+        # **新协作边界**：边界里还没有接线。
+        # 「边界还小」不是「接线坏了」——接一个新协作边界的第一只盒子本来就该被允许。
         return "too_small", f"协作边界 {spec.scope_id!r} 还不存在"
 
     edges = [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges]
@@ -377,8 +377,8 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
             kind = "archive" if target == center else "handoff"
             edges.append((spec.box_id, target, kind))
 
-    # 域里有 `all_archived` 规则 → 新盒子也要往汇点投一份。
-    # **规则说了算**，不是脚手架猜的（域没这条规则时，它就不归档）。
+    # 边界里有 `all_archived` 规则 → 新盒子也要往汇点投一份。
+    # **规则说了算**，不是脚手架猜的（边界没这条规则时，它就不归档）。
     if center and any(r.kind.value == "all_archived" for r in declaration.rules):
         if not any(s == spec.box_id and t == center for (s, t, _k) in edges):
             edges.append((spec.box_id, center, "archive"))
@@ -389,7 +389,7 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
 
 
 # ============================================================
-# 域声明片段
+# 协作边界声明片段
 # ============================================================
 #
 # **接线只住在 `fulfillment_scopes/<边界>/scope.py`。**
@@ -398,7 +398,7 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
 # 而产品结构是人的决定（仓里的既有原则：接线是产品事实）。
 # 它只把**该加哪几行**算清楚，写成一段能直接粘的片段。
 #
-# **为什么不让脚手架直接改域声明**：域声明是手写的（成员 + 边 + 规则），
+# **为什么不让脚手架直接改协作边界声明**：协作边界声明是手写的（成员 + 边 + 规则），
 # 脚手架按正则往里插行，插坏了没人知道；而且「插进去」和「这段接线
 # 对不对」是两件事——后者是业务判断，前者是文本操作。
 #
@@ -440,7 +440,7 @@ def _scope_fragment(spec: BoxSpec) -> str:
     try:
         from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
     except Exception:  # noqa: BLE001 - 仓外生成时不查
-        return "（读不到域声明——接线片段没法算）"
+        return "（读不到协作边界声明——接线片段没法算）"
 
     declaration = FULFILLMENT_SCOPE_REGISTRY.get(spec.scope_id)
     slug = spec.scope_id.lower()
@@ -450,7 +450,7 @@ def _scope_fragment(spec: BoxSpec) -> str:
     if declaration is None:
         out.append(f"## 接线片段：协作边界 `{spec.scope_id}` 还不存在\n")
         out.append(
-            f"这个域还没有声明文件。先建 `{target}`，里面至少要有：\n\n"
+            f"这个协作边界还没有声明文件。先建 `{target}`，里面至少要有：\n\n"
             "```python\n"
             "from core.models import FulfillmentScopeDeclaration, Edge, EdgeKind\n\n"
             "SCOPE = FulfillmentScopeDeclaration(\n"
@@ -488,7 +488,7 @@ def _scope_fragment(spec: BoxSpec) -> str:
         )
     edges = _suggested_edges(spec, declaration)
     if not edges:
-        out.append("（这只盒子现在没有边——它是本域的终点。）\n")
+        out.append("（这只盒子现在没有边——它是本边界的终点。）\n")
     for from_box, to_box, kind, via in edges:
         via_part = f', via="{via}"' if via else ""
         out.append(
@@ -508,7 +508,7 @@ def _replaced_edges(spec: BoxSpec, declaration) -> list[tuple[str, str, str, str
     """插在链上时，**原来那条边**该被换掉
 
     **换掉，不是加一条**：加一条 = 上游有两个下游 = 分叉，
-    而域里是一条线性链（分叉 → 拓扑排不出唯一的顺序）。
+    而边界里是一条线性链（分叉 → 拓扑排不出唯一的顺序）。
     """
     if not spec.insert_after:
         return []
@@ -546,7 +546,7 @@ def _suggested_edges(spec: BoxSpec, declaration) -> list[tuple[str, str, str, st
             via = free[0] if len(free) == 1 else ""
             out.append((spec.box_id, target, "handoff", via))
 
-    # 归档边：**规则说了算**（域里有 all_archived 规则时，新盒子也要归档）
+    # 归档边：**规则说了算**（边界里有 all_archived 规则时，新盒子也要归档）
     center = _center_of(spec.scope_id)
     if center and any(r.kind.value == "all_archived" for r in declaration.rules):
         if not any(f == spec.box_id and t == center for f, t, _k, _v in out):
@@ -555,14 +555,14 @@ def _suggested_edges(spec: BoxSpec, declaration) -> list[tuple[str, str, str, st
 
 
 def _center_of(scope_id: str) -> str:
-    """这个域的汇点（档案盒）——**从域声明推**，不写死盒子名字"""
+    """这个协作边界的汇点（档案盒）——**从协作边界声明推**，不写死盒子名字"""
     try:
         from kanban.trigger import fulfillment_scope_wiring
     except Exception:  # noqa: BLE001 - 仓外生成时不查
         return ""
     try:
         return fulfillment_scope_wiring(scope_id).center or ""
-    except Exception:  # noqa: BLE001 - 域还不存在时没有汇点
+    except Exception:  # noqa: BLE001 - 协作边界还不存在时没有汇点
         return ""
 
 
@@ -893,10 +893,10 @@ DECLARATION = BoxDeclaration(
     display_name="__DISPLAY__",
     value_stream="__VALUE_STREAM__",
     role="__ROLE__",
-    # **这里没有「域」，也没有「接线」**——
+    # **这里没有「协作边界」，也没有「接线」**——
     # 接线是**协作边界**的事实，声明在 `fulfillment_scopes/<边界>/scope.py`，
     # 不在盒子自己身上。一只盒子不许同时留两套接线，
-    # 所以接线**只**住在域声明里。
+    # 所以接线**只**住在协作边界声明里。
 
     # ---- 投料入口（Intent）----
     task_type="__TASK_TYPE__",
@@ -1125,9 +1125,9 @@ def render(spec: BoxSpec) -> dict[str, str]:
         "__BEELINE_VERSION__": str(spec.beeline_version),
         "__HANDOFF_TEXT__": (
             "投给 " + "、".join(f"`{b}`" for b in spec.handoff_to)
-            + "（**接线声明在域声明里**，不在这只盒子身上）"
+            + "（**接线声明在协作边界声明里**，不在这只盒子身上）"
             if spec.handoff_to
-            else "**本域的终点**（没有下游）"
+            else "**本边界的终点**（没有下游）"
         ),
     }
     templates = {
@@ -1301,7 +1301,7 @@ def apply_registration(
         f"`{spec.box_id}` | {spec.scope_id} | 1 | 1 | skeleton |\n"
     )
     # **接在表格最后一行后面**（不是第一行后面）：
-    # 插在第一行后面 = 新盒子夹在 WMS 那几行中间，读者会以为它是 WMS 域的。
+    # 插在第一行后面 = 新盒子夹在 WMS 那几行中间，读者会以为它是 WMS 协作边界的。
     rows = list(re.finditer(
         r"(?m)^  \| \[`[^`]+/`\]\(boxes/[^)]+\).*\n", readme_text,
     ))
@@ -1332,14 +1332,14 @@ def apply_registration(
 
     # **插在链上** → 上游那条交接边要换成「上游 → 新盒子 → 原来的下游」
     #
-    # **脚手架不改任何盒子**——接线住在域声明里，
+    # **脚手架不改任何盒子**——接线住在协作边界声明里，
     # 而改接线是改产品结构（仓里的既有原则：接线是产品事实）。
-    # 脚手架只把该改哪几行算清楚，写成片段让人并进域声明。
+    # 脚手架只把该改哪几行算清楚，写成片段让人并进协作边界声明。
     if spec.insert_after:
         notes.append(
             f"⚠️  {spec.insert_after} 的下游变了（新盒子接手了链条那一段）。"
-            f"**接线是产品事实**，它住在域声明里，"
-            f"脚手架不替你改——把下面「接线片段」并进域声明，"
+            f"**接线是产品事实**，它住在协作边界声明里，"
+            f"脚手架不替你改——把下面「接线片段」并进协作边界声明，"
             f"并把守着旧接线的那几条守卫同步更新。"
         )
     return notes
@@ -1367,7 +1367,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--insert-after", default="",
-        help="插在它后面（接手它的下游）——域里是一条线性链",
+        help="插在它后面（接手它的下游）——边界里是一条线性链",
     )
     parser.add_argument(
         "--handoff-to", default="",
@@ -1375,8 +1375,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--sink", action="store_true",
-        help="它是本域的终点（没有下游）——与 --handoff-to 互斥；"
-             "新域的第一只盒子用它",
+        help="它是本边界的终点（没有下游）——与 --handoff-to 互斥；"
+             "新协作边界的第一只盒子用它",
     )
     parser.add_argument(
         "--out", default=None,
@@ -1403,7 +1403,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in written:
         print(f"    {path.name}")
 
-    # **接线片段**：接线住在域声明里，不在这只盒子身上——
+    # **接线片段**：接线住在协作边界声明里，不在这只盒子身上——
     # 所以盒子生成完，还得把这片段并进 `fulfillment_scopes/<边界>/scope.py`。
     print()
     print(_scope_fragment(spec))

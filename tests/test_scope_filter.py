@@ -1,9 +1,9 @@
 """
 tests.test_scope_filter - 「范围」这个轴必须**三块画面一起**换
 
-**这个 bug 是什么**：看板顶部的「范围」（全部域 / 未归域 / Learning / WMS）
+**这个 bug 是什么**：看板顶部的「范围」（全部范围 / 未归范围 / Learning / WMS）
 是**显示过滤**——它控制「看哪些盒子」。以前它只管中间的地图：
-选 Learning 域，地图只剩 Learning 的 4 只盒子，可左边的任务列表和
+选 Learning 协作边界，地图只剩 Learning 的 4 只盒子，可左边的任务列表和
 右边的操作轨迹照旧列**全平台**——于是读者在「Learning 的地图」旁边读
 「WMS 的任务」「WMS 的轨迹」，两件事对不上，**而且没有任何东西提示
 他口径变了**。
@@ -14,7 +14,7 @@ tests.test_scope_filter - 「范围」这个轴必须**三块画面一起**换
 grep 照样绿。
 
 所以这里把看板那段 JS 抠出来，在 node 里喂一套假 DOM，
-喂一份跨两个域的 payload，断言两栏各自的输出。
+喂一份跨两个协作边界的 payload，断言两栏各自的输出。
 """
 
 from __future__ import annotations
@@ -125,12 +125,12 @@ def _run(search: str, payload: dict) -> dict:
 
 
 # ============================================================
-# 跨两个域的 payload
+# 跨两个协作边界的 payload
 # ============================================================
 
 
 def _payload() -> dict:
-    """Learning 域一只盒子 + WMS 域一只盒子，各带一件任务、一条轨迹"""
+    """Learning 协作边界一只盒子 + WMS 协作边界一只盒子，各带一件任务、一条轨迹"""
     return {
         "box_filter": "",
         "task_filter": None,
@@ -193,22 +193,22 @@ def _payload() -> dict:
 
 class TestTheScopeFiltersEveryPanel:
     def test_the_learning_scope_drops_the_wms_task_and_trail(self):
-        """选 Learning 域：左栏和右栏都不许再出现 WMS 的东西
+        """选 Learning 协作边界：左栏和右栏都不许再出现 WMS 的东西
 
-        这就是线上那个 bug：中间换了域，两边没换。
+        这就是线上那个 bug：中间换了范围，两边没换。
         """
         out = _run("?scope=Learning", _payload())
         assert "语文练习这条" in out["tasks"], "Learning 的任务不见了"
         assert "库区管理这条" not in out["tasks"], (
-            "Learning 域的任务列表里还混着 WMS 的任务——范围没传到左栏"
+            "Learning 协作边界的任务列表里还混着 WMS 的任务——范围没传到左栏"
         )
         assert "数学盒" in out["rail"], "Learning 的轨迹不见了"
         assert "仓储盒" not in out["rail"], (
-            "Learning 域的操作轨迹里还混着 WMS 的盒子——范围没传到右栏"
+            "Learning 协作边界的操作轨迹里还混着 WMS 的盒子——范围没传到右栏"
         )
 
     def test_the_all_scope_still_shows_everything(self):
-        """全部域 = 不筛——过滤不能把东西吃掉了"""
+        """全部范围 = 不筛——过滤不能把东西吃掉了"""
         out = _run("", _payload())
         assert "语文练习这条" in out["tasks"]
         assert "库区管理这条" in out["tasks"]
@@ -216,7 +216,7 @@ class TestTheScopeFiltersEveryPanel:
         assert "仓储盒" in out["rail"]
 
     def test_the_wms_scope_drops_the_learning_task_and_trail(self):
-        """换个域也要跟着换——不是只对 Learning 生效"""
+        """换个范围也要跟着换——不是只对 Learning 生效"""
         out = _run("?scope=WMS", _payload())
         assert "库区管理这条" in out["tasks"]
         assert "语文练习这条" not in out["tasks"]
@@ -226,7 +226,7 @@ class TestTheScopeFiltersEveryPanel:
     def test_an_empty_scope_says_so_instead_of_pretending(self):
         """空范围要说「没有」，不许静悄悄显示全平台
 
-        静默显示全平台 = 读者以为这就是这个域的全部，
+        静默显示全平台 = 读者以为这就是这个协作边界的全部，
         而他其实在看别的东西。
         """
         payload = _payload()
@@ -234,6 +234,6 @@ class TestTheScopeFiltersEveryPanel:
         out = _run("?scope=Learning", payload)
         assert "语文练习这条" not in out["tasks"]
         assert "库区管理这条" not in out["tasks"]
-        # 明说「这个域里没有」，而不是列别的东西
+        # 明说「这个协作边界里没有」，而不是列别的东西
         assert "Learning" in out["tasks"]
         assert "Learning" in out["rail"]
