@@ -6,7 +6,7 @@
 ## 显式注册，不扫目录
 
 域是**显式声明**的（跟盒子注册表同一条纪律）：
-`DOMAIN_REGISTRY` 就是全部的域。
+`FULFILLMENT_SCOPE_REGISTRY` 就是全部的域。
 
 扫目录发现域听起来省事，但那样「多了一个目录就多了一个域」——
 **没人决定过它是不是一个域**。域是业务判断，不能靠文件系统的形状决定。
@@ -22,16 +22,16 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from core.domain import handoff_channels
-from core.models import DomainDeclaration, EdgeKind
+from core.fulfillment_scope import handoff_channels
+from core.models import FulfillmentScopeDeclaration, EdgeKind
 
-from domains.learning.domain import DOMAIN as LEARNING_DOMAIN
-from domains.wms.domain import DOMAIN as WMS_DOMAIN
+from fulfillment_scopes.learning.scope import SCOPE as LEARNING_SCOPE
+from fulfillment_scopes.wms.scope import SCOPE as WMS_SCOPE
 
 #: 域 id → 域声明
-DOMAIN_REGISTRY: dict[str, DomainDeclaration] = {
-    WMS_DOMAIN.id: WMS_DOMAIN,
-    LEARNING_DOMAIN.id: LEARNING_DOMAIN,
+FULFILLMENT_SCOPE_REGISTRY: dict[str, FulfillmentScopeDeclaration] = {
+    WMS_SCOPE.id: WMS_SCOPE,
+    LEARNING_SCOPE.id: LEARNING_SCOPE,
 }
 
 #: 显式声明「不参与任何域」的盒子。
@@ -42,24 +42,24 @@ DOMAIN_REGISTRY: dict[str, DomainDeclaration] = {
 STANDALONE_BOXES: tuple[str, ...] = ("receipt_capture_box",)
 
 
-def get_domain(domain_id: str) -> DomainDeclaration | None:
-    """按 id 取域声明"""
-    return DOMAIN_REGISTRY.get(domain_id)
+def get_fulfillment_scope(scope_id: str) -> FulfillmentScopeDeclaration | None:
+    """按 id 取协作边界声明"""
+    return FULFILLMENT_SCOPE_REGISTRY.get(scope_id)
 
 
-def domain_ids() -> tuple[str, ...]:
-    """全部域 id"""
-    return tuple(DOMAIN_REGISTRY)
+def fulfillment_scope_ids() -> tuple[str, ...]:
+    """全部协作边界的 id"""
+    return tuple(FULFILLMENT_SCOPE_REGISTRY)
 
 
-def domains_of(box_id: str) -> list[str]:
+def fulfillment_scopes_of(box_id: str) -> list[str]:
     """这只盒子在哪些域里
 
-    **成员是声明的**（`DomainDeclaration.boxes`），不是从接线推出来的——
+    **成员是声明的**（`FulfillmentScopeDeclaration.boxes`），不是从接线推出来的——
     「档案盒属于 WMS 域」是**业务判断**，靠接线推不出来
     （它一条交接边都没有）。
     """
-    return [did for did, d in DOMAIN_REGISTRY.items() if box_id in d.boxes]
+    return [did for did, d in FULFILLMENT_SCOPE_REGISTRY.items() if box_id in d.boxes]
 
 
 def box_wiring(box_id: str) -> dict[str, list[str]]:
@@ -88,7 +88,7 @@ def box_wiring(box_id: str) -> dict[str, list[str]]:
         "feedback": [],
         "archive": [],
     }
-    for declaration in DOMAIN_REGISTRY.values():
+    for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
         for edge in declaration.edges:
             if edge.kind == EdgeKind.handoff:
                 if edge.from_box == box_id:
@@ -106,14 +106,14 @@ def box_wiring(box_id: str) -> dict[str, list[str]]:
 
 
 def handoff_payload(
-    domain_id: str,
+    fulfillment_scope_id: str,
     to_box: str,
     sources: Mapping[str, str],
 ) -> dict[str, str]:
     """按域声明里的边，把上游产出接进 `to_box` 的投料口
 
     Args:
-        domain_id: 域 id
+        fulfillment_scope_id: 协作边界的 id
         to_box: 下游盒子
         sources: 上游盒子 id → 它的 task_run_id
 
@@ -127,9 +127,9 @@ def handoff_payload(
     那种域要**分多次跑**下游（例：学习域三科都投 `subject_result`，
     成长记录盒就跑三次，一次一科），不能一次全接上。
     """
-    declaration = DOMAIN_REGISTRY.get(domain_id)
+    declaration = FULFILLMENT_SCOPE_REGISTRY.get(fulfillment_scope_id)
     if declaration is None:
-        raise KeyError(f"没有这个域：{domain_id}")
+        raise KeyError(f"没有这个协作边界：{fulfillment_scope_id}")
     out: dict[str, str] = {}
     for edge in handoff_channels(declaration, to_box):
         ref = sources.get(edge.from_box)
@@ -137,20 +137,20 @@ def handoff_payload(
             continue
         if edge.via in out and out[edge.via] != ref:
             raise ValueError(
-                f"域 {domain_id!r} 的 {to_box!r}：通道 {edge.via!r} 有两条来源"
+                f"协作边界 {fulfillment_scope_id!r} 的 {to_box!r}：通道 {edge.via!r} 有两条来源"
                 f"（{edge.from_box!r}）——一个通道只能接一份产出。"
-                f"这种域要**分多次跑**下游，不能一次全接上"
+                f"这种协作边界要**分多次跑**下游，不能一次全接上"
             )
         out[edge.via] = ref
     return out
 
 
 __all__ = [
-    "DOMAIN_REGISTRY",
+    "FULFILLMENT_SCOPE_REGISTRY",
     "STANDALONE_BOXES",
-    "get_domain",
-    "domain_ids",
+    "get_fulfillment_scope",
+    "fulfillment_scope_ids",
     "handoff_payload",
     "box_wiring",
-    "domains_of",
+    "fulfillment_scopes_of",
 ]

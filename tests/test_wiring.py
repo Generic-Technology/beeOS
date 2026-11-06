@@ -27,11 +27,11 @@ from core.wiring import (
 )
 from kanban.trigger import (
     BOX_REGISTRY,
-    domain_wiring,
+    fulfillment_scope_wiring,
     scope_wiring,
     scope_layout,
 )
-from domains import DOMAIN_REGISTRY
+from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
 
 
 def _e(src: str, dst: str, kind: str = HANDOFF) -> tuple[str, str, str]:
@@ -133,7 +133,7 @@ def test_a_scope_spanning_two_domains_has_no_wiring():
     assert m.center is None
     assert not m.drawable
     assert "多个域" in m.reason
-    assert m.reason_code == "cross_domain"
+    assert m.reason_code == "cross_scope"
     # 盒子还是列出来：「这个范围里有哪几只盒子」是事实，缺的只是图
     assert set(m.boxes) == {"a", "b", "c", "d"}
 
@@ -249,7 +249,7 @@ def test_the_verdict_is_machine_readable_not_just_a_sentence():
     # 「放射」是**另一种成立的形状**，不是「画不出来」——所以它没有 reason。
     for m in (ok, small, branched, cyclic, two_sinks):
         assert bool(m.reason) == (m.reason_code not in ("ok", "star")), (
-            f"{m.domain}: reason={m.reason!r} / code={m.reason_code!r} 对不上"
+            f"{m.scope}: reason={m.reason!r} / code={m.reason_code!r} 对不上"
         )
 
 
@@ -329,12 +329,12 @@ def test_the_layout_tells_the_frontend_which_shape_it_is():
     画错形状的后果不是「不好看」，是**暗示了不存在的接线关系**：
     把放射的源盒摆成环，读者就会以为它们两两相邻即相连。
     """
-    from kanban.trigger import domain_layout
+    from kanban.trigger import fulfillment_scope_layout
 
-    lay = domain_layout("Learning")
+    lay = fulfillment_scope_layout("Learning")
     assert lay["shape"] in ("ring", "star", "")
     # 环形状的域（WMS）仍然是环
-    assert domain_layout("WMS")["shape"] == "ring"
+    assert fulfillment_scope_layout("WMS")["shape"] == "ring"
 
 
 def test_the_star_layout_does_not_put_the_sources_on_a_ring():
@@ -364,11 +364,11 @@ def test_the_star_layout_does_not_put_the_sources_on_a_ring():
 
 def test_the_registered_domains_all_have_a_wiring():
     """每个域都推得出接线，盒子的集合 == 域声明的盒子集合"""
-    assert DOMAIN_REGISTRY, "一个域都没有声明"
-    for domain_id, declaration in DOMAIN_REGISTRY.items():
-        m = domain_wiring(domain_id)
+    assert FULFILLMENT_SCOPE_REGISTRY, "一个域都没有声明"
+    for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
+        m = fulfillment_scope_wiring(domain_id)
         assert set(m.boxes) == set(declaration.boxes)
-        assert m.domain == domain_id
+        assert m.scope == domain_id
         if len(declaration.boxes) >= 3:
             assert m.drawable, f"{domain_id} 域推不出接线：{m.reason}"
 
@@ -379,7 +379,7 @@ def test_the_board_layout_is_the_same_wiring():
     两边各推一次的话，改了域声明其中一边会忘改——
     而看板上看不出来。
     """
-    m = domain_wiring("WMS")
+    m = fulfillment_scope_wiring("WMS")
     lay = scope_layout("WMS")
     assert lay["center"] == m.center
     assert list(lay["ring"]) == list(m.ring)

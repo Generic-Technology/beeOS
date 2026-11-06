@@ -127,7 +127,7 @@ flowchart LR
 |---|---|
 | `core/` | 数据模型、契约与声明校验、装配 |
 | `boxes/` | 业务定义、处理实现与指标计算 |
-| `domains/` | 域成员、交接与反馈关系 |
+| `fulfillment_scopes/` | 协作边界：成员、交接与反馈关系 |
 | `runtime/` | 执行、验收、恢复与持久化 |
 | `kanban/` / `workshop/` | 运行观察与声明体检 |
 
@@ -164,7 +164,7 @@ python -m kanban.web
 |---|---|
 | 概念与契约 | [beeBox 设计](docs/beebox-design.md)、[Definition Schema](docs/beebox-definition-schema.md) |
 | 作业路线与执行 | [beeline](docs/beeline.md)、[运行时说明](runtime/README.md) |
-| 盒子装配与域关系 | [脚手架协议](docs/architecture-upgrade.md)、[域声明](docs/domain-declaration.md) |
+| 盒子装配与协作边界 | [脚手架协议](docs/architecture-upgrade.md)、[协作边界声明](docs/fulfillment-scope.md) |
 | 观察任务与检查声明 | [Kanban](kanban/README.md)、[Workshop](workshop/README.md) |
 | WMS 链路的验证依据 | [闭环计划与实测记录](docs/wms-closure-plan.md) |
 | 产品与商业方向 | [GTM 草稿](docs/beeos-gtm.md) |
@@ -204,7 +204,7 @@ python scripts/new_box.py --help
 
 - **`docs/`** — 规格、设计稿与加固计划
   - `architecture-upgrade.md` — **盒子脚手架化**的定稿：协议 / 校验清单 / 迁移计划
-  - `domain-declaration.md` — **域声明**设计与实现边界：盒子之间关系的唯一事实源
+  - `fulfillment-scope.md` — **协作边界声明**设计与实现边界：盒子之间关系的唯一事实源
   - `stability-plan.md` — 按 SOLID 分批加固组件的顺序与验收标准
   - `beebox-design.md` — 主设计稿（架构宣言 / 核心契约 / 执行语义 / 实现设计）
   - `beebox-definition-schema.md` — beeBox Definition 数据形状
@@ -227,13 +227,13 @@ python scripts/new_box.py --help
   - `decl_checks.py` — 声明自洽判定的**唯一真源**（装配器与体检台共用一份）
   - `scaffold.py` — 装配器：按协议组装盒子，声明自相矛盾时**装配期就报错**
   - `contract.py` — 「什么类型算兼容」的**唯一真源**（声明层兼容判定与运行时产物校验共用一份）
-  - `domain.py` — 域装配器：把域声明装成产物，域级声明不合法时**装配期就报错**
-  - `wiring.py` — 接线投影：从**域声明**派生出域的接线图（纯函数，不拥有事实）
+  - `fulfillment_scope.py` — 协作边界装配器：把边界声明装成产物，边界级声明不合法时**装配期就报错**
+  - `wiring.py` — 接线投影：从**协作边界声明**派生出接线图（纯函数，不拥有事实）
 
-- **`domains/`** — 域声明（盒子之间关系的**唯一事实源**）
-  - `__init__.py` — 域注册表（**显式注册，不扫目录**）+ 编排层读边的入口
-  - `wms/domain.py` — WMS 域的声明：成员 + 边（按 `kind` 分三类）+ 域级规则
-  - `learning/domain.py` — 学习域的声明（放射形状，规则与 WMS 不同）
+- **`fulfillment_scopes/`** — 协作边界声明（盒子之间关系的**唯一事实源**）
+  - `__init__.py` — 协作边界注册表（**显式注册，不扫目录**）+ 编排层读边的入口
+  - `wms/scope.py` — WMS 协作边界的声明：成员 + 边（按 `kind` 分三类）+ 边界级规则
+  - `learning/scope.py` — 学习协作边界的声明（放射形状，规则与 WMS 不同）
 
 - **`boxes/`** — 业务履约盒子（产品层）。**全部已注册**（清单见下表）
   - 每只盒子：`__init__.py` / `schemas.py` / `definition.py` / `runner.py`
@@ -304,7 +304,7 @@ python scripts/new_box.py --help
     `test_box_standard.py` / `test_box_refs.py` / `test_box_naming.py` /
     `test_layering.py` / `test_intake_contract.py` / `test_metrics.py` /
     `test_wiring.py` / `test_scaffold.py`（装配器协议的守卫）/
-    `test_domain_declaration.py`（域声明的守卫）/
+    `test_fulfillment_scope.py`（协作边界声明的守卫）/
     `test_new_box_scaffold.py` / `test_subject_ref.py` /
     `test_work_item_attribution.py` / `test_op_trail.py` /
     `test_trail_matches_beeline.py` / `test_chain_script.py` /

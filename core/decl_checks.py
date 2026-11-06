@@ -46,7 +46,7 @@ from core.contract import (
 from core.models import (
     AcceptanceRule,
     BoxFacts,
-    DomainDeclaration,
+    FulfillmentScopeDeclaration,
     Edge,
     EdgeKind,
     ExceptionRule,
@@ -340,7 +340,7 @@ def check_skeleton_is_honest(
 
 
 def check_domain_boxes(
-    declaration: DomainDeclaration,
+    declaration: FulfillmentScopeDeclaration,
     boxes: Mapping[str, BoxFacts],
 ) -> list[str]:
     """D1 + 「孤岛必须显式点名」
@@ -380,7 +380,7 @@ def check_domain_boxes(
 
 
 def check_domain_edges(
-    declaration: DomainDeclaration,
+    declaration: FulfillmentScopeDeclaration,
     boxes: Mapping[str, BoxFacts],
 ) -> list[str]:
     """D2 / D7 / D8 / D10 / D12 —— 边本身的合法性"""
@@ -456,7 +456,7 @@ def check_domain_edges(
 
 
 def check_domain_channels(
-    declaration: DomainDeclaration,
+    declaration: FulfillmentScopeDeclaration,
     boxes: Mapping[str, BoxFacts],
 ) -> list[str]:
     """D3a / D3b / D3c —— 每条 handoff 边都要有一条真能走通的通道
@@ -535,7 +535,7 @@ def check_domain_channels(
 
 
 def check_domain_rules(
-    declaration: DomainDeclaration,
+    declaration: FulfillmentScopeDeclaration,
     boxes: Mapping[str, BoxFacts],
 ) -> list[str]:
     """D14 / D15 —— 豁免机制本身要合法"""

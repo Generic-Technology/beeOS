@@ -183,7 +183,7 @@ class TestTheDomainWiring:
         测试盒那条以前只存在于编排脚本里（测试盒也要知道要验哪条需求），
         域声明把它补上了。
         """
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
         assert sorted(box_wiring("wms_requirement_box")["handoffs"]) == [
             "wms_design_box",
             "wms_testing_box",
@@ -196,7 +196,7 @@ class TestTheDomainWiring:
         域声明把它补上了——「唯一事实源」要是漏了真实依赖，
         那它就不是事实源。
         """
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
         assert sorted(box_wiring("wms_design_box")["handoffs"]) == [
             "wms_development_box",
             "wms_testing_box",
@@ -204,7 +204,7 @@ class TestTheDomainWiring:
 
     def test_the_archive_is_not_a_handoff(self):
         """产物进档案**不是**交接——两者得分开声明"""
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
         w = box_wiring("wms_design_box")
         assert w["archive"] == ["wms_system_box"]
         assert "wms_system_box" not in w["handoffs"], (
@@ -213,7 +213,7 @@ class TestTheDomainWiring:
 
     def test_system_is_the_sink(self):
         """系统档案盒是终点：它是「关于那个系统的描述」，描述完了没有下游"""
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
         assert box_wiring("wms_system_box")["handoffs"] == []
 
     def test_the_whole_wms_chain_is_pinned(self):
@@ -231,7 +231,7 @@ class TestTheDomainWiring:
         它们以前藏在编排脚本里。这几条现在被钉住了——
         「唯一事实源」漏掉真实依赖 = 它不是事实源。
         """
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
 
         chain = {
             "wms_requirement_box": ["wms_design_box", "wms_testing_box"],
@@ -278,10 +278,10 @@ class TestTheDomainWiring:
         中心算不出来时看板会禁用拓扑 Tab 并写明原因，而不是静默退回
         网格——所以这里必须确保中心**算得出来**。
         """
-        from domains import DOMAIN_REGISTRY, box_wiring
-        from kanban.trigger import domain_layout
+        from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY, box_wiring
+        from kanban.trigger import fulfillment_scope_layout
 
-        domain_boxes = list(DOMAIN_REGISTRY["WMS"].boxes)
+        domain_boxes = list(FULFILLMENT_SCOPE_REGISTRY["WMS"].boxes)
         sinks = [
             b for b in domain_boxes
             if "wms_system_box" in box_wiring(b)["archive"]
@@ -298,7 +298,7 @@ class TestTheDomainWiring:
         ]
         assert terminal == ["wms_system_box"], f"域里出现了别的终点：{terminal}"
 
-        layout = domain_layout("WMS")
+        layout = fulfillment_scope_layout("WMS")
         assert layout["layout"] == "radial", "拓扑退化了，环形出不来"
         assert layout["center"] == "wms_system_box", "环形中心算不出来了"
 
@@ -313,7 +313,7 @@ class TestTheDomainWiring:
         环上顺序变成任意的，看板照常渲染，只是结构是错的，
         没有任何东西会报错。
         """
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
 
         expected = {"wms_analysis_box": ["wms_requirement_box"]}
         for bid, targets in expected.items():
@@ -327,7 +327,7 @@ class TestTheDomainWiring:
 
     def test_the_feedback_targets_are_registered(self):
         """反馈的对象也必须是真盒子，否则闭环那条线指向空气"""
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
         from kanban.trigger import registered_box_ids
 
         registered = set(registered_box_ids())
@@ -337,7 +337,7 @@ class TestTheDomainWiring:
 
     def test_the_handoff_targets_are_registered(self):
         """交接的下游必须是真盒子，否则接力按钮点了没地方去"""
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
         from kanban.trigger import registered_box_ids
 
         registered = set(registered_box_ids())

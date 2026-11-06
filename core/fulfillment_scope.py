@@ -1,10 +1,10 @@
-"""core.domain —— 域装配器：把域声明装成产物，**装配期就报错**
+"""core.fulfillment_scope —— 域装配器：把域声明装成产物，**装配期就报错**
 
 域声明是**盒子之间关系的唯一事实源**（住在 `domains/<域>/`）。
-本模块把它装成 `AssembledDomain`：
+本模块把它装成 `AssembledFulfillmentScope`：
 
 ```
-DomainDeclaration  ──assemble_domain──▶  AssembledDomain
+FulfillmentScopeDeclaration  ──assemble_fulfillment_scope──▶  AssembledFulfillmentScope
                                           ├─ declaration   装好的声明
                                           ├─ wiring        接线投影（派生）
                                           ├─ rules_reading 域级规则的读数
@@ -53,7 +53,7 @@ from core.decl_checks import (
 )
 from core.models import (
     BoxFacts,
-    DomainDeclaration,
+    FulfillmentScopeDeclaration,
     Edge,
     EdgeKind,
     Rule,
@@ -106,10 +106,10 @@ class RuleReading:
 
 
 @dataclass(frozen=True)
-class AssembledDomain:
+class AssembledFulfillmentScope:
     """装好的域——与 ``AssembledBox`` 对称"""
 
-    declaration: DomainDeclaration
+    declaration: FulfillmentScopeDeclaration
     wiring: WiringView
     rules_reading: tuple[RuleReading, ...] = ()
     problems: tuple[DomainProblem, ...] = ()
@@ -141,7 +141,7 @@ def _exempted(rule: Rule) -> set[str]:
 
 def _evaluate_rule(
     rule: Rule,
-    declaration: DomainDeclaration,
+    declaration: FulfillmentScopeDeclaration,
     wiring: WiringView,
 ) -> RuleReading:
     """算一条域级规则的读数"""
@@ -229,11 +229,11 @@ def _evaluate_rule(
 # 装配
 # ============================================================
 
-def assemble_domain(
-    declaration: DomainDeclaration,
+def assemble_fulfillment_scope(
+    declaration: FulfillmentScopeDeclaration,
     boxes: Mapping[str, BoxFacts],
-) -> AssembledDomain:
-    """把一份域声明装成 `AssembledDomain`
+) -> AssembledFulfillmentScope:
+    """把一份域声明装成 `AssembledFulfillmentScope`
 
     Args:
         declaration: 域声明（业务事实）
@@ -281,7 +281,7 @@ def assemble_domain(
             DomainProblem("W1", f"域 {declaration.id!r} 画不成场图：{wiring.reason}")
         )
 
-    return AssembledDomain(
+    return AssembledFulfillmentScope(
         declaration=declaration,
         wiring=wiring,
         rules_reading=readings,
@@ -294,7 +294,7 @@ def assemble_domain(
 # ============================================================
 
 def handoff_channels(
-    declaration: DomainDeclaration,
+    declaration: FulfillmentScopeDeclaration,
     to_box: str,
 ) -> tuple[Edge, ...]:
     """接进 `to_box` 的那些交接边（按声明顺序）

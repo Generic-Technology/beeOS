@@ -71,10 +71,15 @@ from boxes.learning_english.runner import RUNNER as LEARNING_ENGLISH_RUNNER
 from boxes.learning_english import get_definition as get_learning_english_definition
 from core import metrics as core_metrics
 from core.beeline_models import Beeline
-from core.domain import AssembledDomain, assemble_domain
-from core.models import BeeBoxDefinition, BoxFacts, DomainDeclaration, FieldDef, SchemaDef
+from core.fulfillment_scope import AssembledFulfillmentScope, assemble_fulfillment_scope
+from core.models import BeeBoxDefinition, BoxFacts, FulfillmentScopeDeclaration, FieldDef, SchemaDef
 from core.wiring import WiringView, wiring_of_scope
-from domains import DOMAIN_REGISTRY, STANDALONE_BOXES, box_wiring
+from fulfillment_scopes import (
+    FULFILLMENT_SCOPE_REGISTRY,
+    STANDALONE_BOXES,
+    box_wiring,
+    fulfillment_scopes_of,
+)
 from core.beeline_models import Beeline
 from runtime import BeelineExecutor, create_task_run, evaluate_acceptance
 from runtime.acceptance import apply_acceptance_to_run
@@ -200,7 +205,7 @@ def box_meta(box_id: str) -> dict[str, str]:
     就不知道自己是什么。
     看板读它，不拥有它。
 
-    **接线不在这里**：接线是**域**的事实（`box_wiring()`）。
+    **接线不在这里**：接线是**协作边界**的事实（`box_wiring()`）。
     """
     entry = BOX_REGISTRY.get(box_id)
     if entry is None:
@@ -210,6 +215,12 @@ def box_meta(box_id: str) -> dict[str, str]:
         "display_name": definition.display_name,
         "value_stream": definition.value_stream,
         "role": definition.role,
+        # **归属哪个协作边界**——从协作边界声明派生，不是盒子自己写的。
+        #
+        # 以前前端读 `meta.domain`，而这里**从来没有这个字段**：
+        # 于是详情面板那一行永远是空的——**静默失效**，
+        # 没有任何一条报错说「这行该有值却没有」。
+        "fulfillment_scope": (fulfillment_scopes_of(box_id) or [""])[0],
     }
 
 
@@ -265,10 +276,10 @@ def declared_beeline_ops(box_id: str, beeline_id: str | None = None) -> list[str
     return [op.op_id for op in beeline.operations]
 
 
-def box_domains(box_ids: Iterable[str]) -> dict[str, list[str]]:
+def box_fulfillment_scopes(box_ids: Iterable[str]) -> dict[str, list[str]]:
     """按域分组盒子——**成员来自域声明**（唯一事实源）
 
-    域成员住在 `domains/<域>/` 的声明里（`DomainDeclaration.boxes`）。
+    域成员住在 `domains/<域>/` 的声明里（`FulfillmentScopeDeclaration.boxes`）。
     **不再从各盒自己的声明派生**——
     域归属也是域声明的事实；盒子自己那份已经退休，两边并存必然漂。
 
@@ -276,7 +287,7 @@ def box_domains(box_ids: Iterable[str]) -> dict[str, list[str]]:
     """
     wanted = set(box_ids)
     groups: dict[str, list[str]] = {}
-    for domain_id, declaration in DOMAIN_REGISTRY.items():
+    for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
         members = [b for b in declaration.boxes if b in wanted]
         if members:
             groups[domain_id] = members
@@ -290,15 +301,15 @@ def box_domains(box_ids: Iterable[str]) -> dict[str, list[str]]:
 def _all_domain_members() -> set[str]:
     """全部域声明里的盒子（并集）"""
     out: set[str] = set()
-    for declaration in DOMAIN_REGISTRY.values():
+    for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
         out.update(declaration.boxes)
     return out
 
 
-def domain_layout(domain: str) -> dict[str, Any]:
-    """一个域的布局：谁在圆心、环上什么顺序、有哪两类边
+def fulfillment_scope_layout(fulfillment_scope: str) -> dict[str, Any]:
+    """一个**协作边界**的布局：谁在圆心、环上什么顺序、有哪两类边
 
-    **全部从域声明推导，没有域表、没有写死的中心。**
+    **全部从协作边界声明推导，没有表、没有写死的中心。**
 
     平铺的看板把接线扔了：读者看不出哪只是终点、哪两只之间有交接。
     这些信息服务端早就算出来了，画出来等于把已有的东西用上。
@@ -315,15 +326,15 @@ def domain_layout(domain: str) -> dict[str, Any]:
       「流水线」和「记账」是两件事。
     - **环序**：交接边的拓扑序，同层按 box_id 字母序（稳定）。
 
-    **依据是域声明**——
-    接线事实只有一份（`domains/<域>/`）。
+    **依据是协作边界声明**——
+    接线事实只有一份（`fulfillment_scopes/<边界>/`）。
     """
-    return _layout_from_map(domain_wiring(domain))
+    return _layout_from_map(fulfillment_scope_wiring(fulfillment_scope))
 
 
-# 「全部域」哨兵，与前端 ALL_DOMAINS 一致。
-# 它**不是**一个域：它没有成员表。
-ALL_DOMAINS_SCOPE = "__all__"
+# 「全部范围」哨兵，与前端 ALL_SCOPES 一致。
+# 它**不是**一个协作边界：它没有成员表。
+ALL_SCOPES = "__all__"
 
 
 # ===== Map（BeeBox Map）=====
@@ -355,7 +366,7 @@ def box_facts() -> dict[str, BoxFacts]:
     return facts
 
 
-def domain_assemblies() -> dict[str, AssembledDomain]:
+def fulfillment_scope_assemblies() -> dict[str, AssembledFulfillmentScope]:
     """把每个域**装配一遍**——装配期就报错
 
     域声明是手写的（成员 + 边 + 规则），手写就会写错；
@@ -364,35 +375,35 @@ def domain_assemblies() -> dict[str, AssembledDomain]:
     """
     facts = box_facts()
     return {
-        domain_id: assemble_domain(declaration, facts)
-        for domain_id, declaration in DOMAIN_REGISTRY.items()
+        domain_id: assemble_fulfillment_scope(declaration, facts)
+        for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items()
     }
 
 
-def domain_wiring(domain: str) -> WiringView:
-    """一个域的接线投影——**从域声明派生**"""
-    assemblies = domain_assemblies()
-    assembled = assemblies.get(domain)
+def fulfillment_scope_wiring(fulfillment_scope: str) -> WiringView:
+    """一个**协作边界**的接线投影——**从协作边界声明派生**"""
+    assemblies = fulfillment_scope_assemblies()
+    assembled = assemblies.get(fulfillment_scope)
     if assembled is None:
         return WiringView(
-            domain=domain,
-            reason=f"没有这个域：{domain}",
+            scope=fulfillment_scope,
+            reason=f"没有这个协作边界：{fulfillment_scope}",
             reason_code="empty",
         )
     return assembled.wiring
 
 
 def scope_wiring(scope: str) -> WiringView:
-    """一个**范围**的接线投影。横跨多个域 → 没有图，给一句能读懂的原因。"""
-    if scope == ALL_DOMAINS_SCOPE:
-        assemblies = domain_assemblies()
+    """一个**范围**的接线投影。横跨多个协作边界 → 没有图，给一句能读懂的原因。"""
+    if scope == ALL_SCOPES:
+        assemblies = fulfillment_scope_assemblies()
         scopes = {
-            domain_id: list(a.declaration.boxes)
-            for domain_id, a in assemblies.items()
+            scope_id: list(a.declaration.boxes)
+            for scope_id, a in assemblies.items()
         }
-        wirings = {domain_id: a.wiring for domain_id, a in assemblies.items()}
+        wirings = {scope_id: a.wiring for scope_id, a in assemblies.items()}
         return wiring_of_scope(scope, scopes, wirings)
-    return domain_wiring(scope)
+    return fulfillment_scope_wiring(scope)
 
 
 def _layout_from_map(m: WiringView) -> dict[str, Any]:
@@ -404,7 +415,7 @@ def _layout_from_map(m: WiringView) -> dict[str, Any]:
     前端按它选画法——画错了就是在暗示不存在的接线关系。
     """
     return {
-        "domain": m.domain,
+        "scope": m.scope,
         "layout": "radial" if m.drawable else "flat",
         "reason": m.reason,
         "reason_code": m.reason_code,
@@ -444,7 +455,7 @@ def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     **只排 `handoff` 与 `archive`，不排 `feedback`**：闭环的边塞进线性列表就成环，
     而成环时本函数会**静默**收尾成任意顺序。这个列表答的是
     「按流水线顺序排一遍」，而流水线是线性的——闭环不在这个问题里。
-    闭环由 `domain_layout` 单独处理：反馈边画成环上闭环，不参与排序。
+    闭环由 `fulfillment_scope_layout` 单独处理：反馈边画成环上闭环，不参与排序。
     兜底：边声明成环时不抛错，剩下的按传入顺序收尾——看板不能白屏。
 
     **`archive` 边要算进来**：它是「这一环的产物进档案」——
@@ -466,7 +477,7 @@ def order_boxes_by_flow(box_ids: Iterable[str]) -> list[str]:
     # 域声明是唯一事实源。而且它比盒子自己那份旧接线声明**多 3 条真实交接**
     # （需求→测试、设计→测试、开发→运维），所以这个顺序更接近真实流水线。
     preds: dict[str, set[str]] = {b: set() for b in ids}
-    for declaration in DOMAIN_REGISTRY.values():
+    for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
         for edge in declaration.edges:
             if edge.kind.value == "feedback":
                 continue  # 闭环会把线性列表变成环
@@ -1152,13 +1163,17 @@ def box_context(
 ) -> dict[str, Any]:
     """盒子的上下文——这只盒子是谁、跟谁接、边界在哪、跑得怎么样
 
-    **为什么叫 box_context 而不是 domain_context**：`domain` 在这个项目里
-    已经有明确含义了——`core` 的分层守卫把 `domain_service` / `domain_event` /
-    `domain_metric` 列成业务词表（`tests/test_layering.py`），设计盒那边还有
-    一个 `renderDddDesign`。叫 domain context 会跟 DDD 的 bounded context 撞车，
-    而这里根本不是领域模型：它就是这只盒子自己的声明。
+    **为什么叫 box_context 而不是 domain_context / scope_context**：
+    这两个词现在都有明确含义了——
+    `domain` 指**领域知识**（`core` 的分层守卫把 `domain_service` /
+    `domain_event` / `domain_metric` 列成业务词表（`tests/test_layering.py`），
+    设计盒那边还有一个 `renderDddDesign`）；
+    `scope` 指**查看范围**（看板当前看的是哪个协作边界）。
+    叫 domain context 会跟 DDD 的 bounded context 撞车，
+    叫 scope context 会跟「查看范围」撞车——
+    而这里根本不是领域模型，也不是范围：它就是这只盒子自己的声明。
     邻居也全是 `box_*`（box_manifest / box_meta / box_metrics_readings），
-    夹个 domain 在中间像个混血。
+    夹个别的词根在中间像个混血。
 
     跟 task run 无关。看板上那四栏（投料 / 流水线 / 验收 / 产出）讲的全是
     「这一次履约发生了什么」，这里讲的是「这只盒子是什么」：它在价值流的哪一段、

@@ -22,7 +22,7 @@ import pytest
 from boxes.wms_design import get_definition as get_design_definition
 from boxes.wms_requirement import get_definition as get_capture_definition
 from core.models import EdgeKind
-from domains import domains_of
+from fulfillment_scopes import fulfillment_scopes_of
 from kanban.trigger import (
     BOX_REGISTRY,
     TriggerError,
@@ -817,7 +817,7 @@ class TestRegistryCoverage:
         declared = {
             domain
             for _bid, (_get, _bl) in BOX_REGISTRY.items()
-            for domain in domains_of(_bid)
+            for domain in fulfillment_scopes_of(_bid)
         } - {""}
 
         offenders = []
@@ -843,16 +843,16 @@ class TestRegistryCoverage:
     def test_the_kanban_holds_no_domain_table(self):
         """看板层不许出现「一张按域名索引的表」
 
-        `box_domains` 是**算出来的**（遍历域声明的成员表）。
+        `box_fulfillment_scopes` 是**算出来的**（遍历域声明的成员表）。
         如果有人图省事写成 `DOMAINS = {"WMS": [...]}`，域成员就有了
         两份来源，改盒子忘了改表，看板会按旧名单分组——而域成员一旦
         对不上，接线视图、菜单计数、单盒面包屑会各说各话。
 
         盯的是形状：模块级 dict，键全是已声明的域名。
         """
-        from kanban.trigger import box_domains, registered_box_ids
+        from kanban.trigger import box_fulfillment_scopes, registered_box_ids
 
-        declared = set(box_domains(registered_box_ids())) - {""}
+        declared = set(box_fulfillment_scopes(registered_box_ids())) - {""}
         offenders = []
         for path in sorted(KANBAN_DIR.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -873,7 +873,7 @@ class TestRegistryCoverage:
                         offenders.append(f"{path.name}:{node.lineno} {name}")
         assert not offenders, (
             "看板层又出现一张按域名索引的表：\n  " + "\n  ".join(offenders)
-            + "\n域成员应该由 box_domains() 从域声明算出来"
+            + "\n域成员应该由 box_fulfillment_scopes() 从域声明算出来"
         )
 
 
@@ -882,7 +882,7 @@ def _wiring(box_id: str) -> dict[str, list[str]]:
 
     **接线住在域声明里**（`domains/<域>/`），不在盒子自己身上。
     """
-    from domains import box_wiring
+    from fulfillment_scopes import box_wiring
 
     return box_wiring(box_id)
 
@@ -901,9 +901,9 @@ class TestRadialLayoutIsDerived:
 
     @staticmethod
     def _domains():
-        from kanban.trigger import box_domains, registered_box_ids
+        from kanban.trigger import box_fulfillment_scopes, registered_box_ids
 
-        return box_domains(registered_box_ids())
+        return box_fulfillment_scopes(registered_box_ids())
 
     @staticmethod
     def _edges(domain: str):
@@ -911,19 +911,19 @@ class TestRadialLayoutIsDerived:
 
         接线事实住在域声明里（`domains/<域>/`）——它是唯一真源。
         """
-        from domains import DOMAIN_REGISTRY
+        from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
 
-        declaration = DOMAIN_REGISTRY.get(domain)
+        declaration = FULFILLMENT_SCOPE_REGISTRY.get(domain)
         if declaration is None:
             return []
         return [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges]
 
     def test_the_center_is_the_unique_sink_not_a_named_box(self):
         """圆心 = 域内唯一汇点（出度 0 且入度 > 0），与它是谁无关"""
-        from kanban.trigger import domain_layout
+        from kanban.trigger import fulfillment_scope_layout
 
         for domain in self._domains():
-            lay = domain_layout(domain)
+            lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 assert lay["center"] is None, (
                     f"{domain!r} 已经退回平铺，却还报了一个中心 "
@@ -959,10 +959,10 @@ class TestRadialLayoutIsDerived:
         **闭环边也算一条已声明的边**——它画成环上的那条虚线，
         漏画它 = 「这一轮的结论回到起点」这条关系在图上不见了。
         """
-        from kanban.trigger import domain_layout
+        from kanban.trigger import fulfillment_scope_layout
 
         for domain in self._domains():
-            lay = domain_layout(domain)
+            lay = fulfillment_scope_layout(domain)
             declared = {
                 (b, t) for (b, t, _k) in self._edges(domain)
                 if t in set(lay["boxes"])
@@ -987,10 +987,10 @@ class TestRadialLayoutIsDerived:
         源盒之间两两都不相连——所以「相邻」在那里根本不成立，
         该验的是「每只源盒都直投汇点」。
         """
-        from kanban.trigger import domain_layout
+        from kanban.trigger import fulfillment_scope_layout
 
         for domain in self._domains():
-            lay = domain_layout(domain)
+            lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 continue
             handoffs = {tuple(e) for e in lay["handoffs"]}
@@ -1115,7 +1115,7 @@ class TestRadialLayoutIsDerived:
         这是可证的，所以不靠盯：净空能算出来，
         必须大于中心卡的半对角线（那是中心卡伸出去最远的那个角）。
         """
-        from kanban.trigger import domain_layout
+        from kanban.trigger import fulfillment_scope_layout
 
         # 立方体尺寸必须从 compactCubeHtml 里取，不能在整页里正则第一个 --cw：
         # 单盒视图用的是另一只更大的立方体，抓错了就变成拿错尺寸在算净空，
@@ -1136,7 +1136,7 @@ class TestRadialLayoutIsDerived:
 
         checked = 0
         for domain in self._domains():
-            lay = domain_layout(domain)
+            lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 continue
             for (s, d, clearance) in self._radial_edges(lay):
@@ -1159,10 +1159,10 @@ class TestRadialLayoutIsDerived:
 
         所以：主干无环是**可证的**，就证它。反馈边不进主干，这条才成立。
         """
-        from kanban.trigger import domain_layout
+        from kanban.trigger import fulfillment_scope_layout
 
         for domain in self._domains():
-            lay = domain_layout(domain)
+            lay = fulfillment_scope_layout(domain)
             if lay["layout"] == "radial":
                 continue
             # 退回平铺只允许两种原因：盒子太少 / 中心不唯一
@@ -1182,11 +1182,11 @@ class TestRadialLayoutIsDerived:
         看板现在读的是域声明，改旧字段什么都不会发生，
         那这条守卫就成了一条**永远绿着的空守卫**。
         """
-        from domains import DOMAIN_REGISTRY
-        from kanban.trigger import domain_layout
+        from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
+        from kanban.trigger import fulfillment_scope_layout
 
         declaration = next(
-            (d for d in DOMAIN_REGISTRY.values()
+            (d for d in FULFILLMENT_SCOPE_REGISTRY.values()
              if any(e.kind.value == "feedback" for e in d.edges)),
             None,
         )
@@ -1197,7 +1197,7 @@ class TestRadialLayoutIsDerived:
         try:
             # 模拟「有人把闭环边写成了交接」
             edge.kind = EdgeKind.handoff
-            lay = domain_layout(declaration.id)
+            lay = fulfillment_scope_layout(declaration.id)
             assert lay["layout"] == "flat", (
                 f"{declaration.id!r}: 交接边成环却还画环——"
                 f"环序是排不出来的，硬排等于编一个"
@@ -1211,7 +1211,7 @@ class TestRadialLayoutIsDerived:
         finally:
             edge.kind = saved
         # 还原之后必须恢复正常，证明这条守卫没改坏接线
-        assert domain_layout(declaration.id)["layout"] == "radial"
+        assert fulfillment_scope_layout(declaration.id)["layout"] == "radial"
 
     def test_feedback_closes_the_ring_and_lands_on_the_head(self):
         """反馈边必须首尾相接：环上的末位回到首位
@@ -1223,10 +1223,10 @@ class TestRadialLayoutIsDerived:
         回到中段某一只的话，那只盒子的下游就同时属于两轮，读不出
         「下一轮从哪儿起」。
         """
-        from kanban.trigger import domain_layout
+        from kanban.trigger import fulfillment_scope_layout
 
         for domain in self._domains():
-            lay = domain_layout(domain)
+            lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 continue
             ring = lay["ring"]
@@ -1267,7 +1267,7 @@ class TestRadialLayoutIsDerived:
     def test_every_declared_feedback_edge_is_drawn_exactly_once(self):
         """声明了的反馈边必须真的画出来，而且只画一次
 
-        `domain_layout` 输出的反馈边要跟域声明里的 `feedback` 边
+        `fulfillment_scope_layout` 输出的反馈边要跟协作边界声明里的 `feedback` 边
         逐条对得上：少画一条，图上就少一圈闭环，而看板上没有任何东西
         提示「本来还有一条」；重复画则同一对盒子之间多出一条线。
 
@@ -1277,10 +1277,10 @@ class TestRadialLayoutIsDerived:
         挡住。重复检查一个不可能发生的分支，只会让这条守卫看起来
         守得比实际更多。
         """
-        from kanban.trigger import domain_layout
+        from kanban.trigger import fulfillment_scope_layout
 
         for domain in self._domains():
-            lay = domain_layout(domain)
+            lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 continue
             on_ring = set(lay["ring"]) | ({lay["center"]} if lay["center"] else set())

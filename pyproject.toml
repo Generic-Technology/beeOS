@@ -51,9 +51,9 @@ packages = [
     "boxes.wms_testing",
     "runtime",
     "kanban",
-    "domains",
-    "domains.wms",
-    "domains.learning",
+    "fulfillment_scopes",
+    "fulfillment_scopes.wms",
+    "fulfillment_scopes.learning",
     "workshop",
     # **scripts 也要装**：装出来的环境里跑得动
     # `tests/test_chain_script.py`（它按仓根找 scripts/run_chain.py）

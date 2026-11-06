@@ -24,14 +24,14 @@ Learning 的汇点是 `learning_growth_box`——它**收上游产出**
 from __future__ import annotations
 
 from core.models import (
-    DomainDeclaration,
+    FulfillmentScopeDeclaration,
     Edge,
     EdgeKind,
     Rule,
     RuleKind,
 )
 
-DOMAIN = DomainDeclaration(
+SCOPE = FulfillmentScopeDeclaration(
     id="Learning",
     display_name="学习成长",
 

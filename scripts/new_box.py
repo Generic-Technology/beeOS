@@ -52,7 +52,7 @@ measure / __init__）+ 在 `kanban/trigger.py` 注册 3 处 + 根 README 加一�
 接线合法性问的是看板自己那套场图推导（`core/wiring.py`），
 脚手架不抄一份拓扑规则。
 
-**接线的依据是域声明**（`domains/<域>/domain.py`）——
+**接线的依据是协作边界声明**（`fulfillment_scopes/<边界>/scope.py`）——
 接线事实只有一份，脚手架不再自己维护一张「假想接线表」。
 
 ## 两种接线形状
@@ -80,14 +80,14 @@ measure / __init__）+ 在 `kanban/trigger.py` 注册 3 处 + 根 README 加一�
 
 ```bash
 # 只生成盒子文件（不碰 kanban/trigger.py）
-.venv/bin/python scripts/new_box.py wms_picking_box --domain WMS \
+.venv/bin/python scripts/new_box.py wms_picking_box --scope WMS \
     --display-name "拣货盒" --description "把订单拣成出库单"
 
 # 生成 + 注册（改 kanban/trigger.py 和根 README）
-.venv/bin/python scripts/new_box.py wms_picking_box --domain WMS --apply
+.venv/bin/python scripts/new_box.py wms_picking_box --scope WMS --apply
 
 # 生成到别处（自测用）
-.venv/bin/python scripts/new_box.py wms_picking_box --domain WMS --out /tmp/x
+.venv/bin/python scripts/new_box.py wms_picking_box --scope WMS --out /tmp/x
 ```
 
 **不许覆盖已存在的盒子**：已交付的盒子被脚手架冲掉，比没有脚手架更糟。
@@ -142,7 +142,7 @@ class BoxSpec:
     display_name: str
     #: 它属于哪个域（域声明的 id）。**接线住在域声明里，不在这只盒子身上**——
     #: 所以这只盒子只回答「我在哪个域」，不回答「我跟谁连」。
-    domain_id: str
+    scope_id: str
     value_stream: str
     role: str
     description: str
@@ -243,7 +243,7 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
         prefix=prefix,
         const=module.upper(),
         display_name=args.display_name or args.box_id.replace("_", " ").title(),
-        domain_id=args.domain,
+        scope_id=args.scope,
         value_stream=args.value_stream,
         role=args.role,
         description=args.description,
@@ -266,12 +266,12 @@ def build_spec(args: argparse.Namespace) -> BoxSpec:
 def _downstream_of(box_id: str) -> list[str]:
     """那只盒子现在投给谁 —— **从域声明读**，不从盒子自己身上读
 
-    接线事实只有一份，住在 `domains/<域>/`。
+    接线事实只有一份，住在 `fulfillment_scopes/<边界>/`。
     盒子自己那份声明已经退休了：它只声明了 5 条交接，
     真实链路有 8 条——照抄那份会漏掉 3 条真实的边。
     """
     try:
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
     except Exception:  # noqa: BLE001 - 仓外生成时不查
         return []
     if not _box_exists(box_id):
@@ -329,7 +329,7 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
     「看板拓扑悄悄坏掉」。
 
     **为什么不自己维护一张「假想接线表」**：接线事实只有一份——
-    域声明（`domains/<域>/domain.py`）。脚手架拿它做**加法**：
+    协作边界声明（`fulfillment_scopes/<边界>/scope.py`）。脚手架拿它做**加法**：
     把新盒子加进去，再问一遍画不画得出来。
 
     **为什么拿「判定码」而不是人话**：场图有两种「画不出来」——
@@ -345,15 +345,15 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
     """
     try:
         from core.wiring import derive_wiring
-        from domains import DOMAIN_REGISTRY
+        from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
     except Exception:  # noqa: BLE001 - 仓外生成时不校验
         return "ok", ""
 
-    declaration = DOMAIN_REGISTRY.get(spec.domain_id)
+    declaration = FULFILLMENT_SCOPE_REGISTRY.get(spec.scope_id)
     if declaration is None:
         # **新域**：域里还没有接线。
         # 「域还小」不是「接线坏了」——接一个新域的第一只盒子本来就该被允许。
-        return "too_small", f"域 {spec.domain_id!r} 还不存在"
+        return "too_small", f"协作边界 {spec.scope_id!r} 还不存在"
 
     edges = [(e.from_box, e.to_box, e.kind.value) for e in declaration.edges]
     base = derive_wiring(declaration.id, declaration.boxes, edges)
@@ -384,7 +384,7 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
             edges.append((spec.box_id, center, "archive"))
 
     boxes = list(declaration.boxes) + [spec.box_id]
-    m = derive_wiring(spec.domain_id, boxes, edges)
+    m = derive_wiring(spec.scope_id, boxes, edges)
     return m.reason_code, m.reason
 
 
@@ -392,7 +392,7 @@ def _wiring_problem(spec: BoxSpec) -> tuple[str, str]:
 # 域声明片段
 # ============================================================
 #
-# **接线只住在 `domains/<域>/domain.py`。**
+# **接线只住在 `fulfillment_scopes/<边界>/scope.py`。**
 #
 # 脚手架**不替人改**那份文件——改接线是改产品结构，
 # 而产品结构是人的决定（仓里的既有原则：接线是产品事实）。
@@ -432,30 +432,30 @@ def _free_ref_channels(declaration, to_box: str) -> list[str]:
     ]
 
 
-def _domain_fragment(spec: BoxSpec) -> str:
-    """接线片段：该加进 `domains/<域>/domain.py` 的东西
+def _scope_fragment(spec: BoxSpec) -> str:
+    """接线片段：该加进 `fulfillment_scopes/<边界>/scope.py` 的东西
 
     返回一段**能直接粘**的 Markdown。
     """
     try:
-        from domains import DOMAIN_REGISTRY
+        from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
     except Exception:  # noqa: BLE001 - 仓外生成时不查
         return "（读不到域声明——接线片段没法算）"
 
-    declaration = DOMAIN_REGISTRY.get(spec.domain_id)
-    slug = spec.domain_id.lower()
-    target = f"domains/{slug}/domain.py"
+    declaration = FULFILLMENT_SCOPE_REGISTRY.get(spec.scope_id)
+    slug = spec.scope_id.lower()
+    target = f"fulfillment_scopes/{slug}/scope.py"
 
     out: list[str] = []
     if declaration is None:
-        out.append(f"## 接线片段：域 `{spec.domain_id}` 还不存在\n")
+        out.append(f"## 接线片段：协作边界 `{spec.scope_id}` 还不存在\n")
         out.append(
             f"这个域还没有声明文件。先建 `{target}`，里面至少要有：\n\n"
             "```python\n"
-            "from core.models import DomainDeclaration, Edge, EdgeKind\n\n"
-            "DOMAIN = DomainDeclaration(\n"
-            f'    id="{spec.domain_id}",\n'
-            f'    display_name="{spec.domain_id}",\n'
+            "from core.models import FulfillmentScopeDeclaration, Edge, EdgeKind\n\n"
+            "SCOPE = FulfillmentScopeDeclaration(\n"
+            f'    id="{spec.scope_id}",\n'
+            f'    display_name="{spec.scope_id}",\n'
             "    boxes=[\n"
             f'        "{spec.box_id}",\n'
             "    ],\n"
@@ -547,21 +547,21 @@ def _suggested_edges(spec: BoxSpec, declaration) -> list[tuple[str, str, str, st
             out.append((spec.box_id, target, "handoff", via))
 
     # 归档边：**规则说了算**（域里有 all_archived 规则时，新盒子也要归档）
-    center = _center_of(spec.domain_id)
+    center = _center_of(spec.scope_id)
     if center and any(r.kind.value == "all_archived" for r in declaration.rules):
         if not any(f == spec.box_id and t == center for f, t, _k, _v in out):
             out.append((spec.box_id, center, "archive", ""))
     return out
 
 
-def _center_of(domain_id: str) -> str:
+def _center_of(scope_id: str) -> str:
     """这个域的汇点（档案盒）——**从域声明推**，不写死盒子名字"""
     try:
-        from kanban.trigger import domain_wiring
+        from kanban.trigger import fulfillment_scope_wiring
     except Exception:  # noqa: BLE001 - 仓外生成时不查
         return ""
     try:
-        return domain_wiring(domain_id).center or ""
+        return fulfillment_scope_wiring(scope_id).center or ""
     except Exception:  # noqa: BLE001 - 域还不存在时没有汇点
         return ""
 
@@ -894,7 +894,7 @@ DECLARATION = BoxDeclaration(
     value_stream="__VALUE_STREAM__",
     role="__ROLE__",
     # **这里没有「域」，也没有「接线」**——
-    # 接线是**域**的事实，声明在 `domains/<域>/domain.py`，
+    # 接线是**协作边界**的事实，声明在 `fulfillment_scopes/<边界>/scope.py`，
     # 不在盒子自己身上。一只盒子不许同时留两套接线，
     # 所以接线**只**住在域声明里。
 
@@ -1050,7 +1050,7 @@ __DESCRIPTION__
 | | |
 |---|---|
 | box_id | `__BOX_ID__` |
-| 域 | __DOMAIN__ |
+| 协作范围 | __SCOPE__ |
 | 价值流 | __VALUE_STREAM__ |
 | 成熟度 | **skeleton**（腿还没实现，跑起来一定是红的） |
 | 判据 | 1 条（`__METRIC_OK__`） |
@@ -1108,7 +1108,7 @@ def render(spec: BoxSpec) -> dict[str, str]:
         "__PREFIX__": spec.prefix,
         "__CONST__": spec.const,
         "__DISPLAY__": spec.display_name,
-        "__DOMAIN__": spec.domain_id,
+        "__SCOPE__": spec.scope_id,
         "__VALUE_STREAM__": spec.value_stream,
         "__ROLE__": spec.role,
         "__DESCRIPTION__": spec.description,
@@ -1298,7 +1298,7 @@ def apply_registration(
     readme_text = readme_path.read_text(encoding="utf-8")
     row = (
         f"  | [`{spec.module}/`](boxes/{spec.module}/README.md) | "
-        f"`{spec.box_id}` | {spec.domain_id} | 1 | 1 | skeleton |\n"
+        f"`{spec.box_id}` | {spec.scope_id} | 1 | 1 | skeleton |\n"
     )
     # **接在表格最后一行后面**（不是第一行后面）：
     # 插在第一行后面 = 新盒子夹在 WMS 那几行中间，读者会以为它是 WMS 域的。
@@ -1350,7 +1350,12 @@ def main(argv: list[str] | None = None) -> int:
         description="造一只合规的新盒子（骨架：判据已声明，腿还没实现）",
     )
     parser.add_argument("box_id", help="盒子 id，必须以 _box 结尾，如 wms_picking_box")
-    parser.add_argument("--domain", required=True, help="它属于哪个域，如 WMS")
+    parser.add_argument(
+        "--scope", required=True,
+        help="它属于哪个协作边界（如 WMS）。"
+             "以前这个参数叫 --domain——改名后旧命令会直接报错，"
+             "不会静默按老语义跑。",
+    )
     parser.add_argument("--display-name", default="", help="看板上显示的名字")
     parser.add_argument(
         "--value-stream", default="Software Delivery",
@@ -1385,7 +1390,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args.description = args.description or args.display_name or args.box_id
     if not args.role:
-        args.role = f"{args.domain} 域的履约"
+        args.role = f"{args.scope} 协作边界的履约"
 
     try:
         spec = build_spec(args)
@@ -1399,9 +1404,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"    {path.name}")
 
     # **接线片段**：接线住在域声明里，不在这只盒子身上——
-    # 所以盒子生成完，还得把这片段并进 `domains/<域>/domain.py`。
+    # 所以盒子生成完，还得把这片段并进 `fulfillment_scopes/<边界>/scope.py`。
     print()
-    print(_domain_fragment(spec))
+    print(_scope_fragment(spec))
 
     if args.apply:
         if out_dir.resolve() != BOXES_DIR.resolve():

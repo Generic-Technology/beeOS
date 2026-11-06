@@ -1,4 +1,12 @@
-# 域声明（Domain Declaration）：盒子之间关系的唯一事实源
+# 协作边界声明（Fulfillment Scope Declaration）：盒子之间关系的唯一事实源
+
+> **名词对照（2026-11-06 改名）**：本文原先把这个概念叫「域」（`Domain Declaration`）。
+> 那个名字跟**另一件事**撞了——`boxes/wms_design/domain.py` 是
+> **WMS 领域词表**（DDD 领域本体：SKU / 货主 / 库位 / 批次），
+> 那才是真 domain。
+> 于是协作边界改名 **`FulfillmentScope`**，「域」这个字还给领域知识。
+> **本文正文里遗留的「域」字样是历史措辞**，待下一批统一改写；
+> 读的时候按「协作边界」理解。
 
 > **已实现（2026-11-05）。** 本文是**决策与理由**的记录——
 > 里面的「现状」「实测」段落记的是**当时**的事实（§1、附录 A 都标了日期），
@@ -10,7 +18,7 @@
 > **相关**：[architecture-upgrade.md](./architecture-upgrade.md)（盒子脚手架化定稿）·
 > [beebox-design.md](./beebox-design.md)（主设计稿）· [beeline.md](./beeline.md)
 >
-> **路径写法约定**：本文里 `core/<domain>.py` 这种**尖括号包住名字**的写法，
+> **路径写法约定**：本文里 `core/<fulfillment_scope>.py` 这种**尖括号包住名字**的写法，
 > 表示**计划中、尚未创建**的文件；不带尖括号的都是**真实存在**的路径。
 > 「改名对照表」里的旧名（`core/field_map.py` 等）是**历史记录**——
 > 仓库里已经没有了，文档守卫对此有专门豁免（且要求它**确实**不在仓库里）。
@@ -32,8 +40,8 @@
 
 | 层 | 产物 | 它**证明**什么 | 它**不**证明什么 |
 |---|---|---|---|
-| **域声明** | `domains/<域>/` | **业务上**这些盒子怎么连 | 不证明连得上 |
-| **装配器** | `AssembledDomain` + `report` | 声明**自洽**（通道明确、端点存在、规则读数）| 不证明**产物**合规 |
+| **域声明** | `fulfillment_scopes/<边界>/` | **业务上**这些盒子怎么连 | 不证明连得上 |
+| **装配器** | `AssembledFulfillmentScope` + `report` | 声明**自洽**（通道明确、端点存在、规则读数）| 不证明**产物**合规 |
 | **编排层** | `scripts/run_chain.py` | 按域里的边**发起**交接 | 不证明交接**成功** |
 | **运行记录** | `task_run` / `subject_ref` / `handoff` | **实际发生了什么** | 不证明当时接线长什么样（→ 待定第 16 条） |
 
@@ -216,7 +224,7 @@ learning_growth  → []
 
 | | 住哪 | 为什么 |
 |---|---|---|
-| **边**（`Edge`）| **`domains/<域>/`** | 含业务断言（「开发盒」「系统档案盒」是业务词）|
+| **边**（`Edge`）| **`fulfillment_scopes/<边界>/`** | 含业务断言（「开发盒」「系统档案盒」是业务词）|
 | **接线算法**（`derive_wiring`）| **`core/`** | 零业务词；12 个域共用一份，放业务侧就是 12 份拷贝，必然漂 |
 
 **这正是「域」这个实体存在的意义**——它让「领域怎么流转」这个断言有了归属。
@@ -301,7 +309,7 @@ class Rule(BaseModel):
     kind: RuleKind
     exemptions: list[RuleExemption] = []
 
-class DomainDeclaration(BaseModel):
+class FulfillmentScopeDeclaration(BaseModel):
     id: str                          # "wms"
     display_name: str
     boxes: list[str]               # 本域有哪些盒子（唯一一份盒子表）
@@ -310,22 +318,22 @@ class DomainDeclaration(BaseModel):
     # 注：规则的**豁免要带 box_id + reason + mode**——
     # 只有 box_id 的豁免表达不了「不得归档」（§13 第 14 条）
 
-class AssembledDomain(BaseModel):
+class AssembledFulfillmentScope(BaseModel):
     """装好的域——与 ``AssembledBox`` 对称"""
-    declaration: DomainDeclaration   # 装好的域声明
+    declaration: FulfillmentScopeDeclaration   # 装好的域声明
     wiring: WiringView               # 拓扑投影（派生，见 core/<wiring>.py）
     rules_reading: list[Any] = []    # 域级规则读数（第二阶段才有）
     report: AssemblyReport           # 装配期结论：装好了没、有什么问题
 ```
 
 **core 只定形状，不含业务词。** 具体值（`"wms_system"`、`"via=design_package_ref"`）
-在 `domains/<域>/` 侧填。
+在 `fulfillment_scopes/<边界>/` 侧填。
 
 **边是业务内容，算法不是** —— 这是本方案最容易含糊的一处：
 
 | | 是什么 | 含业务断言吗 | 住哪 |
 |---|---|---|---|
-| **边**（`Edge`）| 「WMS 域里设计盒交给开发盒」| **含** ——「开发盒」「系统档案盒」是业务词 | **`domains/<域>/`** |
+| **边**（`Edge`）| 「WMS 域里设计盒交给开发盒」| **含** ——「开发盒」「系统档案盒」是业务词 | **`fulfillment_scopes/<边界>/`** |
 | **接线算法**（`derive_wiring`）| 「有 N 个汇点时画不出图」「环上相邻必须有交接边」| 不含 —— 零业务词 | **`core/`** |
 
 为什么边是业务内容：**「谁交给谁」是关于这个领域的断言，不是关于这只盒子的断言。**
@@ -342,19 +350,19 @@ boxes/wms_design/schemas.py   ← schema_business_design_package（业务事实�
 core/models.py                ← SchemaDef（形状）
 runtime/contract.py           ← 校验算法（机制）
 
-domains/<域>/<domain>.py      ← Edge(...) / DomainDeclaration（业务事实）
-core/<domain>.py                ← DomainDeclaration 的形状 + assemble_domain（机制）
+fulfillment_scopes/<边界>/<scope>.py      ← Edge(...) / FulfillmentScopeDeclaration（业务事实）
+core/<domain>.py                ← FulfillmentScopeDeclaration 的形状 + assemble_domain（机制）
 core/<wiring>.py              ← 接线算法（机制）
 ```
 
-**若接线算法住 `domains/`**，12 个域就要 12 份拷贝——必然漂。
+**若接线算法住 `fulfillment_scopes/`**，12 个域就要 12 份拷贝——必然漂。
 现在它在 `core/wiring.py` 已经是这个位置，改名只是让它更准。
 
 ### 3.2 域声明（业务侧，一份样例）
 
 ```python
-# domains/<wms>/<domain>.py（新建）
-DOMAIN = DomainDeclaration(
+# fulfillment_scopes/<wms>/<scope>.py（新建）
+DOMAIN = FulfillmentScopeDeclaration(
     id="wms",
     display_name="WMS 仓储",
     boxes=[
@@ -401,10 +409,10 @@ DOMAIN = DomainDeclaration(
 
 | | 现在 | 之后 |
 |---|---|---|
-| 输入 | `Sequence[PlacementView]`（手工抄的视图）| `DomainDeclaration` 的 `boxes` + `edges` |
-| 事实源 | 各盒子的 `placement` | **域声明**（`domains/<域>/`）|
+| 输入 | `Sequence[PlacementView]`（手工抄的视图）| `FulfillmentScopeDeclaration` 的 `boxes` + `edges` |
+| 事实源 | 各盒子的 `placement` | **域声明**（`fulfillment_scopes/<边界>/`）|
 | 位置 | `core/field_map.py` | `core/<wiring>.py`（仍是 core 的派生层）|
-| 输出 | `BeeBoxMap` | `WiringView`（`AssembledDomain` 的一个字段）|
+| 输出 | `BeeBoxMap` | `WiringView`（`AssembledFulfillmentScope` 的一个字段）|
 
 **它从「认 placement」改成「认域声明」——仍然不拥有事实。**
 
@@ -458,7 +466,7 @@ DOMAIN = DomainDeclaration(
 
 **判定机制共用一份**：这些校验应加成 `core/<decl_checks>.py` 里的
 `check_domain_*` 系列（那儿已经是「声明自洽判定的唯一真源，装配器与体检台共用一份」），
-**不在 `core/<domain>.py` 里另写一套判定**。
+**不在 `core/<fulfillment_scope>.py` 里另写一套判定**。
 
 | # | 校验 | 不这么做会怎样 |
 |---|---|---|
@@ -618,7 +626,7 @@ D* 验「一个域的结构对不对」（需要盒子信息，由调用方从�
 域声明给了它一个正经的家：
 
 ```python
-# domains/<wms>/<domain>.py
+# fulfillment_scopes/<wms>/<scope>.py
 rules=[
     Rule(
         kind="all_archived",
@@ -653,7 +661,7 @@ rules=[
 
 ### 5.4 域级规则的可读数（`rules_reading`）
 
-`AssembledDomain.rules_reading` 现在有位置了——它是**规则的读数**，不是规则的定义：
+`AssembledFulfillmentScope.rules_reading` 现在有位置了——它是**规则的读数**，不是规则的定义：
 
 ```
 all_archived              5/5   (6 只非汇点盒子，豁免 1: wms_requirement)
@@ -773,7 +781,7 @@ growth 声明的接料形状 `schema_learning_subject_result` 是那 10 个字�
 | 层次 | 判什么 | 例子 | 住在哪 |
 |---|---|---|---|
 | **① 声明合法性** | 这份声明**本身**对不对 | 盒子存在（D1）、通道明确可解析（D3a/b）、边端点在域内（D2/D10）、豁免合法（D14/D15）| `core/decl_checks.py`（`check_domain_*`）|
-| **② 域业务规则** | **这个域**自己额外要求的 | 本域要求唯一归档目标；本域每只盒子都要归档（`all_archived`）；本域闭环必须有反馈边 | `domains/<域>/` 的 `rules`（业务断言）|
+| **② 域业务规则** | **这个域**自己额外要求的 | 本域要求唯一归档目标；本域每只盒子都要归档（`all_archived`）；本域闭环必须有反馈边 | `fulfillment_scopes/<边界>/` 的 `rules`（业务断言）|
 | **③ 展示适用性** | 这份声明**能不能画成环/放射** | 汇点唯一吗？环上相邻有交接边吗？分叉能排成环吗？ | `core/<wiring>.py`（派生层）|
 
 **D5 因此从 ① 移到 ③**：
@@ -855,12 +863,12 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 
 | 步 | 做什么 | 守什么 | 状态 |
 |---|---|---|---|
-| 1 | `core/<domain>.py`：`DomainDeclaration` / `Edge` / `assemble_domain` | 新协议只有形状，零业务词 | ✅ `core/domain.py` + `core/models.py` |
-| 2 | 建 `domains/<wms>/` `domains/<learning>/`（域声明 + 盒子 + 边） | 边**按完整数据依赖图**搬（8 条，**不是 `feeds_into` 那 5 条**）——见 §1.6；并按 `kind` 分类 | ✅ WMS 14 条边 + Learning 3 条 |
-| 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 | ✅ 12 只盒子全摘（守卫：`tests/test_docs_match_code.py` 的「退休字段不得回代码」+ `tests/test_domain_declaration.py`）|
+| 1 | `core/<fulfillment_scope>.py`：`FulfillmentScopeDeclaration` / `Edge` / `assemble_domain` | 新协议只有形状，零业务词 | ✅ `core/fulfillment_scope.py` + `core/models.py` |
+| 2 | 建 `fulfillment_scopes/<wms>/` `fulfillment_scopes/<learning>/`（域声明 + 盒子 + 边） | 边**按完整数据依赖图**搬（8 条，**不是 `feeds_into` 那 5 条**）——见 §1.6；并按 `kind` 分类 | ✅ WMS 14 条边 + Learning 3 条 |
+| 3 | 盒子上摘掉 `domain` / `feeds_into` / `feedback_into` | 一只盒子不许同时留两套 | ✅ 12 只盒子全摘（守卫：`tests/test_docs_match_code.py` 的「退休字段不得回代码」+ `tests/test_fulfillment_scope.py`）|
 | 4 | `core/wiring.py` 改成吃域声明 | 派生层仍然不拥有事实 | ✅ `core/wiring.py` |
 | 5 | 看板改读新来源 | 画布上的虚线边界只是它的一张照片 | ✅ `kanban/trigger.py` |
-| 6 | 补 D1–D12 守卫 + 「域声明必须真的在装配」守卫 | 声明了却没人装 = 没迁移 | ✅ `core/decl_checks.py` + `tests/test_domain_declaration.py` |
+| 6 | 补 D1–D12 守卫 + 「域声明必须真的在装配」守卫 | 声明了却没人装 = 没迁移 | ✅ `core/decl_checks.py` + `tests/test_fulfillment_scope.py` |
 
 > **第 3 步做完了**（2026-11-06）：12 只盒子的旧接线字段全摘干净，
 > `PlacementDef` 那个壳也整体退休——它当年存在的理由
@@ -938,7 +946,7 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 - **不让 runtime 执行域声明**——runtime 只跑单盒，域是两次履约之间的事
 - **不在域声明里写「什么形状」**——形状归下游 schema（各说一半，不重复）
 - **不手写「域接线表」**——域声明**就是**唯一真源，再写一份就是 `BOX_META` 当年的病
-- **不在 `domains/` 里放场图**——场图是 `core` 的派生产物；`domains/` 装的是**声明**
+- **不在 `fulfillment_scopes/` 里放场图**——场图是 `core` 的派生产物；`fulfillment_scopes/` 装的是**声明**
 - **不扫描目录发现域**——域是显式声明的（与盒子注册表同一条纪律）
 - **不把 `domain` 一词继续复用**——分组标签、DDD 领域本体、DDD 构件类型是三个东西
 - **不做计数期望型域级规则**——「盒子数 == 7」永远绿，**自证的检查等于没有检查**（§5.3）
@@ -957,14 +965,14 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 | `placement.feeds_into` | **已退休**（2026-11-06） | 交接边 → 域声明的 `edges`（`kind=handoff`）|
 | `placement.feedback_into` | **已退休**（2026-11-06） | 闭环边 → 域声明的 `edges`（`kind=feedback`）|
 | `PlacementDef`（那个壳） | **已退休**（2026-11-06） | 展示位摊平到 `BeeBoxDefinition` 顶层 |
-| （新）| 域声明 `DomainDeclaration` | **唯一事实源**（住在 `domains/<域>/`）|
-| （新）| 装配产物 `AssembledDomain` | 装好的域（与 `AssembledBox` 对称）|
+| （新）| 域声明 `FulfillmentScopeDeclaration` | **唯一事实源**（住在 `fulfillment_scopes/<边界>/`）|
+| （新）| 装配产物 `AssembledFulfillmentScope` | 装好的域（与 `AssembledBox` 对称）|
 | `BeeBoxMap` | `WiringView` | 拓扑投影（派生）|
 | `core/field_map.py` | **`core/<wiring>.py`** | 接线算法（机制，零业务词）|
 | `derive_field_map()` | `derive_wiring()` | 同上 |
 | `field_map_of_scope()` | `wiring_of_scope()` | 同上 |
 | `PlacementView` | `BoxFacts` | 一只盒子的事实（域装配器与接线投影共用一份）|
-| `boxes/wms_design/domain.py` | 视情况 → `domains/<wms>/<vocabulary>.py` | DDD 领域本体（**升格与否取决于是否被多只盒子需要**）|
+| `boxes/wms_design/domain.py` | 视情况 → `fulfillment_scopes/<wms>/<vocabulary>.py` | DDD 领域本体（**升格与否取决于是否被多只盒子需要**）|
 | `domain_kind` | 保留 | DDD 构件类型（`entity`/`domain_service`/…）|
 | 前端 `· BeeBox Map` | `· 场图` | 画出来的那张照片 |
 
@@ -974,10 +982,10 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 
 | 决定 | 内容 |
 |---|---|
-| **目录名** | **`domains/`** —— 装的是「域声明」，不是「场图」。叫 `maps/` 会让「Map」同时指事实和视图 |
+| **目录名** | **`fulfillment_scopes/`** —— 装的是「域声明」，不是「场图」。叫 `maps/` 会让「Map」同时指事实和视图 |
 | **接线算法文件名** | **`core/<wiring>.py`** —— 它派生的是接线，不是「场」；「场图」是渲染出来的那张图 |
-| **域的装配产物名** | **`AssembledDomain`** —— 与 `AssembledBox` 对称 |
-| **边住哪** | **`domains/<域>/`**（业务事实）；**算法住 `core/`**（机制）|
+| **域的装配产物名** | **`AssembledFulfillmentScope`** —— 与 `AssembledBox` 对称 |
+| **边住哪** | **`fulfillment_scopes/<边界>/`**（业务事实）；**算法住 `core/`**（机制）|
 | **core 里两个装配器的文件名** | 倾向 **`core/<box_assembler>.py`** + **`core/<domain_assembler>.py`** —— 见下方说明 |
 | **域声明里写不写盒子清单** | **写**（字段名 **`boxes`**）—— 见 §12.1 |
 | **`member` 一词不用** | 域里的盒子叫 **boxes**，领域概念叫 **entities** —— 见 §12.2 |
@@ -1058,10 +1066,10 @@ WMS 7 只 / Learning 4 只 / receipt 1 只  ←  与连通分量完全一致
 （**盒子** vs **领域实体**）。
 
 **而且它会在升格那一刻变成真事故**：待定第 4 条若选「WMS 词表升格」，
-`domains/wms/` 里就会同时躺着
+`fulfillment_scopes/wms/` 里就会同时躺着
 
 ```
-domains/wms/
+fulfillment_scopes/wms/
   ├─ domain.py     ← 域的「成员」= 7 只盒子
   └─ entities.py   ← WMS 领域的「成员」= 11 个概念实体
 ```
@@ -1097,7 +1105,7 @@ domains/wms/
 |---|---|---|---|
 | A | `core/<box_scaffold>.py` + `core/<domain_scaffold>.py` | 40 文件 | 与 `architecture-upgrade.md` 用词一致；跟 `scripts/new_box.py` 仍撞 |
 | B | `core/<box_assembler>.py` + `core/<domain_assembler>.py` | 40 文件 | ✅ **彻底分开**：脚手架=生成、装配器=装配 |
-| C | 不改（`core/scaffold.py` + `core/<domain>.py`）| **0** | 靠类名区分（`assemble` vs `assemble_domain`），已经够 |
+| C | 不改（`core/scaffold.py` + `core/<fulfillment_scope>.py`）| **0** | 靠类名区分（`assemble` vs `assemble_domain`），已经够 |
 
 **倾向 B**：消掉的是贯穿全仓的术语歧义，而不只是文件名好看。
 `assembler` 也更准——`assemble()` 干的事就是装配，而 `scaffold` 在编程里
@@ -1129,7 +1137,7 @@ domains/wms/
    **域需要的是装配器（机制），不一定是生成器。**
 3. **`standalone` 标记放哪？** 盒子自己的字段（`BoxDeclaration`），还是独立清单？
 4. **WMS 词表升格不升格？** 现在只被设计盒自己用 → 留在盒子里；
-   一旦开发盒/测试盒也要读，就升格到 `domains/<wms>/`。
+   一旦开发盒/测试盒也要读，就升格到 `fulfillment_scopes/<wms>/`。
 5. ~~**旧协议的 `PlacementDef` 怎么退休？**~~ → **2026-11-06 已定：整体退休**
    - `PlacementDef` **整体退休**——不留「只剩三个字段」的壳子
    - **理由**：它当年存在的理由是「调用方得能知道盒子接谁、投给谁——
@@ -1137,7 +1145,7 @@ domains/wms/
    - 展示位（显示名 / 价值流 / 角色）**摊平**到 `BeeBoxDefinition` 顶层
    - `BoxDeclaration`（新协议）里那三个字段**直接删**：
      不留空壳，也不留 deprecated 别名（能写但没人读的字段 = 两套接线并存）
-   - 接线读取的**唯一入口**放 `domains/`（业务层）：
+   - 接线读取的**唯一入口**放 `fulfillment_scopes/`（业务层）：
      `core` 与 `runtime` 都不再碰接线（runtime 里的接线校验移交域装配器 D2）
 6. **（新增，口径 2026-11-05 已改）类型兼容规则下沉到 `core/<contract>.py`？**
    - **原口径是「把 `validate_payload` 整个下沉」——已改**：
@@ -1171,7 +1179,7 @@ domains/wms/
 10. **（新增）规则失败了，谁在什么时候看？** 装配期报错？CI？看板上的一个「域体检」页面？
     （并行会话正在做的 `workshop/` 盒子体检台，**可能正好是那个落点**——
     但「盒子体检」和「域体检」是不是同一件事，还没讨论。）
-11. **（新增）域声明谁维护？** `domains/<域>/` 是**业务方**维护还是**开发**维护？
+11. **（新增）域声明谁维护？** `fulfillment_scopes/<边界>/` 是**业务方**维护还是**开发**维护？
     §5.3 那条「需求盒是豁免」的注释，现在住在**需求盒的注释**里，
     搬进域声明后——**它归谁改？** 这决定规则豁免会不会变成「谁都能加豁免」。
 12. ~~**域的盒子清单是声明的还是推导的？**~~ → **2026-11-05 已定：声明**（字段 `boxes` 保留）

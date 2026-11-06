@@ -26,7 +26,7 @@ import tomllib
 
 import pytest
 
-from domains import domains_of
+from fulfillment_scopes import fulfillment_scopes_of
 from kanban.trigger import BOX_REGISTRY
 from tests.conftest import requires_checkout
 
@@ -78,7 +78,7 @@ class TestTheDirectoryNameMatchesTheBox:
         wms_design_box → boxes/wms_design
         wms_requirement_box → boxes/wms_requirement
         """
-        if "WMS" not in domains_of(box_id):
+        if "WMS" not in fulfillment_scopes_of(box_id):
             pytest.skip("不是 WMS 域的盒子，不受这条约束")
         expected = box_id[:-len("_box")]
         assert _package_of(box_id) == expected, (
@@ -94,11 +94,11 @@ class TestTheDirectoryNameMatchesTheBox:
         而读者正是靠它来判断一只盒子属于哪个域。
         """
         package = _package_of(box_id)
-        if "WMS" in domains_of(box_id):
+        if "WMS" in fulfillment_scopes_of(box_id):
             assert package.startswith("wms_")
         else:
             assert not package.startswith("wms_"), (
-                f"{box_id}（域={', '.join(domains_of(box_id)) or '未归域'}）"
+                f"{box_id}（域={', '.join(fulfillment_scopes_of(box_id)) or '未归域'}）"
                 f"用了 wms_ 前缀——这会让「wms_* 就是 WMS 域」这条规则失效"
             )
 
@@ -188,7 +188,7 @@ class TestThePackagingListMatchesDisk:
 
         **这条守卫是补一次真漏**：打包清单漏了 `domains`（域声明）、
         `workshop`、`tests.fixtures`——装出来的 wheel 里
-        **一个域声明都没有**，`from domains import DOMAIN_REGISTRY`
+        **一个域声明都没有**，`from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY`
         直接 ModuleNotFoundError。而本地跑测试是绿的
         （测试从仓根跑，仓根什么都有）。
 

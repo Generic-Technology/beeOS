@@ -46,7 +46,10 @@ SELF = Path(__file__).resolve()
 SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", "vendor", "dist", "build", ".pytest_cache"}
 
 # 文档里提到的路径，只有这些前缀算「仓库内路径」——别的（如 logs/、flows/）不管
-PATH_PREFIXES = ("boxes", "runtime", "core", "kanban", "tests", "docs", "scripts", "domains")
+PATH_PREFIXES = (
+    "boxes", "runtime", "core", "kanban", "tests", "docs", "scripts",
+    "fulfillment_scopes",
+)
 
 # 改名前 / 已删除的名字：文档里再出现就是在骗人
 RETIRED_NAMES = (
@@ -84,7 +87,38 @@ RETIRED_NAMES = (
     "BUSINESS_MODEL_PACKAGE",
     # 文档里写了一个**从来不存在过**的字段（ops 盒 README 说判据带它）
     "source_task_run_id",
+    # ---- 2026-11-06 改名：协作边界 domain → fulfillment_scope ----
+    #
+    # 「域」这个名字让位给**真正的 domain**——
+    # `boxes/wms_design/domain.py` 是 WMS 领域词表（DDD 领域本体），
+    # 那才是 domain。而「一只盒子属于哪组、怎么交接、共同守什么规矩」
+    # 这个协作边界，原先占了 domain 的名字。
+    #
+    # **判据是「定义」，不是「字符串里不许有」**：
+    # 兼容层读旧产出时提到旧名是正当的。
+    "DomainDeclaration",
+    "AssembledDomain",
+    "assemble_domain",
+    "DOMAIN_REGISTRY",
+    "domain_assemblies",
+    "domains_of",
+    "box_domains",
+    "domain_wiring",
+    "domain_layout",
+    "ALL_DOMAINS_SCOPE",
+    "core.domain",
+    "domains/",
+    # 跟着改名一起退休的**测试文件名**（测试文件也是「定义了新东西」）
+    "test_domain_declaration",
+    "test_domain_stability",
 )
+
+# **这次搬家的记录文档**：它讲的就是「从 A 改成 B」，
+# 旧名是它的**内容**的一部分——写不出旧名，读者看不懂改了什么。
+# 但代码里旧名**确实**退休了（`test_the_retired_names_are_not_back_in_code` 照常跑）。
+MIGRATION_DOCS = {
+    "docs/fulfillment-scope.md",
+}
 
 # 历史记录文档：它记录的是**当时**的事实，出现旧名不是骗人。
 # 豁免只给自标「不是活文档」的实测记录——它已经明说了现状看根 README。
@@ -111,13 +145,13 @@ RETIRED_WIRING_FIELDS = ("placement", "feeds_into", "feedback_into")
 #: **豁免的前提**：旧名在**代码**里确实已经退休
 #: （`test_the_retired_wiring_fields_are_not_back_in_code` 照常跑）。
 DOCS_MAY_MENTION_RETIRED_WIRING = {
-    "docs/domain-declaration.md",
+    "docs/fulfillment-scope.md",
 }
 
 #: 接线字段在**盒子声明**里不许再出现的关键字
 #:
 #: `domain` 不在这份名单的「裸名」一栏里——它太泛
-#: （`domain_wiring(domain)` 这种参数名是合法的）。
+#: （`fulfillment_scope_wiring(domain)` 这种参数名是合法的）。
 #: 它只在**声明的关键字**这一层被判：往 `BoxDeclaration(...)` 里写
 #: `domain=` = 又在盒子身上留了一份接线。
 RETIRED_WIRING_KEYWORDS = ("domain", "feeds_into", "feedback_into", "placement")
@@ -360,6 +394,8 @@ def test_box_readme_mentions_its_own_box_id() -> None:
 def test_md_has_no_retired_names(md: Path) -> None:
     if _rel(md) in HISTORICAL_DOCS:
         pytest.skip(f"{_rel(md)} 是历史实测记录，旧名是当时的事实")
+    if _rel(md) in MIGRATION_DOCS:
+        pytest.skip(f"{_rel(md)} 是这次搬家的记录文档，写得出旧名")
     text = md.read_text(encoding="utf-8")
     bad: list[str] = []
     for lineno, line in enumerate(text.splitlines(), 1):
@@ -448,7 +484,7 @@ def test_the_retired_wiring_fields_are_not_back_in_code() -> None:
 
     ## `domain` 为什么不在裸名名单里
 
-    `domain` 太泛：`domain_wiring(domain)` 这种参数名是合法的。
+    `domain` 太泛：`fulfillment_scope_wiring(domain)` 这种参数名是合法的。
     它只在**声明的关键字**这一层被判——
     往 `BoxDeclaration(...)` 里写 `domain=` = 又在盒子身上留了一份接线。
     """
@@ -691,7 +727,7 @@ def test_box_readme_counts_match_definition(box_dir: str) -> None:
 # 所以反过来：**README 列了就必须存在，实际有就必须列上**。
 # 加文件忘了写进 README → 清单守卫红（提醒补一句）。
 
-_LISTED_DIRS = ("core/", "runtime/", "scripts/", "docs/", "domains/")
+_LISTED_DIRS = ("core/", "runtime/", "scripts/", "docs/", "fulfillment_scopes/")
 
 # 清单行：`- \`xxx.py\` — 说明`（要求后面是破折号或行尾）
 # 不写成「段内所有反引号」：段里可能有「见 `runtime/models.py`」这种行内引用，

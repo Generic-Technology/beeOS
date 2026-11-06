@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from domains import box_wiring, domains_of
+from fulfillment_scopes import box_wiring, fulfillment_scopes_of
 from kanban.catalog import catalog_inspections
 from kanban.trigger import box_metrics_readings
 from runtime.box_health import BoxHealth, inspect_box
@@ -48,10 +48,10 @@ _DATA_PLACEHOLDER = "__WORKSHOP_DATA__"
 def _box_payload(inspection, records: list[dict[str, Any]]) -> dict[str, Any]:
     """一只盒子在工作台页面上的全部内容"""
     d = inspection.definition
-    # **接线从域声明读**（`domains/<域>/`）——不再从盒子自己的字段读。
+    # **接线从协作边界声明读**（`fulfillment_scopes/<边界>/`）——不再从盒子自己的字段读。
     # 那份字段已经退休：照抄它会漏掉真实依赖，而两份事实并存必然漂。
     wiring = box_wiring(inspection.box_id)
-    box_domains = domains_of(inspection.box_id)
+    box_fulfillment_scopes = fulfillment_scopes_of(inspection.box_id)
     return {
         "box_id": inspection.box_id,
         "version": d.version,
@@ -59,7 +59,7 @@ def _box_payload(inspection, records: list[dict[str, Any]]) -> dict[str, Any]:
         "display_name": d.display_name or inspection.box_id,
         "value_stream": d.value_stream,
         "role": d.role,
-        "domain": box_domains[0] if box_domains else "",
+        "fulfillment_scope": box_fulfillment_scopes[0] if box_fulfillment_scopes else "",
         "maturity": d.result.maturity,
         "artifact_view": d.result.view,
         "handoffs": list(wiring["handoffs"]),
@@ -351,7 +351,7 @@ _PAGE = r"""<!DOCTYPE html>
     // 归属标签**带前缀**且去重：域和价值流可能是同一个词
     // （学习域的盒子域和价值流都叫 Learning），两个一样的裸标签看着像重复。
     var seen = {};
-    [["价值流", box.value_stream], ["域", box.domain]].forEach(function (pair) {
+    [["价值流", box.value_stream], ["协作范围", box.fulfillment_scope]].forEach(function (pair) {
       var value = pair[1];
       if (!value || seen[value]) return;
       seen[value] = true;

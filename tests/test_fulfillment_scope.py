@@ -1,4 +1,4 @@
-"""tests.test_domain_declaration - 域声明的守卫
+"""tests.test_fulfillment_scope - 协作边界声明的守卫
 
 **域声明是盒子之间关系的唯一事实源**（住在 `domains/<域>/`）。
 这份守卫盯的是那件最容易悄悄坏掉的事：
@@ -39,10 +39,10 @@ from __future__ import annotations
 
 import pytest
 
-from core.domain import assemble_domain
+from core.fulfillment_scope import assemble_fulfillment_scope
 from core.models import EdgeKind, RuleKind
-from domains import DOMAIN_REGISTRY, STANDALONE_BOXES
-from kanban.trigger import BOX_REGISTRY, box_facts, domain_assemblies
+from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY, STANDALONE_BOXES
+from kanban.trigger import BOX_REGISTRY, box_facts, fulfillment_scope_assemblies
 
 
 #: 退休的接线字段名——**不许再定义**
@@ -57,7 +57,7 @@ class TestEveryDomainAssembles:
     """域声明不合法 → 装配期就拒（不许「看板照常渲染，只是接错了」）"""
 
     def test_every_domain_declares_at_least_one_box(self):
-        for domain_id, declaration in DOMAIN_REGISTRY.items():
+        for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
             assert declaration.boxes, (
                 f"域 {domain_id!r} 一只盒子都没有——"
                 f"它要么从注册表里删掉，要么把成员写上"
@@ -66,8 +66,8 @@ class TestEveryDomainAssembles:
     def test_every_domain_assembles_without_problems(self):
         """装配器一次报齐所有问题——这里要的是**一条都没有**"""
         facts = box_facts()
-        for domain_id, declaration in DOMAIN_REGISTRY.items():
-            assembled = assemble_domain(declaration, facts)
+        for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
+            assembled = assemble_fulfillment_scope(declaration, facts)
             assert assembled.ok, (
                 f"域 {domain_id!r} 装配不过：\n"
                 + "\n".join(f"  · {p}" for p in assembled.problems)
@@ -75,7 +75,7 @@ class TestEveryDomainAssembles:
 
     def test_the_domain_id_matches_the_module_it_lives_in(self):
         """域 id 与目录名对得上——看板按 id 筛域名，前端按目录找文件"""
-        for domain_id in DOMAIN_REGISTRY:
+        for domain_id in FULFILLMENT_SCOPE_REGISTRY:
             assert domain_id, "域 id 不能是空串"
 
     def test_the_rules_are_not_vacuous(self):
@@ -86,8 +86,8 @@ class TestEveryDomainAssembles:
         这跟「一只零判据的盒子被判成全过」是同一个病：
         **看起来成功，其实什么也没验**。
         """
-        for domain_id, declaration in DOMAIN_REGISTRY.items():
-            assembled = assemble_domain(declaration, box_facts())
+        for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
+            assembled = assemble_fulfillment_scope(declaration, box_facts())
             for reading in assembled.rules_reading:
                 assert reading.total > 0, (
                     f"域 {domain_id!r} 的规则 {reading.kind!r} 读数是 0/0——"
@@ -105,7 +105,7 @@ class TestEveryDomainAssembles:
         最少该有的是 `each_handoff_has_channel`：
         每条交接边都得有能走通的通道，**任何域都成立**。
         """
-        for domain_id, declaration in DOMAIN_REGISTRY.items():
+        for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
             assert declaration.rules, (
                 f"域 {domain_id!r} 一条域级规则都没写——"
                 f"域声明只声明了连线，没声明任何业务断言"
@@ -118,7 +118,7 @@ class TestEveryDomainAssembles:
 
     def test_every_exemption_says_why(self):
         """豁免必须写得出理由——「为什么」是结构化事实，不是注释"""
-        for domain_id, declaration in DOMAIN_REGISTRY.items():
+        for domain_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
             for rule in declaration.rules:
                 for ex in rule.exemptions:
                     assert ex.reason.strip(), (
@@ -143,18 +143,18 @@ class TestTheDeclarationIsActuallyUsed:
         复制一份 = 又一份能漂的事实：改了模块里的，注册表里的还是旧的，
         而看板读的是注册表里的那份。
         """
-        import domains.learning.domain as learning
-        import domains.wms.domain as wms
+        import fulfillment_scopes.learning.scope as learning
+        import fulfillment_scopes.wms.scope as wms
 
-        assert DOMAIN_REGISTRY[wms.DOMAIN.id] is wms.DOMAIN
-        assert DOMAIN_REGISTRY[learning.DOMAIN.id] is learning.DOMAIN
+        assert FULFILLMENT_SCOPE_REGISTRY[wms.SCOPE.id] is wms.SCOPE
+        assert FULFILLMENT_SCOPE_REGISTRY[learning.SCOPE.id] is learning.SCOPE
 
     def test_the_board_actually_assembles_every_domain(self):
         """看板那套装配要把每个域都装一遍——少装一个，那个域就是死的"""
-        assemblies = domain_assemblies()
-        assert set(assemblies) == set(DOMAIN_REGISTRY), (
+        assemblies = fulfillment_scope_assemblies()
+        assert set(assemblies) == set(FULFILLMENT_SCOPE_REGISTRY), (
             f"看板装配的域 {sorted(assemblies)} "
-            f"跟注册表 {sorted(DOMAIN_REGISTRY)} 对不上"
+            f"跟注册表 {sorted(FULFILLMENT_SCOPE_REGISTRY)} 对不上"
         )
         for domain_id, assembled in assemblies.items():
             assert assembled.ok, (
@@ -171,7 +171,7 @@ class TestEveryBoxBelongsSomewhere:
     """每只盒子要么在域里，要么**显式**独立——不能「没人管」"""
 
     def test_no_box_is_in_a_domain_and_also_declared_standalone(self):
-        members = {b for d in DOMAIN_REGISTRY.values() for b in d.boxes}
+        members = {b for d in FULFILLMENT_SCOPE_REGISTRY.values() for b in d.boxes}
         both = members & set(STANDALONE_BOXES)
         assert not both, (
             f"这些盒子既在域里、又显式声明独立：{sorted(both)}——"
@@ -180,7 +180,7 @@ class TestEveryBoxBelongsSomewhere:
 
     def test_every_registered_box_is_in_a_domain_or_standalone(self):
         """忘了归域 → 盒子不在任何域里，却没人知道"""
-        members = {b for d in DOMAIN_REGISTRY.values() for b in d.boxes}
+        members = {b for d in FULFILLMENT_SCOPE_REGISTRY.values() for b in d.boxes}
         registered = set(BOX_REGISTRY)
         missing = sorted(registered - members - set(STANDALONE_BOXES))
         assert not missing, (
@@ -190,7 +190,7 @@ class TestEveryBoxBelongsSomewhere:
 
     def test_a_standalone_box_really_is_standalone(self):
         """显式独立的那只，不能在域声明里偷偷有边"""
-        members = {b for d in DOMAIN_REGISTRY.values() for b in d.boxes}
+        members = {b for d in FULFILLMENT_SCOPE_REGISTRY.values() for b in d.boxes}
         for box_id in STANDALONE_BOXES:
             assert box_id in BOX_REGISTRY, (
                 f"STANDALONE_BOXES 里点了名 {box_id!r}，注册表里却没有它"
@@ -259,7 +259,7 @@ class TestTheRetiredWiringFieldsAreGone:
 
     def test_the_domain_declaration_is_the_only_wiring_source(self):
         """域声明里的边 = 接线事实；盒子上再没有第二份"""
-        from domains import box_wiring
+        from fulfillment_scopes import box_wiring
 
         for box_id in BOX_REGISTRY:
             wiring = box_wiring(box_id)
@@ -281,7 +281,7 @@ class TestTheEdgesSayWhatTheyAre:
         给它挂一个通道 = 「声明了交接却走不通」：
         装配期会被 D3a 拒，但更糟的是有人会觉得「那就接上吧」。
         """
-        for declaration in DOMAIN_REGISTRY.values():
+        for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
             for edge in declaration.edges:
                 if edge.kind != EdgeKind.archive:
                     continue
@@ -293,7 +293,7 @@ class TestTheEdgesSayWhatTheyAre:
 
     def test_a_handoff_edge_always_has_a_channel(self):
         """交接边**必须有通道**——没有通道的交接是声明了却走不通"""
-        for declaration in DOMAIN_REGISTRY.values():
+        for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
             for edge in declaration.edges:
                 if edge.kind != EdgeKind.handoff:
                     continue
@@ -305,7 +305,7 @@ class TestTheEdgesSayWhatTheyAre:
 
     def test_the_kind_matches_the_channel(self):
         """有通道的边是交接，没通道的边不是——两者不许含糊"""
-        for declaration in DOMAIN_REGISTRY.values():
+        for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
             for edge in declaration.edges:
                 if edge.via:
                     assert edge.kind == EdgeKind.handoff, (

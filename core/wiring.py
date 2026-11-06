@@ -5,7 +5,7 @@
 
 ## 为什么它是**派生**的，不是一张手写的表
 
-接线事实已经有一份了——**域声明**（`domains/<域>/`）。
+接线事实已经有一份了——**协作边界声明**（`fulfillment_scopes/<边界>/`）。
 再手写一张「WMS 接线表」就是**第二份事实**，两份必然漂，而且漂了
 **没有任何东西会报错**——图照常渲染，只是有一只盒子接错了对象。
 所以投影只能是**从域声明推出来的视图**：改一条边，接线自己跟着变。
@@ -83,7 +83,7 @@ class WiringView:
     - 域还小（`too_small` / `empty`）→ 接线没错，只是盒子还不够多
     """
 
-    domain: str
+    scope: str
     boxes: tuple[str, ...] = ()
     center: str | None = None
     ring: tuple[str, ...] = ()
@@ -104,7 +104,7 @@ class WiringView:
     def to_dict(self) -> dict:
         """给 API / 看板用的形状"""
         return {
-            "domain": self.domain,
+            "scope": self.scope,
             "boxes": list(self.boxes),
             "center": self.center,
             "ring": list(self.ring),
@@ -163,7 +163,7 @@ def _topo_within(
 
 
 def derive_wiring(
-    domain: str,
+    fulfillment_scope: str,
     boxes: Sequence[str],
     edges: Sequence[tuple[str, str, str]],
 ) -> WiringView:
@@ -173,7 +173,7 @@ def derive_wiring(
     这样它能被看板、API、将来产出图的盒子共用同一份推导。
 
     Args:
-        domain: 域 id
+        fulfillment_scope: 协作边界的 id
         boxes: 本域的盒子清单
         edges: `(from, to, kind)` 三元组；kind 是 `handoff` / `archive` / `feedback`
     """
@@ -284,7 +284,7 @@ def derive_wiring(
             shape = "ring"
 
     return WiringView(
-        domain=domain,
+        scope=fulfillment_scope,
         boxes=tuple(ids),
         center=center,
         ring=tuple(ordered),
@@ -307,13 +307,13 @@ def wiring_of_scope(
     横跨多个域时**没有图**：各域流水线互不相干，硬凑一个中心等于
     替业务声明一条不存在的拓扑。给的是一句能读懂的原因。
     """
-    domains = [d for d in scopes if d in scopes and scopes[d]]
-    if len(domains) > 1:
+    scope_ids = [d for d in scopes if d in scopes and scopes[d]]
+    if len(scope_ids) > 1:
         every: list[str] = []
-        for d in domains:
+        for d in scope_ids:
             every.extend(scopes[d])
         return WiringView(
-            domain=scope,
+            scope=scope,
             # 盒子还是列出来——「这个范围里有哪几只盒子」是事实，
             # 缺的只是**图**（共同汇点 + 接线）。
             boxes=tuple(every),
@@ -321,13 +321,13 @@ def wiring_of_scope(
                 "范围横跨多个域，各域流水线互不相干，没有共同汇点——"
                 "硬凑一个中心等于替业务声明一条不存在的拓扑"
             ),
-            reason_code="cross_domain",
+            reason_code="cross_scope",
         )
-    if not domains:
+    if not scope_ids:
         return WiringView(
-            domain=scope, reason="这个范围里没有盒子", reason_code="empty",
+            scope=scope, reason="这个范围里没有盒子", reason_code="empty",
         )
-    domain = domains[0]
-    return wirings.get(domain) or WiringView(
-        domain=domain, reason="这个域还没装配", reason_code="empty",
+    scope_id = scope_ids[0]
+    return wirings.get(scope_id) or WiringView(
+        scope=scope_id, reason="这个协作边界还没装配", reason_code="empty",
     )

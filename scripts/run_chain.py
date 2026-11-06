@@ -60,7 +60,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from kanban.trigger import trigger_task  # noqa: E402
 from runtime.store import TaskRunStore  # noqa: E402
 from boxes.wms_testing.probes import SCENARIOS  # noqa: E402
-from domains import handoff_payload  # noqa: E402
+from fulfillment_scopes import handoff_payload  # noqa: E402
 
 
 DEFAULT_VERIFY_BASE_URL = "http://127.0.0.1:8081/api/v1"

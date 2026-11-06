@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 from core.models import (
-    DomainDeclaration,
+    FulfillmentScopeDeclaration,
     Edge,
     EdgeKind,
     Rule,
@@ -33,7 +33,7 @@ from core.models import (
     RuleKind,
 )
 
-DOMAIN = DomainDeclaration(
+SCOPE = FulfillmentScopeDeclaration(
     id="WMS",
     display_name="WMS 仓储",
 

@@ -43,19 +43,19 @@ import sys
 sys.path.insert(0, sys.argv[1])
 import kanban.web as web
 import workshop
-import domains
-from kanban.trigger import domain_assemblies
+import fulfillment_scopes
+from kanban.trigger import fulfillment_scope_assemblies
 from boxes.wms_system.runner import load_baseline
 root = Path(sys.argv[1]).resolve()
 assert Path(web.__file__).resolve().is_relative_to(root)
 assert Path(workshop.__file__).resolve().is_relative_to(root)
-assert Path(domains.__file__).resolve().is_relative_to(root)
+assert Path(fulfillment_scopes.__file__).resolve().is_relative_to(root)
 assert load_baseline()['baseline_id']
 vendor = root / 'kanban' / 'vendor'
 assert (vendor / 'three.module.js').stat().st_size > 0
 assert (vendor / 'beebox3d.js').stat().st_size > 0
 assert (vendor / 'addons' / 'environments' / 'RoomEnvironment.js').is_file()
-assemblies = domain_assemblies()
+assemblies = fulfillment_scope_assemblies()
 assert all(a.ok for a in assemblies.values())
 print(json.dumps(sorted(assemblies)))
 """

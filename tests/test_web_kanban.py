@@ -125,8 +125,8 @@ class TestDashboardData:
             "tasks",
             "boxes",
             "box_stats",
-            "domains",
-            # scope_layouts 不是 domain_layouts：键是**范围**，除了每个真域
+            "fulfillment_scopes",
+            # scope_layouts 不是 fulfillment_scope_layouts：键是**范围**，除了每个协作边界
             # 还带一条「全部域」。以前只有真域，「全部域」查不到布局，
             # 视图于是被域隐式决定了。
             "scope_layouts",
@@ -148,16 +148,16 @@ class TestDashboardData:
         缺了它，前端拿不到 `scope_layouts['__all__']`，就退回到
         「有没有 radial 记录」来判断视图——域于是又偷偷决定了视图。
         """
-        from kanban.trigger import ALL_DOMAINS_SCOPE
+        from kanban.trigger import ALL_SCOPES
 
         store = TaskRunStore(path=tmp_path / "x.jsonl")
         lays = dashboard_data(store)["scope_layouts"]
-        assert ALL_DOMAINS_SCOPE in lays, (
+        assert ALL_SCOPES in lays, (
             "scope_layouts 里没有「全部域」这一条——"
             "前端会退回按域隐式决定视图，两个轴又焊回去了"
         )
-        assert set(lays) == {ALL_DOMAINS_SCOPE, *lays.keys()} | set(
-            dashboard_data(store)["domains"]
+        assert set(lays) == {ALL_SCOPES, *lays.keys()} | set(
+            dashboard_data(store)["fulfillment_scopes"]
         ), "scope_layouts 的键应恰好是「全部域」+ 每个域"
 
     def test_a_cross_domain_scope_never_becomes_a_ring(self, tmp_path: Path):
@@ -170,10 +170,10 @@ class TestDashboardData:
 
         看板一旦这么画，就是在替业务声明一条没人声明过的拓扑。
         """
-        from kanban.trigger import ALL_DOMAINS_SCOPE
+        from kanban.trigger import ALL_SCOPES
 
         store = TaskRunStore(path=tmp_path / "x.jsonl")
-        lay = dashboard_data(store)["scope_layouts"][ALL_DOMAINS_SCOPE]
+        lay = dashboard_data(store)["scope_layouts"][ALL_SCOPES]
         assert lay["layout"] == "flat", (
             "跨域范围被画成了环——那等于替业务声明了一个不存在的拓扑"
         )
@@ -1082,7 +1082,7 @@ class TestTheRosterComesFromTheRegistry:
 
         分析盒在这条链上，但它**反馈**给需求盒那条边不进排序：
         闭环塞进线性列表就成环，而成环时 `order_boxes_by_flow` 会
-        静默按原顺序收尾。反馈由 domain_layout 单独处理。
+        静默按原顺序收尾。反馈由 fulfillment_scope_layout 单独处理。
         """
         from kanban.trigger import (
             BOX_REGISTRY,
@@ -1095,7 +1095,7 @@ class TestTheRosterComesFromTheRegistry:
 
         def _handoffs(box_id: str) -> list[str]:
             """交接下游——**从域声明读**（接线不在盒子自己身上了）"""
-            from domains import box_wiring
+            from fulfillment_scopes import box_wiring
 
             return list(box_wiring(box_id)["handoffs"])
 
@@ -1189,7 +1189,7 @@ class TestViewAndScopeAreTwoSeparateAxes:
     以前代码里根本没有「视图」：渲染分支写的是
     `lay && lay.layout === 'radial' ? 环形 : 平铺`——也就是**点域 chip
     顺手把整页布局换掉**。读者以为自己在筛选，实际在换页面，而 URL 里
-    只有 `domain` 没有 `view`，换视图这件事根本看不出来。
+    只有 `scope` 没有 `view`，换视图这件事根本看不出来。
 
     更贵的代价是两个轴被焊死：全部域下永远看不到环形，WMS 下永远看不了网格。
 
@@ -1201,7 +1201,7 @@ class TestViewAndScopeAreTwoSeparateAxes:
         assert "_params.get('view')" in HTML_PAGE, (
             "视图没从 URL 读——换个视图地址栏纹丝不动，刷新就丢"
         )
-        assert "_params.get('domain')" in HTML_PAGE, "范围没从 URL 读"
+        assert "_params.get('scope')" in HTML_PAGE, "范围没从 URL 读"
 
     def test_the_render_branch_follows_the_view_not_the_scope(self):
         """渲染分支必须先问 _view，不能拿 lay.layout 当条件
@@ -1252,7 +1252,7 @@ class TestViewAndScopeAreTwoSeparateAxes:
 
     def test_the_scope_table_covers_the_all_domains_sentinel(self):
         """scope_layouts 必须含「全部域」——少了它前端就退回按域猜视图"""
-        assert "ALL_DOMAINS_SCOPE" in HTML_PAGE or "__all__" in HTML_PAGE, (
+        assert "ALL_SCOPES" in HTML_PAGE or "__all__" in HTML_PAGE, (
             "scope_layouts 没覆盖「全部域」这个范围"
         )
 
@@ -1307,7 +1307,7 @@ def _run_scope_links(cases: list[tuple[str, str]]) -> dict[tuple[str, str], str]
 
     src = "\n".join(
         [
-            _js_const("ALL_DOMAINS"),
+            _js_const("ALL_SCOPES"),
             _js_const("VIEW_GRID"),
             _extract_js_function("scopeQuery"),
             _extract_js_function("overviewHref"),
@@ -1333,7 +1333,7 @@ class TestScopeAndViewLinksAreRealQueryUrls:
     """侧边栏每一条 href 都必须是一条**真的**查询 URL
 
     这里守的是一个已经咬过人的坑：`overviewHref` 曾写成 `'/' + v + d`，
-    两段各自以 `&` 开头、谁也不写 `?`，拼出来是 `/&domain=WMS`——不是
+    两段各自以 `&` 开头、谁也不写 `?`，拼出来是 `/&scope=WMS`——不是
     查询串，是一条路径。浏览器跳过去，服务端返 404，nginx 兜底再把首页
     原样吐回来。于是点「WMS」看着毫无反应：页面纹丝不动、高亮还留在
     「全部域」、盒子一只没少，**而且一条错都不报**。
@@ -1346,17 +1346,17 @@ class TestScopeAndViewLinksAreRealQueryUrls:
     """
 
     CASES = [
-        (view, domain)
+        (view, scope_id)
         for view in ("grid", "topology")
-        for domain in ("__all__", "WMS", "")
+        for scope_id in ("__all__", "WMS", "")
     ]
 
     def test_a_scope_link_is_a_query_url_not_a_path(self):
         """href 要么正好是 '/'，要么是 '/?...'——绝不能是 '/&...'"""
-        for (view, domain), (overview, _box) in _run_scope_links(self.CASES).items():
+        for (view, scope_id), (overview, _box) in _run_scope_links(self.CASES).items():
             assert overview == "/" or overview.startswith("/?"), (
                 f"范围/视图链接拼出了路径而不是查询串：view={view!r} "
-                f"domain={domain!r} -> {overview!r}。"
+                f"scope={scope_id!r} -> {overview!r}。"
                 "少一个 '?' 的话浏览器会把它当未知路由跳走，"
                 "服务端 404、兜底再把首页吐回来——点上去看着毫无反应。"
             )
@@ -1367,16 +1367,16 @@ class TestScopeAndViewLinksAreRealQueryUrls:
         形状对了还不够：查询串里少写一个轴，页面看着也是「能点」，
         但回到总览时另一个轴已经悄悄丢了。
         """
-        for (view, domain), (overview, _box) in _run_scope_links(self.CASES).items():
+        for (view, scope_id), (overview, _box) in _run_scope_links(self.CASES).items():
             from urllib.parse import parse_qs, urlsplit
 
             parts = urlsplit(overview)
-            # keep_blank_values：domain=（未归域）取到的是空串，
+            # keep_blank_values：scope=（未归域）取到的是空串，
             # 默认的 parse_qs 会把空值整个丢掉，测试就会自己骗自己。
             q = parse_qs(parts.query, keep_blank_values=True)
 
             assert parts.path == "/", f"总览链接的路径不该变：{overview!r}"
-            assert q.get("domain", ["__all__"])[0] == domain, (
+            assert q.get("scope", ["__all__"])[0] == scope_id, (
                 f"范围没能从链接里读回来：{overview!r}"
             )
             if view == "grid":
@@ -1387,9 +1387,9 @@ class TestScopeAndViewLinksAreRealQueryUrls:
                 )
 
     def test_the_unassigned_domain_survives_the_round_trip(self):
-        """未归域（空串）必须显式写出 domain=
+        """未归域（空串）必须显式写出 scope=
 
-        URL 里「domain=」和「不写这个参数」长得一样，于是未归域和全部域
+        URL 里「scope=」和「不写这个参数」长得一样，于是未归域和全部域
         会生成同一个 href，侧边栏里两项一起亮成 active——看着像同时选中了
         两个范围。
         """
@@ -1397,21 +1397,21 @@ class TestScopeAndViewLinksAreRealQueryUrls:
         unassigned = hrefs[("grid", "")][0]
         everything = hrefs[("grid", "__all__")][0]
 
-        assert "domain=" in unassigned, f"未归域没显式写进 URL：{unassigned!r}"
+        assert "scope=" in unassigned, f"未归域没显式写进 URL：{unassigned!r}"
         assert unassigned != everything, "未归域和全部域生成了同一个 href"
 
     def test_a_box_link_keeps_the_axes_and_has_exactly_one_question_mark(self):
         """盒子链接要保住两个轴，且只能有一个 '?'"""
         from urllib.parse import parse_qs, urlsplit
 
-        for (view, domain), (_overview, box) in _run_scope_links(self.CASES).items():
+        for (view, scope_id), (_overview, box) in _run_scope_links(self.CASES).items():
             assert box.count("?") == 1, f"盒子链接里有多个 '?'：{box!r}"
 
             parts = urlsplit(box)
             q = parse_qs(parts.query, keep_blank_values=True)
             assert parts.path == "/", f"盒子链接的路径不该变：{box!r}"
             assert q.get("box", [None])[0] == "wms_ops_box", f"盒子 id 丢了：{box!r}"
-            assert q.get("domain", ["__all__"])[0] == domain, f"盒子链接丢了范围：{box!r}"
+            assert q.get("scope", ["__all__"])[0] == scope_id, f"盒子链接丢了范围：{box!r}"
             if view == "topology":
                 assert q.get("view", [None])[0] == view, f"盒子链接丢了视图：{box!r}"
 
@@ -1430,7 +1430,7 @@ class TestScopeAndViewLinksAreRealQueryUrls:
             "活儿项要带上 data-task-ref —— 没有它就没法按「哪件开着」判高亮"
         )
         ensure = _extract_js_function("ensureSidebar")
-        assert "overviewHref(_view, _domainFilter)" not in ensure, (
+        assert "overviewHref(_view, _scopeFilter)" not in ensure, (
             "ensureSidebar 不该再拿总览 href 去比侧边栏项——"
             "这个比较每轮都会抹掉高亮"
         )
@@ -1455,16 +1455,16 @@ def _js_const_array(name: str) -> str:
 
 # 两个范围的口径：一个真域（算得出环）、一个跨域（算不出）。
 # 「为什么跨域推不出环」是服务端 _layout_for 的推导结果，前端不另造判断。
-SCOPE_DOMAINS = {"": ["receipt_capture_box"], "WMS": ["wms_ops_box"]}
+SCOPE_ASSIGNMENTS = {"": ["receipt_capture_box"], "WMS": ["wms_ops_box"]}
 
 # 同一份口径的两种范围：WMS 单域画得出环，__all__ 跨域画不出。
 SCOPE_LAYOUTS = {
     "__all__": {"layout": "flat", "reason": "跨域范围推不出唯一汇点"},
-    "WMS": {"layout": "radial", "domain": "WMS", "ring": [], "reason": ""},
+    "WMS": {"layout": "radial", "scope": "WMS", "ring": [], "reason": ""},
 }
 
 
-def _run_filters(scope_layouts: dict, view: str, domain: str, task: str = "") -> str:
+def _run_filters(scope_layouts: dict, view: str, scope_id: str, task: str = "") -> str:
     """在 node 里真跑 renderFilters，返回它吐出的 HTML。
 
     用 HTML_PAGE 里的真源码，不抄一份到 Python——抄的那份和页面上的那份
@@ -1477,22 +1477,22 @@ def _run_filters(scope_layouts: dict, view: str, domain: str, task: str = "") ->
     if not node:
         pytest.skip("没有 node，跳过筛选条守卫")
 
-    data = {"scope_layouts": scope_layouts, "domains": SCOPE_DOMAINS}
+    data = {"scope_layouts": scope_layouts, "fulfillment_scopes": SCOPE_ASSIGNMENTS}
     src = "\n".join(
         [
-            _js_const("ALL_DOMAINS"),
+            _js_const("ALL_SCOPES"),
             _js_const("VIEW_GRID"),
             _js_const("VIEW_TOPOLOGY"),
-            _js_const("UNASSIGNED_DOMAIN"),
+            _js_const("UNASSIGNED_SCOPE"),
             _js_const_array("FILTER_VIEWS"),
-            _extract_js_function("domainLabel"),
+            _extract_js_function("scopeLabel"),
             _extract_js_function("esc"),
             _extract_js_function("scopeQuery"),
             _extract_js_function("overviewHref"),
             _extract_js_function("currentScopeLayout"),
             _extract_js_function("renderFilters"),
             "let _view = " + json.dumps(view) + ";",
-            "let _domainFilter = " + json.dumps(domain) + ";",
+            "let _scopeFilter = " + json.dumps(scope_id) + ";",
             # renderFilters 现在还看**选中的活儿**（选了活儿时拓扑不适用）。
             # 少了这一行，node 里就是 ReferenceError——守卫会因为一个
             # 跟被测行为无关的缺失而红，久了就没人信它了。
@@ -1518,10 +1518,10 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         # 查不出「Tab 指向了哪个视图」——那才是这里要守的东西。
         html = html_mod.unescape(_run_filters(SCOPE_LAYOUTS, "grid", "WMS"))
 
-        assert 'href="/?domain=WMS"' in html, (
+        assert 'href="/?scope=WMS"' in html, (
             f"网格 Tab 应当指向 WMS 的网格：{html}"
         )
-        assert 'href="/?domain=WMS&view=topology"' in html, (
+        assert 'href="/?scope=WMS&view=topology"' in html, (
             f"拓扑 Tab 应当指向 WMS 的拓扑：{html}"
         )
         assert "disabled" not in html, "WMS 推得出环，拓扑不该是禁用的"
@@ -1815,7 +1815,7 @@ class TestTheRenameKeepsHistoryReadable:
         assert not offenders, f"产出契约里还留着「建模」的字段：{offenders}"
 
 
-def _run_back_link(scope_layouts: dict, view: str, domain: str, is_single: bool, task: str = "") -> dict:
+def _run_back_link(scope_layouts: dict, view: str, scope_id: str, is_single: bool, task: str = "") -> dict:
     """在 node 里真跑 updateBackLink，返回退路链接的最终状态。"""
     import shutil
     import subprocess
@@ -1826,11 +1826,11 @@ def _run_back_link(scope_layouts: dict, view: str, domain: str, is_single: bool,
 
     src = "\n".join(
         [
-            _js_const("ALL_DOMAINS"),
+            _js_const("ALL_SCOPES"),
             _js_const("VIEW_GRID"),
             _js_const("VIEW_TOPOLOGY"),
-            _js_const("UNASSIGNED_DOMAIN"),
-            _extract_js_function("domainLabel"),
+            _js_const("UNASSIGNED_SCOPE"),
+            _extract_js_function("scopeLabel"),
             _extract_js_function("scopeQuery"),
             _extract_js_function("overviewHref"),
             _extract_js_function("currentScopeLayout"),
@@ -1839,7 +1839,7 @@ def _run_back_link(scope_layouts: dict, view: str, domain: str, is_single: bool,
             "const document = { getElementById: (id) =>"
             " (id === 'back-link' ? el : null) };",
             "let _view = " + json.dumps(view) + ";",
-            "let _domainFilter = " + json.dumps(domain) + ";",
+            "let _scopeFilter = " + json.dumps(scope_id) + ";",
             # renderFilters 现在还看**选中的活儿**（选了活儿时拓扑不适用）。
             # 少了这一行，node 里就是 ReferenceError——守卫会因为一个
             # 跟被测行为无关的缺失而红，久了就没人信它了。
@@ -1869,7 +1869,7 @@ class TestTheDetailPageHasAVisibleWayBack:
         """退路落点是**原来的两个轴**，不是笼统的首页"""
         got = _run_back_link(SCOPE_LAYOUTS, "topology", "WMS", True)
         assert got["hidden"] is False, f"详情页该有返回链接：{got}"
-        assert got["href"] == "/?domain=WMS&view=topology", (
+        assert got["href"] == "/?scope=WMS&view=topology", (
             f"该落回 WMS 的拓扑：{got}"
         )
         assert "WMS" in got["text"] and "拓扑" in got["text"], (
@@ -1878,13 +1878,13 @@ class TestTheDetailPageHasAVisibleWayBack:
 
     def test_the_grid_detail_page_returns_to_the_grid(self):
         got = _run_back_link(SCOPE_LAYOUTS, "grid", "WMS", True)
-        assert got["href"] == "/?domain=WMS", f"该落回 WMS 的网格：{got}"
+        assert got["href"] == "/?scope=WMS", f"该落回 WMS 的网格：{got}"
         assert "网格" in got["text"], f"标签要写「网格」：{got}"
 
     def test_the_unassigned_scope_round_trips_as_an_empty_domain(self):
-        """未归域是空串：退路必须写回 domain=，不能退回全部域"""
+        """未归域是空串：退路必须写回 scope=，不能退回全部域"""
         got = _run_back_link(SCOPE_LAYOUTS, "grid", "", True)
-        assert got["href"] == "/?domain=", f"未归域退路丢了 domain=：{got}"
+        assert got["href"] == "/?scope=", f"未归域退路丢了 scope=：{got}"
 
     def test_the_label_never_promises_a_view_that_cannot_be_drawn(self):
         """选了拓扑但推不出环时，标签不许写「拓扑」

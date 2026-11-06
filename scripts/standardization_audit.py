@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core import metrics as cm  # noqa: E402
-from domains import box_wiring  # noqa: E402
+from fulfillment_scopes import box_wiring  # noqa: E402
 from kanban.trigger import (  # noqa: E402
     BOX_REGISTRY,
     METRIC_COMPUTERS,

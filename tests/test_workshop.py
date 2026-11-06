@@ -95,13 +95,13 @@ class TestTheWorkshopRetypesNoBusinessFact:
 
         跟看板那条守卫同一条规矩：值重敲一遍 = 第二份真相。
         """
-        from domains import domains_of
+        from fulfillment_scopes import fulfillment_scopes_of
 
         facts = set()
         for box_id, (get_def, _bl) in BOX_REGISTRY.items():
             d = get_def()
             facts |= {d.display_name, d.value_stream, d.role}
-            facts |= set(domains_of(box_id))
+            facts |= set(fulfillment_scopes_of(box_id))
         facts = {f for f in facts if f}
 
         offenders = []

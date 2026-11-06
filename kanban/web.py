@@ -36,16 +36,16 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from kanban.catalog import catalog_health
 from kanban.trigger import (
-    ALL_DOMAINS_SCOPE,
+    ALL_SCOPES,
     BOX_REGISTRY,
     TriggerError,
     box_context,
-    box_domains,
+    box_fulfillment_scopes,
     box_manifest,
     box_maturity,
     box_meta,
     declared_beeline_ops,
-    domain_wiring,
+    fulfillment_scope_wiring,
     list_task_entries,
     order_boxes_by_flow,
     registered_box_ids,
@@ -181,13 +181,13 @@ def wirings_payload() -> dict[str, Any]:
     「全部域」也给一条结论：跨域**没有接线图**，附带一句能读懂的原因——
     不给的话，读者会以为「全部域」那张图缺了。
     """
-    scopes = box_domains(registered_box_ids())
+    scopes = box_fulfillment_scopes(registered_box_ids())
     return {
         "maps": {
-            domain: domain_wiring(domain).to_dict()
-            for domain in sorted(scopes)
+            scope_id: fulfillment_scope_wiring(scope_id).to_dict()
+            for scope_id in sorted(scopes)
         },
-        "scope_all": scope_wiring(ALL_DOMAINS_SCOPE).to_dict(),
+        "scope_all": scope_wiring(ALL_SCOPES).to_dict(),
     }
 
 
@@ -405,14 +405,14 @@ def dashboard_data(
         "boxes": boxes,
         "box_stats": box_stats,
         "op_trails": op_trails,
-        "domains": box_domains(all_boxes),
+        "fulfillment_scopes": box_fulfillment_scopes(all_boxes),
         # 键是**范围**，不是域：除了每个真域，还带一条「全部域」。
         # 以前只有真域，所以「全部域」在布局表里查不到，前端只能据此
         # 自行退回平铺——视图于是被域隐式决定了。视图/范围两个轴拆开后，
         # 「全部域」也得有一份诚实的布局：它推不出环，原因是跨域。
         "scope_layouts": {
             d: scope_layout(d)
-            for d in [ALL_DOMAINS_SCOPE, *box_domains(all_boxes)]
+            for d in [ALL_SCOPES, *box_fulfillment_scopes(all_boxes)]
         },
         "status_counts": status_counts,
         "acceptance_counts": acc_counts,
@@ -1680,18 +1680,18 @@ async function fetchData() {{
 
 // ===== Domain 视图切换 =====
 //
-// **域成员是服务端算好的**（box_domains 从**域声明**的成员表派生）。
+// **域成员是服务端算好的**（box_fulfillment_scopes 从**域声明**的成员表派生）。
 // 前端不再自己判断「哪只盒子算 WMS」——那种判断写在 JS 里就是第二份
 // 业务知识，改了盒子忘了改 JS，看板就会把一只盒子归错域，而且不报错。
 //
 // 空串（没声明 domain）显示成「未归域」：不假装它属于任何真域。
-const UNASSIGNED_DOMAIN = '（未归域）';
+const UNASSIGNED_SCOPE = '（未归域）';
 // 「全部域」的哨兵值。**不能用 ''**——'' 同时是「未归域」那组的 key，
 // 于是两个 chip 会一起亮成 active，看起来像「同时选中了全部域和未归域」。
-const ALL_DOMAINS = '__all__';
+const ALL_SCOPES = '__all__';
 
-function domainLabel(d) {{
-  return d === '' ? UNASSIGNED_DOMAIN : d;
+function scopeLabel(d) {{
+  return d === '' ? UNASSIGNED_SCOPE : d;
 }}
 
 // 当前范围（域）从 URL 读。以前只活在内存里，刷新一下就没了——
@@ -1700,15 +1700,18 @@ function domainLabel(d) {{
 const _params = new URLSearchParams(location.search);
 // 判的是**参数在不在**，不是取到的值真不真。
 //
-// 以前写的是 `_params.get('domain') || ALL_DOMAINS`：未归域的 domain 是
+// 以前写的是 `_params.get('domain') || ALL_SCOPES`：未归域的 domain 是
 // 空串，链接里写成 `domain=`，读回来是 `''`——而 `''` 是 falsy，于是被
 // 当成「没写这个参数」，静默退回全部域。点「未归域」看见的是全部 8 只盒，
 // 侧边栏高亮也回不到它身上，同样一条错都不报。
 //
 // 空串是一个**合法的取值**，不能和「没给」混为一谈，所以只能用 has()。
-let _domainFilter = _params.has('domain')
-  ? _params.get('domain')
-  : ALL_DOMAINS;
+let _scopeFilter = _params.has('scope')
+  ? _params.get('scope')
+  // **兼容旧链接**：以前这个参数叫 `domain`（值仍是协作边界 id，
+  // 语义没变）。只读不写——写链接一律用新的 `scope`，
+  // 于是旧链接点一下就自己升级了。
+  : (_params.has('domain') ? _params.get('domain') : ALL_SCOPES);
 
 // 视图是**独立的第二个轴**，也进 URL。以前根本没有这个概念：
 // 点域 chip 顺手就把整页换成环形，读者以为在筛选，实际在换页面，
@@ -1744,10 +1747,10 @@ let _task = _params.get('task') || '';
 // 「不写这个参数」长得一模一样，于是未归域和全部域会生成同一个 href，
 // 侧边栏里两项一起亮成 active——看着像「同时选中了两个范围」。
 // 所以这里判的是「是不是全部域这个哨兵」，而不是「域名是不是空」。
-function scopeQuery(view, domain) {{
+function scopeQuery(view, scope) {{
   const parts = [];
-  if (domain !== ALL_DOMAINS) {{
-    parts.push('domain=' + encodeURIComponent(domain));
+  if (scope !== ALL_SCOPES) {{
+    parts.push('scope=' + encodeURIComponent(scope));
   }}
   if (view && view !== VIEW_GRID) {{
     parts.push('view=' + encodeURIComponent(view));
@@ -1756,15 +1759,15 @@ function scopeQuery(view, domain) {{
 }}
 
 // 总览链接：范围和视图**都**带上。
-function overviewHref(view, domain) {{
-  const q = scopeQuery(view, domain);
+function overviewHref(view, scope) {{
+  const q = scopeQuery(view, scope);
   return q ? '/?' + q : '/';
 }}
 
 // 盒子的详情页链接。**带上当前域和视图**：点进去、再退回总览时，
 // 原来的「域 + 视图」还在。
-function boxHref(boxId, domain, view) {{
-  const q = scopeQuery(view, domain);
+function boxHref(boxId, scope, view) {{
+  const q = scopeQuery(view, scope);
   return '/?box=' + encodeURIComponent(boxId) + (q ? '&' + q : '');
 }}
 
@@ -1772,8 +1775,8 @@ function boxHref(boxId, domain, view) {{
 // 「看这件任务」= 平铺它牵过的那些盒子。拓扑画的是**域的接线**（一个环），
 // 拿它去画一件任务牵的 4 只盒子，环上就缺了好几段——那不是拓扑，
 // 是一张断了的环。选任务就换平铺，别假装。
-function taskHref(ref, domain, view) {{
-  const q = scopeQuery(VIEW_GRID, domain);
+function taskHref(ref, scope, view) {{
+  const q = scopeQuery(VIEW_GRID, scope);
   return '/?task=' + encodeURIComponent(ref) + (q ? '&' + q : '');
 }}
 
@@ -1801,7 +1804,7 @@ const FILTER_VIEWS = [
 
 function renderFilters(data) {{
   const {{ lay, canRadial }} = currentScopeLayout(data.scope_layouts);
-  const domains = data.domains || {{}};
+  const scopeMembers = data.fulfillment_scopes || {{}};
 
   let html = '<div class="filter-bar">';
 
@@ -1830,7 +1833,7 @@ function renderFilters(data) {{
     }}
     html += '<a class="seg-item' + (active ? ' active' : '') + '"'
       + ' role="tab" aria-selected="' + (active ? 'true' : 'false') + '"'
-      + ' href="' + esc(overviewHref(v, _domainFilter)) + '"'
+      + ' href="' + esc(overviewHref(v, _scopeFilter)) + '"'
       + ' title="' + esc(hint) + '">' + esc(label) + '</a>';
   }}
   html += '</div>';
@@ -1846,12 +1849,12 @@ function renderFilters(data) {{
   // 才是 tab，范围是**筛掉一部分数据**，语义上不是 tab。
   html += '<div class="filter-group"><span class="filter-label">范围</span>'
     + '<div class="seg" role="group" aria-label="范围">';
-  const scopes = [[ALL_DOMAINS, '全部域', null]];
-  for (const d of Object.keys(domains)) {{
-    scopes.push([d, domainLabel(d), (domains[d] || []).length]);
+  const scopeChips = [[ALL_SCOPES, '全部范围', null]];
+  for (const d of Object.keys(scopeMembers)) {{
+    scopeChips.push([d, scopeLabel(d), (scopeMembers[d] || []).length]);
   }}
-  for (const [key, label, count] of scopes) {{
-    const active = _domainFilter === key;
+  for (const [key, label, count] of scopeChips) {{
+    const active = _scopeFilter === key;
     html += '<a class="seg-item' + (active ? ' active' : '') + '"'
       + ' aria-current="' + (active ? 'true' : 'false') + '"'
       + ' href="' + esc(overviewHref(_view, key)) + '">' + esc(label)
@@ -1873,7 +1876,7 @@ function renderFilters(data) {{
 // 当前范围的服务端布局。推不出环时返回 null + 原因。
 function currentScopeLayout(scopeLayouts) {{
   const all = scopeLayouts || {{}};
-  const lay = all[_domainFilter] || null;
+  const lay = all[_scopeFilter] || null;
   return {{ lay: lay, canRadial: !!(lay && lay.layout === 'radial') }};
 }}
 
@@ -1889,16 +1892,22 @@ function currentScopeLayout(scopeLayouts) {{
 // **域声明**派生的，前端不自己列名单（自己列 = 第二份真相）。
 //
 // 返回 null = 不筛（全部域）。筛选是**显示**口径：顶部的验收率分母
-// 仍是全平台的（见 applyDomainFilter 那段注释）。
+// 仍是全平台的（见 applyScopeFilter 那段注释）。
 function scopeBoxIds(data) {{
-  if (_domainFilter === ALL_DOMAINS) return null;
-  const domains = (data && data.domains) || {{}};
-  return new Set(domains[_domainFilter] || []);
+  if (_scopeFilter === ALL_SCOPES) return null;
+  const scopeMembers = (data && data.fulfillment_scopes) || {{}};
+  return new Set(scopeMembers[_scopeFilter] || []);
 }}
 
-// 范围的名字（给「这一栏是哪个范围」的说明用）
-function scopeLabel() {{
-  return _domainFilter === ALL_DOMAINS ? '全部域' : domainLabel(_domainFilter);
+// **当前范围的名字**（给「这一栏是哪个范围」的说明用）
+//
+// 以前这个函数也叫 `domainLabel`，跟上面那个「id → 标签」的是**同名**
+// （一个有参一个无参）——JS 允许，但同名就是坑：
+// 改名的正则把无参版的函数体也改了，于是它调自己 → 无限递归。
+// 现在拆开：带参的 `scopeLabel(id)` 查标签，不带参的
+// `currentScopeLabel()` 回答「当前看的是哪个范围」。
+function currentScopeLabel() {{
+  return _scopeFilter === ALL_SCOPES ? '全部范围' : scopeLabel(_scopeFilter);
 }}
 
 // ===== 左栏 = 任务（任务）=====
@@ -1937,7 +1946,7 @@ function renderTaskList(data) {{
   html += '<div class="side-group-label">任务列表'
     + (boxFilter ? '<span class="side-group-sub">这只盒子参与过的</span>' : '')
     + (scope && !boxFilter
-        ? '<span class="side-group-sub">' + esc(scopeLabel()) + ' 域牵到的</span>'
+        ? '<span class="side-group-sub">' + esc(currentScopeLabel()) + ' 牵到的</span>'
         : '')
     + '</div><div class="side-list">';
   if (!tasks.length) {{
@@ -1946,8 +1955,8 @@ function renderTaskList(data) {{
         + '只有带工作项号的运行才算任务——没带工作项号的运行是'
         + '「这只盒子跑过什么」，不归成任务。</div>';
     }} else if (scope) {{
-      html += '<div class="rail-empty">' + esc(scopeLabel())
-        + ' 域里还没有带工作项号的运行记录。'
+      html += '<div class="rail-empty">' + esc(currentScopeLabel())
+        + ' 协作范围里还没有带工作项号的运行记录。'
         + '没有工作项的运行（某只盒子自己跑过什么）不进这一栏——'
         + '那是「盒子跑过什么」，不是「哪件任务」。</div>';
     }} else {{
@@ -1974,7 +1983,7 @@ function renderTaskList(data) {{
     const kindLabel = t.kind === 'ops_event' ? '运维' : (t.kind === 'requirement' ? '需求' : '');
     html += '<a class="side-item task-item' + (active ? ' active' : '') + '"'
       + ' data-task-ref="' + esc(t.ref) + '"'
-      + ' href="' + esc(taskHref(t.ref, _domainFilter, _view)) + '">'
+      + ' href="' + esc(taskHref(t.ref, _scopeFilter, _view)) + '">'
       + '<span class="side-box-dot" style="background:' + color + '"></span>'
       + '<span class="side-task-body">'
       + '<span class="side-task-label">' + esc(t.label || t.ref) + '</span>'
@@ -1994,7 +2003,7 @@ function renderTaskList(data) {{
   html += '</div>';
   // 选中的话给一条「回到全部任务」——不然读者不知道怎么取消选择。
   if (_task) {{
-    html += '<a class="side-clear" href="' + esc(overviewHref(_view, _domainFilter)) + '">'
+    html += '<a class="side-clear" href="' + esc(overviewHref(_view, _scopeFilter)) + '">'
       + '← 看全部任务</a>';
   }}
   html += '</div>';
@@ -2075,7 +2084,7 @@ function renderRail(data) {{
   // 口径跟着「选中的任务」走，说清楚这一栏给的是**哪一次**运行。
   html += '<div class="rail-sub">'
     + (scope
-      ? scopeLabel() + ' 域里，'
+      ? currentScopeLabel() + ' 协作范围里，'
       : '')
     + (_task
       ? '这件任务里每只盒子最近一次履约的 op 执行顺序'
@@ -2083,7 +2092,7 @@ function renderRail(data) {{
     + '</div>';
   if (!trails.length) {{
     html += '<div class="rail-empty">'
-      + (scope ? esc(scopeLabel()) + ' 域里' : '')
+      + (scope ? esc(currentScopeLabel()) + ' 里' : '')
       + '还没有运行记录。触发一次履约，'
       + '这里就会列出每个 op 的执行痕迹。</div>';
     return html;
@@ -2236,16 +2245,16 @@ function fitRadial() {{
 // 域切换：纯显示过滤，不改服务端口径。
 // 换域只该换「看哪些盒子」，不该悄悄换掉验收率的算法——
 // 所以顶部分母一直是服务端给的那个数。
-function applyDomainFilter() {{
-  const cards = document.querySelectorAll('[data-box-domain]');
+function applyScopeFilter() {{
+  const cards = document.querySelectorAll('[data-box-scope]');
   let shown = 0;
   for (const el of cards) {{
-    const match = _domainFilter === ALL_DOMAINS
-      || el.getAttribute('data-box-domain') === _domainFilter;
+    const match = _scopeFilter === ALL_SCOPES
+      || el.getAttribute('data-box-scope') === _scopeFilter;
     el.style.display = match ? '' : 'none';
     if (match) shown += 1;
   }}
-  const note = document.getElementById('domain-empty');
+  const note = document.getElementById('scope-empty');
   if (note) note.style.display = shown === 0 ? '' : 'none';
   // 这里原来还同步一个 `#box-count`（就是被删掉的「beeBoxes in Flight (N)」
   // 标题里的那个数）。元素没了，代码也跟着走——留着它就是一条查不到
@@ -2449,7 +2458,7 @@ function captionHtml(box, opts) {{
   const wiring = (opts && opts.wiring) ? wiringRows(box) : '';
   return `<div class="name"><span class="health-dot" style="background:${{isSkeleton ? '#cbd5e1' : healthColor}}"></span>${{meta.display_name || box.box_id}}${{maturity.badge}}<span class="bid">${{box.box_id}}</span></div>
     <div class="spec">
-      ${{row('DOMAIN', domainLabel(meta.domain || ''))}}
+      ${{row('COLLABORATION', scopeLabel(meta.fulfillment_scope || ''))}}
       ${{row('VALUE STREAM', meta.value_stream)}}
       ${{row('ROLE', meta.role)}}
       ${{runsRow}}
@@ -2703,16 +2712,16 @@ function renderCube(box) {{
   // 卡片是**真链接**而不是 div + click：这样 cmd/中键打开、复制链接、
   // 键盘 Tab 过去全都自动可用。用 click 模拟出来的「可点」卡片
   // 一旦被人用键盘试一次就露馅——它压根不是链接。
-  const domain = (box.meta || {{}}).domain || '';
-  return `<a class="box-card" href="${{boxHref(box.box_id, _domainFilter, _view)}}"
-     data-box-domain="${{esc(domain)}}">
+  const scope = (box.meta || {{}}).fulfillment_scope || '';
+  return `<a class="box-card" href="${{boxHref(box.box_id, _scopeFilter, _view)}}"
+     data-box-scope="${{esc(scope)}}">
     ${{cubeHtml(box)}}
   </a>`;
 }}
 
 // ===== 环形视图：中心 = 域内唯一汇点 =====
 //
-// **中心、环序、两类边全部来自服务端 layout**（`domain_layout` 从各盒
+// **中心、环序、两类边全部来自服务端 layout**（`fulfillment_scope_layout` 从各盒
 // 域声明的边推导）。前端一个 box_id 都不认，也不判断
 // 「哪只盒子该在中心」——那是业务事实，住在盒子里。
 //
@@ -2974,7 +2983,7 @@ function renderRadial(layout, stats) {{
   // 框 = 这个域的 Map，里面是本域的全部盒子和接线；框外的不属于这个域。
   // 标签用产品自己的名字（BeeBox Map），不自造词——
   // 「活儿」「场」这类自造词业务方看不懂，改了还得再解释一遍。
-  const fieldLabel = esc((layout.domain || '') + ' · BeeBox Map');
+  const fieldLabel = esc((layout.scope || '') + ' · BeeBox Map');
   edges.push(
     '<rect class="edge-field" x="' + (cx - fieldHalfX).toFixed(1) + '"'
     + ' y="' + (cy - fieldHalfY).toFixed(1) + '"'
@@ -3026,7 +3035,7 @@ function renderRadial(layout, stats) {{
     // 环上和圆心那张都是真链接：环形视图要回答「谁接谁」，
     // 想点开某一只看细节时不该先得切回平铺。
     return '<a class="' + cls + '" data-box="' + esc(id) + '"'
-      + ' href="' + esc(boxHref(id, _domainFilter, _view)) + '"'
+      + ' href="' + esc(boxHref(id, _scopeFilter, _view)) + '"'
       + ' style="left:' + (cx + p.x - RADIAL_CARD_W / 2).toFixed(1) + 'px;'
       + 'top:' + (cy + p.y - RADIAL_CARD_H / 2).toFixed(1) + 'px">'
       + compactCubeHtml(s)
@@ -4452,9 +4461,9 @@ function updateBackLink(scopeLayouts, isSingle) {{
   const {{ canRadial }} = currentScopeLayout(scopeLayouts);
   const effView = (_view === VIEW_TOPOLOGY && canRadial)
     ? VIEW_TOPOLOGY : VIEW_GRID;
-  const scope = _domainFilter === ALL_DOMAINS
-    ? '全部域' : domainLabel(_domainFilter);
-  el.href = overviewHref(effView, _domainFilter);
+  const scope = _scopeFilter === ALL_SCOPES
+    ? '全部范围' : scopeLabel(_scopeFilter);
+  el.href = overviewHref(effView, _scopeFilter);
   el.textContent = '← 返回 ' + scope + ' 的'
     + (effView === VIEW_TOPOLOGY ? '拓扑' : '网格');
   el.hidden = false;
@@ -4556,7 +4565,7 @@ function render(data) {{
       const shapeNote = lay.shape === 'star'
         ? `${{lay.ring.length}} 只直投汇点 · 它们之间没有交接`
         : `环上 ${{lay.ring.length}} 只 · 汇点由接线推导`;
-      html += `<div class="section"><div class="section-title">${{esc(domainLabel(lay.domain))}} 域的
+      html += `<div class="section"><div class="section-title">${{esc(scopeLabel(lay.scope))}} 协作范围的
         <span class="brand-case">BeeBox Map</span>
         （${{shapeNote}}）</div>`;
       html += renderRadial(lay, data.box_stats);
@@ -4581,7 +4590,7 @@ function render(data) {{
       // 3. 全大写 + 字距拉开的标题样式，视觉权重比下面任何一个真实信号
       //    （未实现徽章、验收率）都重。
       // 范围切换后网格变几只，Tab 的位置不变，少这一行页面反而更安静。
-      // （`id="box-count"` 随之消失，applyDomainFilter 里同步它的三行死代码
+      // （`id="box-count"` 随之消失，applyScopeFilter 里同步它的三行死代码
       //  一起删掉了——域筛选本来就不依赖那个计数。）
       //
       // **选了任务时例外**：这时这一行是唯一说明「中间摆的是哪件任务
@@ -4599,7 +4608,7 @@ function render(data) {{
         html += renderCube(b);
       }}
       html += `</div>`;
-      html += `<div class="empty" id="domain-empty" style="display:none">(该域下没有盒子)</div>`;
+      html += `<div class="empty" id="scope-empty" style="display:none">(该域下没有盒子)</div>`;
       html += `</div>`;
     }}
   }} else {{
@@ -4611,7 +4620,7 @@ function render(data) {{
   // 而看板上菜单还亮着「WMS」，看着像选了没反应。
   // 只在网格视图下过滤：环形视图的卡片本来就是按域渲染的，没有域外成员。
   if (!(_view === VIEW_TOPOLOGY && canRadial)) {{
-    applyDomainFilter();
+    applyScopeFilter();
   }}
   bindTilt();
   snapRadialEdges();

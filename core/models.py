@@ -500,7 +500,7 @@ class BeeBoxDefinition(BaseModel):
 #
 # 这部分类型住 `core/models.py`，因为它们是「盒子和域共用的公共类型」——
 # 盒子协议（`BeeBoxDefinition` / `BoxDeclaration`）和域协议
-# （`DomainDeclaration`）都要用同一批形状类（`SchemaDef` / `FieldDef`），
+# （`FulfillmentScopeDeclaration`）都要用同一批形状类（`SchemaDef` / `FieldDef`），
 # 装在一个模块里，依赖是单向的（域 → 盒子，不反向）。
 #
 # **域声明住在 `domains/<域>/`**——那才是业务事实的地方；
@@ -603,7 +603,7 @@ class Rule(BaseModel):
     exemptions: list[RuleExemption] = Field(default_factory=list, description="豁免/禁止")
 
 
-class DomainDeclaration(BaseModel):
+class FulfillmentScopeDeclaration(BaseModel):
     """一个域的声明——**盒子之间关系的唯一事实源**
 
     **成员是声明的，不是推导的**（见 `docs/domain-declaration.md` §12.1）：

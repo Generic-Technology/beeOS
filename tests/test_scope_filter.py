@@ -134,7 +134,7 @@ def _payload() -> dict:
     return {
         "box_filter": "",
         "task_filter": None,
-        "domains": {
+        "fulfillment_scopes": {
             "Learning": ["math_box"],
             "WMS": ["wms_box"],
         },
@@ -197,7 +197,7 @@ class TestTheScopeFiltersEveryPanel:
 
         这就是线上那个 bug：中间换了域，两边没换。
         """
-        out = _run("?domain=Learning", _payload())
+        out = _run("?scope=Learning", _payload())
         assert "语文练习这条" in out["tasks"], "Learning 的任务不见了"
         assert "库区管理这条" not in out["tasks"], (
             "Learning 域的任务列表里还混着 WMS 的任务——范围没传到左栏"
@@ -217,7 +217,7 @@ class TestTheScopeFiltersEveryPanel:
 
     def test_the_wms_scope_drops_the_learning_task_and_trail(self):
         """换个域也要跟着换——不是只对 Learning 生效"""
-        out = _run("?domain=WMS", _payload())
+        out = _run("?scope=WMS", _payload())
         assert "库区管理这条" in out["tasks"]
         assert "语文练习这条" not in out["tasks"]
         assert "仓储盒" in out["rail"]
@@ -230,8 +230,8 @@ class TestTheScopeFiltersEveryPanel:
         而他其实在看别的东西。
         """
         payload = _payload()
-        payload["domains"] = {"WMS": ["wms_box"]}
-        out = _run("?domain=Learning", payload)
+        payload["fulfillment_scopes"] = {"WMS": ["wms_box"]}
+        out = _run("?scope=Learning", payload)
         assert "语文练习这条" not in out["tasks"]
         assert "库区管理这条" not in out["tasks"]
         # 明说「这个域里没有」，而不是列别的东西

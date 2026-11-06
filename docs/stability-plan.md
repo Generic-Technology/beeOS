@@ -15,6 +15,6 @@
 用真实外部系统验证的项目单独记录环境和制品版本；静态体检、单元测试通过不代替真实履约。
 性能目标、可用性目标及支持规模需由实际试点负载确定，当前不宣称已达到生产 SLA。
 
-首批回归入口：`tests/test_contract_compatibility.py`、`tests/test_domain_stability.py`、
+首批回归入口：`tests/test_contract_compatibility.py`、`tests/test_fulfillment_scope_stability.py`、
 `tests/test_packaged_application.py`。安装开发依赖后执行完整测试，打包测试会在临时目录构建 wheel。
 安装验证复用测试虚拟环境中的第三方依赖；全新环境依赖安装和多平台验证属于后续发布验收。

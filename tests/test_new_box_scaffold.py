@@ -46,20 +46,20 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 def _spec(
     box_id: str = "fixture_probe_box",
     *,
-    domain: str = "FIXTURE",
+    scope: str = "FIXTURE",
     handoff_to: str = "",
     insert_after: str = "",
     sink: bool = True,
 ):
     """按脚手架的**真实入口**造一份 spec（不手搓字段）
 
-    默认是**一个新域的第一只盒子**（`--domain FIXTURE --sink`）：
+    默认是**一个新协作边界的第一只盒子**（`--scope FIXTURE --sink`）：
     这正是脚手架要支持的头号场景（接一个新域只写业务）。
     它**不改任何别的盒子** → 守卫跑起来跟「仓里原样」一样干净。
     """
     return build_spec(argparse.Namespace(
         box_id=box_id,
-        domain=domain,
+        scope=scope,
         display_name="脚手架样例盒",
         value_stream="Software Delivery",
         role="样例域的履约",
@@ -354,7 +354,7 @@ class TestTheScaffoldItself:
         一次就把 9 条真守卫跑红了。
         """
         args = argparse.Namespace(
-            box_id="wms_probe_box", domain="WMS", display_name="x",
+            box_id="wms_probe_box", scope="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
             handoff_to="", insert_after="", sink=False,
         )
@@ -367,7 +367,7 @@ class TestTheScaffoldItself:
         一条指向虚空的边不会报错，只会让场图少画一只盒子。
         """
         args = argparse.Namespace(
-            box_id="wms_probe_box", domain="WMS", display_name="x",
+            box_id="wms_probe_box", scope="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
             handoff_to="nosuch_box", insert_after="", sink=False,
         )
@@ -376,7 +376,7 @@ class TestTheScaffoldItself:
 
     def test_a_sink_and_a_handoff_to_are_mutually_exclusive(self):
         args = argparse.Namespace(
-            box_id="wms_probe_box", domain="WMS", display_name="x",
+            box_id="wms_probe_box", scope="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
             handoff_to="wms_ops_box", insert_after="", sink=True,
         )
@@ -391,7 +391,7 @@ class TestTheScaffoldItself:
         **画出来的是一张撒谎的图**，所以脚手架不产这种盒子。
         """
         args = argparse.Namespace(
-            box_id="wms_probe_box", domain="WMS", display_name="x",
+            box_id="wms_probe_box", scope="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
             handoff_to="wms_ops_box", insert_after="", sink=False,
         )
@@ -460,25 +460,25 @@ class TestANewDomainIsAFirstClassCase:
     **不是一回事**，混在一起就等于「新域永远接不进来」。
     """
 
-    def test_the_first_box_of_a_new_domain_is_allowed(self):
-        spec = _spec("qa_probe_box", domain="QA", sink=True)
-        assert spec.domain_id == "QA"
+    def test_the_first_box_of_a_new_scope_is_allowed(self):
+        spec = _spec("qa_probe_box", scope="QA", sink=True)
+        assert spec.scope_id == "QA"
         assert spec.handoff_to == []
 
-    def test_a_new_domain_box_is_not_a_wms_box(self):
+    def test_a_new_scope_box_is_not_a_wms_box(self):
         """新域的盒子不许占 `wms_` 前缀
 
         「wms_* = WMS 域」是读者判断归属的依据；
         新域的盒子抢这个前缀 = 让那条规则失效
         （`tests/test_box_naming.py` 管着这条）。
         """
-        spec = _spec("qa_probe_box", domain="QA", sink=True)
+        spec = _spec("qa_probe_box", scope="QA", sink=True)
         assert not spec.module.startswith("wms_")
 
     def test_a_broken_wiring_is_still_refused(self):
         """域还小 ≠ 什么都行：真的坏了的接线照样当场拒绝"""
         args = argparse.Namespace(
-            box_id="qa_probe_box", domain="WMS", display_name="x",
+            box_id="qa_probe_box", scope="WMS", display_name="x",
             value_stream="Software Delivery", role="r", description="d",
             handoff_to="wms_ops_box", insert_after="", sink=False,
         )
@@ -498,13 +498,13 @@ class TestTheDomainFragment:
     """
 
     def _fragment(self) -> str:
-        from scripts.new_box import _domain_fragment
+        from scripts.new_box import _scope_fragment
 
         spec = _spec(
-            "qa_probe_box", domain="WMS",
+            "qa_probe_box", scope="WMS",
             insert_after="wms_testing_box", sink=False,
         )
-        return _domain_fragment(spec)
+        return _scope_fragment(spec)
 
     def test_it_says_the_chain_edge_has_to_be_replaced(self):
         """原来那条边是**换掉**，不是再加一条
@@ -549,7 +549,7 @@ class TestTheDomainFragment:
         接线住在域声明里。盒子身上再留一份 = 两套接线并存，
         而两份接线迟早给出不同答案。
         """
-        spec = _spec("qa_probe_box", domain="QA", sink=True)
+        spec = _spec("qa_probe_box", scope="QA", sink=True)
         out = render(spec)
 
         text = out["definition.py"]
