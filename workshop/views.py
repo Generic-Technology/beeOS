@@ -35,7 +35,11 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
-from fulfillment_scopes import box_wiring, fulfillment_scopes_of
+from fulfillment_scopes import (
+    box_wiring,
+    fulfillment_scope_display_name,
+    fulfillment_scopes_of,
+)
 from kanban.catalog import catalog_inspections
 from kanban.trigger import box_metrics_readings
 from runtime.box_health import BoxHealth, inspect_box
@@ -59,7 +63,9 @@ def _box_payload(inspection, records: list[dict[str, Any]]) -> dict[str, Any]:
         "display_name": d.display_name or inspection.box_id,
         "value_stream": d.value_stream,
         "role": d.role,
-        "fulfillment_scope": box_fulfillment_scopes[0] if box_fulfillment_scopes else "",
+        "fulfillment_scope": fulfillment_scope_display_name(
+            box_fulfillment_scopes[0] if box_fulfillment_scopes else ""
+        ),
         "maturity": d.result.maturity,
         "artifact_view": d.result.view,
         "handoffs": list(wiring["handoffs"]),
@@ -190,15 +196,21 @@ _PAGE = r"""<!DOCTYPE html>
   }
   .box > .head {
     padding: 14px 18px; display: flex; align-items: center; gap: 12px;
+    /* 窄屏时标签**整块**换到下一行**，不要把一个标签里的字从中间折断
+       （"协作边界 · 学习成长" 折成两行，读起来像两个字是两个词）。 */
+    flex-wrap: wrap;
     cursor: pointer; user-select: none; background: var(--panel-2);
   }
   .box > .head:hover { background: #232833; }
-  .name { font-weight: 600; font-size: 15px; }
-  .id { color: var(--dim); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+  .name { font-weight: 600; font-size: 15px; white-space: nowrap; }
+  .id { color: var(--dim); font-size: 12px; font-family: ui-monospace, Menlo, monospace;
+        white-space: nowrap; }
   .spacer { flex: 1; }
   .tag {
     font-size: 12px; border: 1px solid var(--line); border-radius: 6px;
     padding: 1px 8px; color: var(--dim);
+    /* 标签是一块，不该从中间折断 */
+    white-space: nowrap;
   }
   .verdict { font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 6px; }
   .verdict.pass { color: var(--ok); border: 1px solid var(--ok); }
@@ -348,8 +360,13 @@ _PAGE = r"""<!DOCTYPE html>
     head.appendChild(el("span", "name", box.display_name));
     head.appendChild(el("span", "id", box.box_id));
     head.appendChild(el("span", "spacer"));
-    // 归属标签**带前缀**且去重：协作边界和价值流可能是同一个词
-    // （学习协作边界的盒子所属协作边界和价值流都叫 Learning），两个一样的裸标签看着像重复。
+    // 归属标签**带前缀**且去重：两个维度可能摆出同一个词
+    // （协作边界和价值流撞名时），两个一样的裸标签看着像重复。
+    //
+    // 协作边界摆的是**名字**（学习成长 / WMS 仓储），不是 id（Learning / WMS）——
+    // id 摆出来读者分不出它是协作边界还是价值流
+    // （学习协作边界那 4 只盒子的 value_stream 也正好叫 Learning）。
+    // 看板那边也是这么摆的：同一个事实，两个界面不能两种说法。
     var seen = {};
     [["价值流", box.value_stream], ["协作边界", box.fulfillment_scope]].forEach(function (pair) {
       var value = pair[1];

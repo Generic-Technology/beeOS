@@ -431,7 +431,7 @@ DOMAIN = FulfillmentScopeDeclaration(
 | `field_map_of_scope()` | `wiring_of_scope()` |
 | `BeeBoxMap` | `WiringView` |
 | `PlacementView` | `BoxFacts`（盒子归属搬走后，它抄的就是「这只盒子的事实」）|
-| 前端 label `... · BeeBox Map` | **不改**（见下）|
+| 前端 label `<范围> · BeeBox Map` | `BeeBox Map`（**2026-11-07**：去掉范围名，产品名不动，见下）|
 | 协作边界声明（新） | **协作边界**（Domain）——唯一的事实源 |
 
 > **⚠️ 前端 label 这一行当初写错了（2026-11-05 实现时发现）**：
@@ -446,6 +446,24 @@ DOMAIN = FulfillmentScopeDeclaration(
 > **教训**：改名的清单不能照着「新概念更准确」一路推——
 > 每一项都得问「**有没有别处已经拍过板的约束**」。
 > 名字准不准是次要的，**跟已拍板的东西打架是主要的**。
+
+> **⚠️ 这个 label 后来又改了一次（2026-11-07）**——
+> 改的**不是产品名**，是**范围名**：
+> `<范围> · BeeBox Map` → `BeeBox Map`。
+>
+> 理由：框上方那行标题已经写了「<范围> 协作范围的 BeeBox Map」，
+> 框角上再来一遍是**同一句话说两遍**，而且框上那份**更弱**
+> （少了「协作范围」这个限定，读起来像产品名的一部分）。
+> 框的职责只是标出「Map 到哪儿为止」，**不负责说它属于谁**。
+>
+> **它没有推翻上面那条决定**：产品名 `BeeBox Map` 一个字没动，
+> 「别用自造词『场』」那条守卫也还在守。
+>
+> **顺带修的**：协作边界在界面上**一律摆 `display_name`**（`学习成长` / `WMS 仓储`），
+> 不再摆 id（`Learning` / `WMS`）——
+> id 是机器用的（URL / API / 接线），摆出来读者分不出它是协作边界还是价值流
+> （学习协作边界那 4 只盒子的 `value_stream` 也正好叫 `Learning`）。
+> 以前 `display_name` **声明了却没人读**，等于白写。
 
 **改名牵涉的文件**（都已改完）：
 `kanban/trigger.py` / `kanban/web.py` / `scripts/new_box.py` /
@@ -974,7 +992,7 @@ Edge(from_box="receipt_capture", to_box="wms_requirement",
 | `PlacementView` | `BoxFacts` | 一只盒子的事实（协作边界装配器与接线投影共用一份）|
 | `boxes/wms_design/domain.py` | 视情况 → `fulfillment_scopes/<wms>/<vocabulary>.py` | DDD 领域本体（**升格与否取决于是否被多只盒子需要**）|
 | `domain_kind` | 保留 | DDD 构件类型（`entity`/`domain_service`/…）|
-| 前端 `· BeeBox Map` | `· 场图` | 画出来的那张照片 |
+| 前端 `<范围> · BeeBox Map` | `BeeBox Map`（产品名不动，只去掉范围名）| 画出来的那张照片 |
 
 ---
 
@@ -1219,6 +1237,22 @@ fulfillment_scopes/wms/
     - **钩子两条**：① 协议里 `id` 已在，将来加 `version` **不改形状**；
       ② 记录履约时**把当时的协作边界 id 记进去**（一行），将来能按协作边界聚合
     - **不建完整发布系统**
+17. **（新增，2026-11-07）协作边界的 `id` 该是什么？** —— **待拍板**
+    - 现在两个 id 用的是**业务领域名**：`WMS` / `Learning`。
+    - 而 `value_stream` 是**另一个维度**（`Software Delivery` / `Learning`）——
+      **不是重复事实，不该合并**，但命名撞车造成展示噪音。
+    - Learning 这一组尤其糟：协作边界 id 和它 4 只盒子的 `value_stream`
+      **都叫 `Learning`**——同一个词在同一页上指两件事。
+    - 2026-11-07 先做的是**绕开它**：界面上摆 `display_name`
+      （`学习成长` / `WMS 仓储`），id 只留在 URL / API / 接线里。
+      **这不解决 id 本身该叫什么**，只是让它不再上屏。
+    - 两个选项：
+      - (a) **改成协作目的**（`Software Delivery` / `Learning`）——
+        id 说的是「这组盒子为什么在一起」
+      - (b) **保留业务领域名**（`WMS` / `Learning`）——
+        id 说的是「这是哪片业务」
+    - 连带：id 进了 URL 和落库记录，**改了就是一次数据迁移**——
+      所以这件事**越早拍板越便宜**。
 
 ---
 

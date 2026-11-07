@@ -42,7 +42,13 @@ import pytest
 from core.fulfillment_scope import assemble_fulfillment_scope
 from core.models import EdgeKind, RuleKind
 from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY, STANDALONE_BOXES
-from kanban.trigger import BOX_REGISTRY, box_facts, fulfillment_scope_assemblies
+from kanban.trigger import (
+    BOX_REGISTRY,
+    box_facts,
+    fulfillment_scope_assemblies,
+    fulfillment_scope_names,
+)
+from runtime.store import TaskRunStore
 
 
 #: 退休的接线字段名——**不许再定义**
@@ -318,3 +324,52 @@ class TestTheEdgesSayWhatTheyAre:
                         f"协作边界 {declaration.id!r} 的交接边 "
                         f"{edge.from_box!r} → {edge.to_box!r} 没有通道"
                     )
+
+
+# ============================================================
+# 6. 名字得被人读（display_name 不是摆设）
+# ============================================================
+
+
+class TestTheScopeNameIsCarriedToTheScreen:
+    """协作边界声明了 `display_name`，就得**真的被带出去**
+
+    「声明了却没人读」是这类声明最常见的死法：
+    协作边界明明写了 `display_name="学习成长"`，接口一处都不带，
+    界面上一处都不用，摆的还是 id `Learning`——于是：
+
+    - 读者分不出 `Learning` 是协作边界还是价值流
+      （学习协作边界那 4 只盒子的 `value_stream` 也正好叫 `Learning`）；
+    - 声明里的名字成了**第二份没人核对的事实**：改了声明，
+      界面上一个字都不动，也没有任何东西会报错。
+    """
+
+    def test_every_scope_declares_a_name(self):
+        """协作边界得有个给人看的名字——没名字就只剩 id 了"""
+        for scope_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
+            assert declaration.display_name, (
+                f"协作边界 {scope_id!r} 没声明 display_name——"
+                f"界面上只能摆 id，读者认不出它是哪个边界"
+            )
+
+    def test_the_names_are_carried_out(self):
+        """名字得被带出去（id → display_name）"""
+        names = fulfillment_scope_names()
+        for scope_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items():
+            assert names.get(scope_id) == declaration.display_name, (
+                f"协作边界 {scope_id!r} 的名字没被带上："
+                f"声明的是 {declaration.display_name!r}，"
+                f"带上的是 {names.get(scope_id)!r}"
+            )
+
+    def test_the_payload_carries_the_names(self, tmp_path):
+        """接口得把名字一起给出去——不给，前端只能摆 id"""
+        from kanban.web import dashboard_data
+
+        data = dashboard_data(TaskRunStore(path=tmp_path / "runs.jsonl"))
+        names = data.get("fulfillment_scope_names")
+        assert names, (
+            "接口没带协作边界的名字（fulfillment_scope_names）——"
+            "前端拿不到就只能摆 id"
+        )
+        assert names == fulfillment_scope_names()

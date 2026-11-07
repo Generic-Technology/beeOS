@@ -126,6 +126,10 @@ class TestDashboardData:
             "boxes",
             "box_stats",
             "fulfillment_scopes",
+            # fulfillment_scope_names：协作边界**给人看的名字**（id → display_name）。
+            # id 是机器用的，界面上摆的是名字——`Learning` 摆出来读者分不出
+            # 是协作边界还是价值流（学习那 4 只盒子的 value_stream 也叫 Learning）。
+            "fulfillment_scope_names",
             # scope_layouts 不是 fulfillment_scope_layouts：键是**范围**，除了每个协作边界
             # 还带一条「全部范围」。以前只有真协作边界，「全部范围」查不到布局，
             # 视图于是被协作边界隐式决定了。
@@ -2264,4 +2268,65 @@ class TestTheHeaderStaysAndTheTrailPanelSitsOnTheRight:
         )
         assert "scaler.style.width = (W * k) + 'px'" in html, (
             "收窄层的布局盒必须跟着缩放走（否则宿主按原宽度裁切）"
+        )
+
+
+class TestTheScopeNameIsShownNotTheId:
+    """协作边界摆到界面上得是**名字**，不是 id
+
+    id 是机器用的（URL / API / 接线）；协作边界声明里那个
+    `display_name`（「学习成长」/「WMS 仓储」）才是给人看的。
+
+    摆 id 有两个毛病：
+
+    - `Learning` 读起来分不出是协作边界还是价值流
+      （学习协作边界那 4 只盒子的 `value_stream` 也正好叫 `Learning`）；
+    - 声明里的名字就成了**第二份没人核对的事实**——
+      改了声明，界面上一个字都不动，也没有任何东西会报错。
+    """
+
+    def test_the_label_function_prefers_the_name(self):
+        """真跑前端那一份 scopeLabel——不抄一份逻辑到 Python 里再测
+
+        抄的那份和页面上的那份是两份代码：改了页面上的那份，测试照样绿。
+        """
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("没有 node，跳过界面文案守卫")
+
+        src = "\n".join(
+            [
+                "const UNASSIGNED_SCOPE = '（未归范围）';",
+                "let _scopeNames = {Learning: '学习成长', WMS: 'WMS 仓储'};",
+                _extract_js_function("scopeLabel"),
+                "console.log(JSON.stringify(["
+                "scopeLabel('Learning'), scopeLabel('WMS'), "
+                "scopeLabel(''), scopeLabel('__all__')]));",
+            ]
+        )
+        proc = subprocess.run(
+            [node, "-e", src], capture_output=True, text=True, timeout=30
+        )
+        assert proc.returncode == 0, f"node 跑挂了：{proc.stderr}"
+        out = json.loads(proc.stdout)
+        assert out[0] == "学习成长", (
+            f"界面上摆的还是 id，不是协作边界的名字（拿到 {out[0]!r}）"
+        )
+        assert out[1] == "WMS 仓储", (
+            f"界面上摆的还是 id，不是协作边界的名字（拿到 {out[1]!r}）"
+        )
+        assert out[2] == "（未归范围）", "没归范围的盒子该显示「（未归范围）」"
+        assert out[3] == "__all__", "没有名字的 id 该原样退回，不该变空白"
+
+    def test_the_name_table_is_filled_from_the_payload(self):
+        """名字表得来自**接口**——前端自己存一份就是第二份事实，迟早漂"""
+        assert "fulfillment_scope_names" in HTML_PAGE, (
+            "前端没读接口给的协作边界名字——它要么自己存一份（会漂），"
+            "要么根本没接"
+        )
+        assert "_scopeNames = (data && data.fulfillment_scope_names)" in HTML_PAGE, (
+            "名字表没从接口数据里刷新——服务端改了名字，前端还摆旧的"
         )

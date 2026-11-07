@@ -78,6 +78,7 @@ from fulfillment_scopes import (
     FULFILLMENT_SCOPE_REGISTRY,
     STANDALONE_BOXES,
     box_wiring,
+    fulfillment_scope_display_name,
     fulfillment_scopes_of,
 )
 from core.beeline_models import Beeline
@@ -304,6 +305,30 @@ def _all_domain_members() -> set[str]:
     for declaration in FULFILLMENT_SCOPE_REGISTRY.values():
         out.update(declaration.boxes)
     return out
+
+
+def fulfillment_scope_names() -> dict[str, str]:
+    """协作边界 id → **给人看的名字**（声明里的 `display_name`）
+
+    id 是机器用的（URL、API、接线），名字是给人看的。界面上摆 id 有两个毛病：
+
+    1. `Learning` / `WMS` 看不出它是**协作边界**还是别的东西——
+       学习协作边界那 4 只盒子的 `value_stream` 也正好叫 `Learning`，
+       同一个词在同一页上指两件事；
+    2. 协作边界自己已经声明了 `display_name`（「学习成长」/「WMS 仓储」），
+       **声明了却没人读**——等于白写。
+
+    所以接口把名字一起给出去：前端摆名字，id 只留在 URL 和接线里。
+    没有名字的（`display_name` 空）不进来——前端会退回 id，不会显示空白。
+
+    名字怎么来的只有一处说了算：`fulfillment_scopes` 里的
+    `fulfillment_scope_display_name`（声明层）。这里只是把它摊平成一张表。
+    """
+    return {
+        scope_id: fulfillment_scope_display_name(scope_id)
+        for scope_id, declaration in FULFILLMENT_SCOPE_REGISTRY.items()
+        if declaration.display_name
+    }
 
 
 def fulfillment_scope_layout(fulfillment_scope: str) -> dict[str, Any]:

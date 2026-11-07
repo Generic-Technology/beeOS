@@ -450,11 +450,21 @@ def test_the_boundary_is_labelled_with_the_products_own_name():
 
     「活儿」「场」这类自造词，业务方看不懂，还得再解释一遍；
     而产品名（BeeBox）本来就在标题里出现过，是现成的词。
+
+    **标签里不该再写范围名**：框上方那行标题已经说了
+    「<范围> 协作范围的 BeeBox Map」，框角上再来一遍是同一句话说两遍，
+    而且框上那份更弱——少了「协作范围」这个限定，
+    「Learning · BeeBox Map」读起来像产品名的一部分。
     """
     import kanban.web as W
 
     page = W.HTML_PAGE
-    assert "' · BeeBox Map'" in page, (
-        "边界的标签应该写「<范围> · BeeBox Map」"
+    label_lines = [ln for ln in page.splitlines() if "const fieldLabel" in ln]
+    assert label_lines, "边界标签那一行不见了——框角上的字是怎么来的？"
+    label = label_lines[0]
+    assert "BeeBox Map" in label, "边界的标签应该用产品自己的名字"
+    assert "scope" not in label, (
+        "边界的标签不该再写范围名——框上方标题已经写了"
+        "「<范围> 协作范围的 BeeBox Map」，框角再说一遍是同一句话说两遍"
     )
     assert "' · 场'" not in page, "别再用自造的词「场」当标签"

@@ -45,6 +45,7 @@ from kanban.trigger import (
     box_maturity,
     box_meta,
     declared_beeline_ops,
+    fulfillment_scope_names,
     fulfillment_scope_wiring,
     list_task_entries,
     order_boxes_by_flow,
@@ -406,6 +407,11 @@ def dashboard_data(
         "box_stats": box_stats,
         "op_trails": op_trails,
         "fulfillment_scopes": box_fulfillment_scopes(all_boxes),
+        # 协作边界**给人看的名字**（id → display_name）。
+        # id 是机器用的（URL、API、接线），界面上摆的是名字——
+        # `Learning` 这样的 id 摆出来，读者分不出它是协作边界还是价值流
+        # （学习协作边界那 4 只盒子的 value_stream 也正好叫 Learning）。
+        "fulfillment_scope_names": fulfillment_scope_names(),
         # 键是**范围**，不是协作边界：除了每个真协作边界，还带一条「全部范围」。
         # 以前只有真协作边界，所以「全部范围」在布局表里查不到，前端只能据此
         # 自行退回平铺——视图于是被协作边界隐式决定了。视图/范围两个轴拆开后，
@@ -1690,8 +1696,21 @@ const UNASSIGNED_SCOPE = '（未归范围）';
 // 于是两个 chip 会一起亮成 active，看起来像「同时选中了全部范围和未归范围」。
 const ALL_SCOPES = '__all__';
 
+// 协作边界**给人看的名字**（id → display_name），服务端算好放进 /api/data。
+// 界面上摆名字，id 只留在 URL / API / 接线里——
+// `Learning` 这样的 id 摆出来，读者分不出它是协作边界还是价值流
+// （学习协作边界那 4 只盒子的 value_stream 也正好叫 Learning）。
+//
+// 拿不到名字就退回 id：宁可显示 id，也不要显示空白。
+let _scopeNames = {{}};
+
 function scopeLabel(d) {{
-  return d === '' ? UNASSIGNED_SCOPE : d;
+  if (d === '') return UNASSIGNED_SCOPE;
+  // `typeof` 是为「把本函数抠到 node 里单独跑」的场合准备的（测试就这么干的）——
+  // 那一段没有这个全局变量，直接读会 ReferenceError，
+  // 守卫就会因为一个跟被测行为无关的缺失而红。
+  const names = typeof _scopeNames === 'undefined' ? null : _scopeNames;
+  return (names && names[d]) || d;
 }}
 
 // 当前范围（协作边界）从 URL 读。以前只活在内存里，刷新一下就没了——
@@ -2983,7 +3002,12 @@ function renderRadial(layout, stats) {{
   // 框 = 这个协作边界的 Map，里面是本边界的全部盒子和接线；框外的不属于这个协作边界。
   // 标签用产品自己的名字（BeeBox Map），不自造词——
   // 「活儿」「场」这类自造词业务方看不懂，改了还得再解释一遍。
-  const fieldLabel = esc((layout.scope || '') + ' · BeeBox Map');
+  //
+  // **标签只写产品名，不写范围名**：框上方那行标题已经说了
+  // 「<范围> 协作范围的 BeeBox Map」，框角上再来一遍是同一句话说两遍，
+  // 而且框上那份**更弱**（少了「协作范围」这个限定，读起来像产品名的一部分）。
+  // 框的职责只是标出「Map 到哪儿为止」，不负责说它属于谁。
+  const fieldLabel = 'BeeBox Map';
   edges.push(
     '<rect class="edge-field" x="' + (cx - fieldHalfX).toFixed(1) + '"'
     + ' y="' + (cy - fieldHalfY).toFixed(1) + '"'
@@ -4471,6 +4495,9 @@ function updateBackLink(scopeLayouts, isSingle) {{
 
 function render(data) {{
   _lastData = data;
+  // 协作边界的**名字**（id → display_name）在每次渲染前刷新：
+  // 服务端是唯一事实源，前端不自己存一份（存了就会漂）。
+  _scopeNames = (data && data.fulfillment_scope_names) || {{}};
   // **选中的任务必须服务端也认**。
   // URL 里手塞一个跟当前盒子无关的 task 参数时，服务端会把它当没选
   // （task_filter=null）——前端要是还留着 _task，左栏高亮、右栏标题

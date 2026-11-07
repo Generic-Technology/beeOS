@@ -308,3 +308,45 @@ class TestHealthEndpoints:
             assert exc.code == 404
         else:
             pytest.fail("工作台居然能 POST——第一版是只读的")
+
+
+# ============================================================
+# 4. 协作边界摆的是名字，不是 id
+# ============================================================
+
+
+class TestTheWorkshopShowsTheScopeName:
+    """工作台上的协作边界得是**名字**，不是 id
+
+    同一个事实，看板和工作台不能两种说法：
+    看板摆「学习成长」、工作台摆「Learning」，读者会以为是两回事。
+
+    id 是机器用的（URL / API / 接线）；摆到界面上的是声明里的
+    `display_name`——`Learning` 这样的 id 摆出来，读者分不出它是
+    协作边界还是价值流（学习协作边界那 4 只盒子的 `value_stream`
+    也正好叫 `Learning`）。
+    """
+
+    def test_the_scope_is_shown_by_name_not_by_id(self):
+        from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
+        from workshop.views import workshop_payload
+
+        names = {
+            d.display_name
+            for d in FULFILLMENT_SCOPE_REGISTRY.values()
+            if d.display_name
+        }
+        ids = set(FULFILLMENT_SCOPE_REGISTRY)
+
+        payload = workshop_payload()
+        assert payload["boxes"], "工作台一只盒子都没有——那这条守卫是空的"
+        for box in payload["boxes"]:
+            shown = box["fulfillment_scope"]
+            assert shown not in ids, (
+                f"{box['box_id']} 摆的是协作边界的 **id**（{shown!r}）——"
+                f"界面上该摆名字（{sorted(names)}）"
+            )
+            assert shown == "" or shown in names, (
+                f"{box['box_id']} 摆的 {shown!r} 不是任何协作边界声明的名字——"
+                f"该是 {sorted(names)} 里的一个，或者空（没归范围）"
+            )

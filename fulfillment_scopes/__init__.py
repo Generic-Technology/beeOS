@@ -52,6 +52,26 @@ def fulfillment_scope_ids() -> tuple[str, ...]:
     return tuple(FULFILLMENT_SCOPE_REGISTRY)
 
 
+def fulfillment_scope_display_name(scope_id: str) -> str:
+    """协作边界 id → **给人看的名字**（声明里的 `display_name`）
+
+    界面上摆的是名字，不是 id：
+
+    - id 是机器用的（URL / API / 接线）；
+    - `Learning` / `WMS` 这样的 id 摆出来，读者分不出它是**协作边界**
+      还是别的东西——学习协作边界那 4 只盒子的 `value_stream` 也正好叫
+      `Learning`，同一个词在同一页上指两件事；
+    - 协作边界自己已经声明了 `display_name`（「学习成长」/「WMS 仓储」），
+      **声明了却没人读**等于白写。
+
+    没有声明名字的退回 id——宁可显示 id，也不要显示空白。
+    """
+    declaration = FULFILLMENT_SCOPE_REGISTRY.get(scope_id)
+    if declaration is None or not declaration.display_name:
+        return scope_id
+    return declaration.display_name
+
+
 def fulfillment_scopes_of(box_id: str) -> list[str]:
     """这只盒子在哪些边界里
 
@@ -150,6 +170,7 @@ __all__ = [
     "STANDALONE_BOXES",
     "get_fulfillment_scope",
     "fulfillment_scope_ids",
+    "fulfillment_scope_display_name",
     "handoff_payload",
     "box_wiring",
     "fulfillment_scopes_of",
