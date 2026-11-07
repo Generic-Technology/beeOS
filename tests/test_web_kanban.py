@@ -1128,7 +1128,7 @@ class TestTheFlatGridStaysScannable:
     这条守卫守的是一次真实的排版修复。原来 `.cube-caption .spec` 是
     `display: inline-block`：宽度由**该卡片自己最长的一行**决定，8 张卡片
     就有 8 个不同宽度，再被 `text-align: center` 各自居中——
-    DOMAIN / VALUE STREAM / ROLE 三行的左边缘全部错开，整片网格读起来像散沙。
+    协作边界 / 价值流 / 角色 三行的左边缘全部错开，整片网格读起来像散沙。
 
     危险的是它不报错、不空白、不缺内容，只是「不好读」。所以必须钉住。
 
@@ -2330,3 +2330,35 @@ class TestTheScopeNameIsShownNotTheId:
         assert "_scopeNames = (data && data.fulfillment_scope_names)" in HTML_PAGE, (
             "名字表没从接口数据里刷新——服务端改了名字，前端还摆旧的"
         )
+
+
+class TestTheSpecRowNamesTheDimensionsInChinese:
+    """门牌那一行的三个维度键得是**概念自己的中文名**
+
+    以前写的是 `COLLABORATION` / `VALUE STREAM` / `ROLE`，两个毛病：
+
+    1. `COLLABORATION` **只说了「协作」，丢了「边界」**——
+       而「边界」正是关键：它说的是这组盒子在哪一段协作、到哪儿为止。
+       丢掉它，读者看到的是一个**没有范围的词**
+       （真被问过「COLLABORATION 啥意思？」）。
+    2. **同一行里中英混排**：这三个键是英文，
+       紧跟着的「状态」「接线」是中文，一行之内换了语言。
+
+    **不能改叫 `SCOPE`**：看板里 `scope` 已经指「当前查看的范围」
+    （URL `?scope=`），那是三层命名里的第二层——协作边界不能抢它。
+    """
+
+    def test_the_dimension_keys_are_the_chinese_concept_names(self):
+        """抠出真源码再抠键名——抄一份逻辑到 Python 里再测，改了页面测试照样绿"""
+        fn = _extract_js_function("captionHtml")
+        keys = re.findall(r"row\('([^']+)'", fn)
+        assert keys, f"captionHtml 里一个 row(...) 都没有——键名抠法变了？{keys}"
+        for want in ("协作边界", "价值流", "角色"):
+            assert want in keys, (
+                f"门牌上没有「{want}」这一行——键名现在是 {keys}"
+            )
+        for bad in ("COLLABORATION", "VALUE STREAM", "ROLE"):
+            assert bad not in keys, (
+                f"门牌上还在用英文键 {bad!r}——"
+                f"读者认不出它是哪个维度（现在的键：{keys}）"
+            )

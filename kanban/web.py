@@ -958,15 +958,15 @@ HTML_PAGE = f"""<!DOCTYPE html>
   }}
   /* 规格区**占满整卡宽**，不能是 inline-block。
      inline-block 的宽度由该卡片最长的一行决定，8 张卡片就得到 8 个不同宽度，
-     再被 text-align:center 各自居中——DOMAIN / VALUE STREAM / ROLE 三行的
+     再被 text-align:center 各自居中——协作边界 / 价值流 / 角色 三行的
      左边缘全部错开，整片网格读起来像散沙。占满整卡宽之后，.k 的定宽右对齐
      让每一行的分界线落在同一个 x 上，纵向能当表扫。 */
   .cube-caption .spec {{ display: block; width: 100%; margin-top: 8px; }}
   .spec-row {{ display: flex; font-size: 10px; line-height: 1.8; }}
   /* 键列定宽 104px，标签**左对齐**。
      早先这里是右对齐（33a29c4 为了让两列的分界线落在同一个 x 上）。
-     改成左对齐后，两列各自有一条齐整的左边缘：8 张卡片的 DOMAIN / VALUE
-     STREAM / ROLE / RUNS / ACCEPTANCE 全部从同一个 x 起步，横着扫过去也
+     改成左对齐后，两列各自有一条齐整的左边缘：8 张卡片的 协作边界 / 价值流 /
+     角色 / RUNS / ACCEPTANCE 全部从同一个 x 起步，横着扫过去也
      对得上——纵向当表扫的能力没有丢，反而多了一条对齐线。 */
   .spec-row .k {{
     width: 104px; text-align: left; color: #94a3b8;
@@ -2475,11 +2475,28 @@ function captionHtml(box, opts) {{
   // 接线那一行**只在单盒门牌上**给：总览的卡片挤在一张环里，
   // 接线由画布上的线说，不该再在每张卡上抄一遍。
   const wiring = (opts && opts.wiring) ? wiringRows(box) : '';
+  // 规格区的前三行是**这只盒子属于哪个维度**——读者第一眼要认的就是它们，
+  // 所以**用概念自己的中文名**，不摆英文。
+  //
+  // 以前写 `COLLABORATION` / `VALUE STREAM` / `ROLE`，两个毛病：
+  // 1. `COLLABORATION` **只说了「协作」，丢了「边界」**——
+  //    而「边界」正是关键：它说的是这组盒子在哪一段协作、到哪儿为止。
+  //    丢掉它，读者看到的就是一个没有范围的词（读的人直接卡住：
+  //    「COLLABORATION 啥意思？」）；
+  // 2. **同一行里语言是混的**：这三个键是英文，
+  //    紧跟着的「状态」「接线」是中文，一行之内换了语言。
+  //
+  // **不能改叫 `SCOPE`**：看板里 `scope` 已经指「当前查看的范围」
+  // （URL `?scope=`），那是三层命名里的第二层——协作边界不能抢它。
+  //
+  // `RUNS` / `ACCEPTANCE` 保持英文：它们是**度量**不是维度，
+  // 而且紧凑卡（`RUNS 8 · ACCEPTANCE 100.0%`）和工作台用的是同一对词，
+  // 改一边就变成两套说法。
   return `<div class="name"><span class="health-dot" style="background:${{isSkeleton ? '#cbd5e1' : healthColor}}"></span>${{meta.display_name || box.box_id}}${{maturity.badge}}<span class="bid">${{box.box_id}}</span></div>
     <div class="spec">
-      ${{row('COLLABORATION', scopeLabel(meta.fulfillment_scope || ''))}}
-      ${{row('VALUE STREAM', meta.value_stream)}}
-      ${{row('ROLE', meta.role)}}
+      ${{row('协作边界', scopeLabel(meta.fulfillment_scope || ''))}}
+      ${{row('价值流', meta.value_stream)}}
+      ${{row('角色', meta.role)}}
       ${{runsRow}}
       ${{accRow}}
       <div class="spec-row"><span class="k">状态</span><span class="v">${{boxStatePill(box)}}</span></div>
@@ -4612,7 +4629,7 @@ function render(data) {{
       // 1. 那个 N 是 `data.box_stats.length`，**整页渲染出来**——侧边栏「盒子」
       //    一栏列出同样的清单、逐只带名字，数量一眼就有，这个标题是第三遍重复；
       // 2. 它还多带一句「beeBoxes in Flight」——把每张卡上已经写着的
-      //    DOMAIN / VALUE STREAM / ROLE 重新概括一遍，等于替读者先总结一遍
+      //    协作边界 / 价值流 / 角色 重新概括一遍，等于替读者先总结一遍
       //    自己马上要读的东西；
       // 3. 全大写 + 字距拉开的标题样式，视觉权重比下面任何一个真实信号
       //    （未实现徽章、验收率）都重。
