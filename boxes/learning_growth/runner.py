@@ -1,7 +1,7 @@
 """boxes.learning_growth.runner - 成长记录盒的 operation 实现
 
 op 链：
-  1. `growth_intake`      接住上游那条学习事件 → 这一跳要做什么
+  1. `growth_intake`      接住上游那条学习记录 → 这一跳要做什么
   2. `growth_work`        核对这条记录 → 真的看到了什么
   3. `growth_packager`    装配成档案里的一条
 
@@ -48,7 +48,7 @@ REQUIRED_FIELDS = (
 
 
 def growth_intake_handler(input_data: dict[str, Any]) -> dict[str, Any]:
-    """op 1：接住上游那条学习事件，说清这一跳要做什么"""
+    """op 1：接住上游那条学习记录，说清这一跳要做什么"""
     result = input_data.get("subject_result")
     if not isinstance(result, dict) or not result:
         raise ValueError(
@@ -59,7 +59,7 @@ def growth_intake_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     missing = [f for f in REQUIRED_FIELDS if result.get(f) in (None, "")]
     if missing:
         raise ValueError(
-            f"上游那条学习事件缺字段：{missing}——缺字段的记录不入档，"
+            f"上游那条学习记录缺字段：{missing}——缺字段的记录不入档，"
             "补齐了再投"
         )
 

@@ -1,6 +1,6 @@
 # 数学盒
 
-把一次数学练习记成一条带出处的学习事件
+把一次数学练习记成一条带出处的学习记录
 
 | | |
 |---|---|
@@ -32,7 +32,7 @@
 
 ## 它吐出什么
 
-一条**带出处**的学习事件：`record_id` / `subject` / `activity` /
+一条**带出处**的学习记录：`record_id` / `subject` / `activity` /
 `observed_at` / `mastery` / `evidence` / `source_kind` / `detail` / `notes`，
 外加一个 `ratio_exact`（装配跳复算过得分率）。
 

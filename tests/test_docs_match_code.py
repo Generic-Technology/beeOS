@@ -2,7 +2,8 @@
 
 文档落后是必然的：代码在演进，文档靠人记。除非有东西盯着。
 
-这条守卫盯八件**结构事实**（不盯散文措辞——措辞会漂，事实不会）：
+这条守卫盯九件**结构事实**（不盯散文措辞——措辞会漂，事实不会；
+唯一的例外是第 9 条：**已经退休的说法不许回来**）：
 
 1. **路径存在性**——文档里提到的仓库路径（``boxes/...`` / ``runtime/...`` 等）必须真实存在
 2. **导入可解析**——文档里的 ``from boxes.x import y`` 必须真的能 import，且名字存在
@@ -13,6 +14,7 @@
 7. **目录清单一致**——根 README 列的 ``core/`` ``runtime/`` ``scripts/`` ``docs/``
    必须等于实际目录内容：多一个漏一个都红
 8. **盒子 README 的规模数字**——「N 跳 / N ops / N 个 schema」也必须等于实际
+9. **退休的说法不得复活**——中文词没有「定义」可判，判据是「不许再出现」
 
 第 5 条是从真实事故来的：``boxes/wms_design/README.md`` 写着「5 项机械 acceptance」，
 实际是 8 条；写着「3 exception rules」，实际是 4 条。数字对不上，读者照着文档验收就会漏。
@@ -112,6 +114,37 @@ RETIRED_NAMES = (
     "test_domain_declaration",
     "test_domain_stability",
 )
+
+#: **退休的散文词**（2026-11-07：学习事件 → 学习记录）
+#:
+#: 上面那套退休名判据是「不许再**定义**」——变量 / 函数 / 类 / 参数 / 声明 id。
+#: **中文词没有「定义」这回事**：它是散文里的说法，
+#: 于是判据只能换成「不许再**出现**」。
+#:
+#: ## 为什么这个词值得退休
+#:
+#: 同一个东西在仓库里有过**两个名字**：三只学科盒说「学习事件」，
+#: 成长盒早就说「学习记录」。两套说法并存，
+#: 读者得自己猜「这两个说的是不是同一件事」——而这里说的正是**追溯**这件事。
+#:
+#: ## 为什么新词是「学习记录」，不是「学习日记」
+#:
+#: - **「记录」是这盒真的会做的事**：产出的是一条**有出处的事实**
+#:   （`record_id` 从内容推导、`evidence` 说得出处、`source_kind` 区分看到与听说）。
+#: - **「日记」会削弱这条规矩**：日记是**连续的主观流水**，
+#:   而这盒的规矩恰恰是「没有出处、没有分数的记录不入档」——
+#:   叫「日记」，等于告诉读者「这里存的是随手写的流水账」。
+#: - **「日记」是仓库里从没出现过的自造词**；「学习记录」早就在用
+#:   （根 README 的场景名、成长盒的归档文案），接上去不用改第二遍。
+#:
+#: **判据用「不许再出现」，不是「不许再定义」**：中文词没有标识符可定义，
+#: 它活在注释、docstring、描述文案、文档里——这些**全都是散文**。
+#:
+#: **要断言旧词不在某处的测试**，请从这里 import 这个常量，
+#: 不要把旧词硬写进测试文件——否则守卫会把守自己的那条测试也判红。
+RETIRED_PROSE_TERMS = {
+    "学习事件": "学习记录",
+}
 
 # **这次搬家的记录文档**：它讲的就是「从 A 改成 B」，
 # 旧名是它的**内容**的一部分——写不出旧名，读者看不懂改了什么。
@@ -547,6 +580,53 @@ def test_the_retired_names_are_not_back_in_code() -> None:
                 bad.append(
                     f"{_rel(path)}: 声明了 id=`{node.value.value}` —— 这是退休名"
                 )
+    assert not bad, "\n".join(bad)
+
+
+def _prose_carriers() -> list[Path]:
+    """散文载体：文档 + 代码。
+
+    **代码为什么也要扫**：中文词只可能活在注释、docstring、描述文案里——
+    那些都是散文，而散文正是改名会漏的地方。
+    """
+    out: list[Path] = []
+    for md in _md_files():
+        rel = _rel(md)
+        # 历史实测记录 / 搬家记录文档：它们讲的就是「从 A 改成 B」，
+        # 写得出旧名是它们的**内容**的一部分。
+        if rel in HISTORICAL_DOCS or rel in MIGRATION_DOCS:
+            continue
+        out.append(md)
+    for path in sorted(ROOT.rglob("*.py")):
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        if path.resolve() == SELF:
+            continue  # 退休名单本身写得出旧名（它就是登记处）
+        out.append(path)
+    return out
+
+
+def test_the_retired_prose_terms_are_not_back() -> None:
+    """退休的中文词不许再出现（文档 + 代码里的注释与文案）
+
+    **为什么中文词要单列一条**：退休名那套判据是「不许再**定义**」
+    （变量 / 函数 / 类 / 参数 / 声明 id）。中文词没有「定义」这回事——
+    它是散文里的说法，所以判据换成「不许再**出现**」。
+
+    **为什么值得盯**：改名只改一半是常事，而**两个名字并存**最坏——
+    读者得自己猜说的是不是同一件事，猜错就按错的那个去找。
+
+    **豁免**：历史实测记录 / 搬家记录文档（跟退休名同一套豁免）。
+    """
+    bad: list[str] = []
+    for path in _prose_carriers():
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for term, replacement in RETIRED_PROSE_TERMS.items():
+                if term in line:
+                    bad.append(
+                        f"{_rel(path)}:{lineno}: 退休的说法「{term}」又出现了"
+                        f"——现在叫「{replacement}」"
+                    )
     assert not bad, "\n".join(bad)
 
 

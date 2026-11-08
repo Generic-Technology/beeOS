@@ -9,7 +9,7 @@
 手填的**优先**——照片只补空。
 
 手工投料也照旧：把这次练习的事实（做了什么、得分多少、出处在哪）
-填进来，本盒把它整理成一条**带出处的学习事件**。
+填进来，本盒把它整理成一条**带出处的学习记录**。
 
 `source_kind` 只有两个取值，**别混**：
 
@@ -18,7 +18,7 @@
 
 混在一起的话，半年后翻档案就分不清哪些是**看到的**、哪些是**听说的**。
 
-## 产出：一条学习事件
+## 产出：一条学习记录
 
 产出字段是**成长记录盒**要收的那份形状的**同构副本**
 （那边才是消费者，那边说了算）——两份必须对得上，
@@ -277,13 +277,13 @@ LEARNING_ENGLISH_OBSERVATION_SCHEMA = SchemaDef(
 
 LEARNING_ENGLISH_OUTPUT_SCHEMA = SchemaDef(
     id="schema_learning_english_output",
-    description="产出：一条带出处的英语学习事件",
+    description="产出：一条带出处的英语学习记录",
     fields=[
         FieldDef(
             name="record_id",
             type="string",
             required=True,
-            description="这次学习事件的唯一号（从内容推导，同一件事重记也是同一个号）",
+            description="这次学习记录的唯一号（从内容推导，同一件事重记也是同一个号）",
         ),
         FieldDef(
             name="subject",

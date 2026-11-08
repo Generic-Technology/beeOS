@@ -47,7 +47,7 @@ python -m kanban.web
 
 ## 运行示例
 
-在另一个终端进入仓库并激活 `.venv`，运行以下命令。它把一次数学练习整理为带出处的学习事件，检查得分率，并将本次运行写入本地记录。
+在另一个终端进入仓库并激活 `.venv`，运行以下命令。它把一次数学练习整理为带出处的学习记录，检查得分率，并将本次运行写入本地记录。
 
 ```bash
 source .venv/bin/activate
@@ -92,7 +92,7 @@ mastery: 0.9
 |---|---|---|
 | WMS 软件履约 | 需求捕获、仓储设计、代码生成、场景验证、运维核对、效果分析与系统档案 | [需求盒](boxes/wms_requirement/README.md)、[闭环实测记录](docs/wms-closure-plan.md) |
 | 小票识别 | 从图片生成结构化小票，并检查金额等业务约束 | [小票盒](boxes/receipt/README.md) |
-| 学习记录 | 数学、语文、英语事件与成长档案，保留记录出处 | [数学](boxes/learning_math/README.md)、[语文](boxes/learning_chinese/README.md)、[英语](boxes/learning_english/README.md)、[成长档案](boxes/learning_growth/README.md) |
+| 学习记录 | 数学、语文、英语的学习记录与成长档案，保留记录出处 | [数学](boxes/learning_math/README.md)、[语文](boxes/learning_chinese/README.md)、[英语](boxes/learning_english/README.md)、[成长档案](boxes/learning_growth/README.md) |
 
 WMS 协作边界已定义并串联如下履约链，各阶段产物同时汇入系统档案盒：
 

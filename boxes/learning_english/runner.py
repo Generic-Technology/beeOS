@@ -9,7 +9,7 @@ op 链：
 ## 三跳各干什么
 
 - **intake**：把投料核对一遍。缺关键事实就**报错**——
-  一条没有出处、没有分数的学习事件，记进去只会污染档案。
+  一条没有出处、没有分数的学习记录，记进去只会污染档案。
 - **work**：算听写得分率（得分 ÷ 满分），写成人话。
 - **packager**：装出产出，**并拿原始分与满分复算一遍**得分率。
   对不上就判红（`ratio_exact`）——
@@ -45,10 +45,10 @@ def _num(input_data: dict[str, Any], key: str) -> float | None:
 
 
 def _record_id(input_data: dict[str, Any]) -> str:
-    """这次学习事件的唯一号——**从内容推导**，不是随机数
+    """这次学习记录的唯一号——**从内容推导**，不是随机数
 
     随机 id 会让同一件事重记一次就变成两件事；
-    而这条事件是**有出处的事实**，它的号必须跟着内容走。
+    而这条记录是**有出处的事实**，它的号必须跟着内容走。
     """
     parts = [
         str(input_data.get("activity") or ""),
@@ -277,7 +277,7 @@ def english_intake_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     merged["observed_at"] = observed_at
 
     out: dict[str, Any] = {
-        "plan": f"记一条英语学习事件：{activity}（{source_kind}）",
+        "plan": f"记一条英语学习记录：{activity}（{source_kind}）",
         "photo_digest": digest,
     }
     # 合并后的值带下去：work 跳要拿原始分与满分算听写得分率。

@@ -7,7 +7,7 @@
    必须有一条守卫比对，否则漂了没有任何东西会报错。
 2. **坏投料必须红**——得分超过满分、出处类型不认识、缺出处，
    这些都该**当场拒**并说清为什么，而不是收一条「看起来正常」的记录。
-3. **档案里没有裸数字**——每条记录都带着出处、来源类型和事件号。
+3. **档案里没有裸数字**——每条记录都带着出处、来源类型和记录号。
    缺了就是「以后没法查这笔到底是看到的还是听说的」。
 """
 
@@ -278,7 +278,7 @@ class TestTheArchiveKeepsItsProvenance:
         artifact = store.get_run(archived["task_run_id"])["artifact"]
         assert artifact["evidence"] == "作业本 P12", "归档条目丢了出处"
         assert artifact["source_kind"] == "observed", "归档条目丢了来源类型"
-        assert artifact["record_id"], "归档条目丢了事件号"
+        assert artifact["record_id"], "归档条目丢了记录号"
         assert artifact["observed_at"] == "2026-11-01T16:30", (
             "时间线按学习发生的时间排——补录不该改掉它"
         )

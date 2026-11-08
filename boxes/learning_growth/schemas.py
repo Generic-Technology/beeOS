@@ -19,7 +19,7 @@
 **一条**记录。成长档案是**时间线**：每次履约追加一条，
 档案 = 这只盒子的历次履约产出，按学习发生的时间排。
 
-**为什么一次履约只追加一条**：一条履约 = 一次学习事件。
+**为什么一次履约只追加一条**：一条履约 = 一条学习记录。
 把三科的记录并成一条，档案里就分不清「数学这次」和「语文那次」
 各自是什么——那不是档案，是流水账。
 """
@@ -37,13 +37,13 @@ SOURCE_KINDS = ["observed", "reported"]
 
 LEARNING_GROWTH_SUBJECT_RESULT_SCHEMA = SchemaDef(
     id="schema_learning_subject_result",
-    description="一条学习事件（本盒**接受**的那份形状——形状归消费者所有）",
+    description="一条学习记录（本盒**接受**的那份形状——形状归消费者所有）",
     fields=[
         FieldDef(
             name="record_id",
             type="string",
             required=True,
-            description="这次学习事件的唯一号（从内容推导，同一件事重记也是同一个号）",
+            description="这次学习记录的唯一号（从内容推导，同一件事重记也是同一个号）",
         ),
         FieldDef(
             name="subject",
@@ -97,13 +97,13 @@ LEARNING_GROWTH_SUBJECT_RESULT_SCHEMA = SchemaDef(
 
 LEARNING_GROWTH_INPUT_SCHEMA = SchemaDef(
     id="schema_learning_growth_input",
-    description="投料：一条学习事件（由交接通道接进来）",
+    description="投料：一条学习记录（由交接通道接进来）",
     fields=[
         FieldDef(
             name="subject_result",
             type="ref:schema_learning_subject_result",
             required=True,
-            description="一条学习事件——交接通道按本盒声明的形状校验后接进来",
+            description="一条学习记录——交接通道按本盒声明的形状校验后接进来",
         ),
     ],
 )
@@ -160,7 +160,7 @@ LEARNING_GROWTH_OUTPUT_SCHEMA = SchemaDef(
             name="record_id",
             type="string",
             required=True,
-            description="这次学习事件的唯一号（沿用学科盒给的号——**同一个事实一个号**）",
+            description="这次学习记录的唯一号（沿用学科盒给的号——**同一个事实一个号**）",
         ),
         FieldDef(
             name="subject",
