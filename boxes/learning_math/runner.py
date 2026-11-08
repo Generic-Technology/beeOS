@@ -121,6 +121,17 @@ _PHOTO_PROMPT = """你是一张数学作业照片的抄写员。给你一张数�
 看到「92/100」就填 92 和 100；只看到「92」就 score=92、total=null
 （除非别处印着满分）。
 
+只输出 JSON，**顶层键必须是**下面这些（模型有时自己起名 `items`，
+所以代码也认那个别名——但键名得是它们之一）：
+{{
+  "score": 92, "total": 100, "observed_at": "2026-11-08",
+  "activity": "数学作业", "notes": null,
+  "wrong_questions_status": "found",
+  "wrong_questions": [
+    {{"no": "3", "question": "38 + 27", "student_answer": "55", "correct_answer": null}}
+  ]
+}}
+
 只输出 JSON，不要解释。"""
 
 
@@ -171,6 +182,21 @@ _ANALYZE_PROMPT = f"""你是一位小学数学老师。下面是**一次作业�
 **如果给的是手填的错题描述**（不是完整题目）：
 照着描述判断错因；topic 写你推断的知识点；correct_answer 留空
 （描述里没有题目就算不出答案）；answer_source 留空。
+
+只输出 JSON，**顶层键必须是**下面这些（逐题清单的键必须是 `wrong_questions`；
+模型有时自己起名 `items`，代码也认那个别名——但键名得是它们之一）：
+{{
+  "wrong_questions": [
+    {{"index": 0, "verdict": "wrong", "topic": "两位数加法进位",
+      "correct_answer": "65", "answer_source": "模型推算",
+      "error_type": "计算失误", "error_note": "个位满十忘了进一"}}
+  ],
+  "training_plan": [
+    {{"focus": "两位数加法的进位", "error_type": "计算失误",
+      "how": "先算个位，满十进一", "drills": ["38+27"], "minutes": 10}}
+  ],
+  "training_summary": "一句人话。"
+}}
 
 只输出 JSON，不要解释。"""
 
@@ -303,18 +329,31 @@ def _clean_photo_facts(raw: dict[str, Any]) -> dict[str, Any]:
     )
 
     # ---- 错题：三态，不能把「看不清」说成「都对」----
-    questions = _clean_wrong_questions(raw.get("wrong_questions"))
-    said = str(raw.get("wrong_questions_status") or "").strip().lower()
+    #
+    # **顶层键名模型会自己起**：它有时把逐题清单叫 `items`。
+    # 认这个别名（提示词里也写了这两个名字）。
+    raw_questions = raw.get("wrong_questions")
+    if not isinstance(raw_questions, list):
+        raw_questions = raw.get("items")
+    said_status = str(raw.get("wrong_questions_status") or "").strip().lower()
+    questions = _clean_wrong_questions(raw_questions)
     if questions:
         facts["wrong_questions"] = questions
         facts["wrong_questions_status"] = "found"
-    elif said == "none":
+    elif said_status == "none":
         # 模型说「看得全、每题都对」——这是**真的看见了**才算数
         facts["wrong_questions"] = []
         facts["wrong_questions_status"] = "none"
+    elif said_status == "found":
+        # 说找到了错题，却一道也没抄出来 → **这不是「没有错题」**
+        raise ValueError(
+            "抄图那一跳说找到了错题，却没抄出题来——"
+            "重拍一张清楚的（要看得见批改痕迹），或者在下面手工填错题"
+        )
     else:
-        # 其余情况一律当「看不清」：说「都对」是要担责任的，
-        # 拿不准就别替家长下结论
+        # 其余情况（含模型没给这一段）一律当「看不清」：
+        # 说「都对」是要担责任的，拿不准就别替家长下结论。
+        # 这一格会写进产出的 missing_fields——**不藏**。
         facts["wrong_questions"] = None
         facts["wrong_questions_status"] = "unclear"
     return facts
@@ -597,7 +636,19 @@ def _clean_analysis(raw: dict[str, Any], questions: list[dict[str, str]]) -> dic
     而家长要照着练的就是那 2 道。
     """
     by_index: dict[int, dict[str, Any]] = {}
-    for item in raw.get("wrong_questions") or []:
+    # **顶层键名模型会自己起**：它有时把逐题清单叫 `items`。
+    # 认这个别名（提示词里也写了这两个名字），但**两个都没有就是形状不对**——
+    # 静默当成「模型没判错因」，会把每一道题都说成「其它」，
+    # 家长拿到的是一张看不出所以然的卡。
+    items = raw.get("wrong_questions")
+    if not isinstance(items, list):
+        items = raw.get("items")
+    if not isinstance(items, list):
+        raise ValueError(
+            "判错因那一跳返回的形状不对——没有逐题清单"
+            f"（顶层键里有：{sorted(raw)}）。重投一次。"
+        )
+    for item in items:
         if not isinstance(item, dict):
             continue
         try:

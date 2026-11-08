@@ -164,6 +164,33 @@ class TestAPhotoIsAllTheInput:
 # 2. 卡里的东西不许是模型编的
 # ------------------------------------------------------------------
 class TestTheModelCannotInventFacts:
+    def test_the_list_under_another_key_is_still_read(self, monkeypatch, store):
+        """模型把逐题清单叫 `items` → **照样读**
+
+        实测踩过：模型自己起名叫 `items`，代码只认 `wrong_questions`，
+        于是**整份判定结果丢失**——每一道题都成了「其它」，
+        家长拿到的是一张看不出所以然的卡。
+        """
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["items"] = analysis.pop("wrong_questions")
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        artifact = record["artifact"]
+        assert artifact["error_types"] == ["计算失误", "未作答"]
+        assert artifact["wrong_count"] == 2
+
+    def test_a_shape_without_the_list_fails_loudly(self, monkeypatch, store):
+        """返回的形状里没有逐题清单 → **当场报错**，不静默全变「其它」"""
+        _fake_llm(
+            monkeypatch, MATH,
+            photo=PHOTO,
+            analysis={"training_plan": [], "training_summary": "说不清"},
+        )
+        run = trigger_task(MATH, "run_math", {"photo": TINY_JPEG}, store)
+        record = store.get_run(run["task_run_id"])
+        assert record["status"] == "failed", "形状不对居然出了一张卡"
+        reason = str(record.get("error_reason"))
+        assert "形状不对" in reason, f"报错要说清是形状的问题：{reason}"
+
     def test_the_model_cannot_add_questions(self, monkeypatch, store):
         """模型多编一道题 → 加不进来
 
