@@ -259,6 +259,125 @@ class TestC4ExecutionOrderCarriesTheRightShape:
         assert "不存在的 op" in str(err)
 
 
+class TestShapeCompatibilityIsStructural:
+    """形状相容 = **保证喂得进**，不是「id 相等」
+
+    装配器原来判「上一跳的 output == 下一跳的 input」——字符串相等。
+    那比运行时严：运行时下一跳收到的是上一跳的**整个产出**
+    （`runtime/executor.py` 的 `op_input = dict(op_output)`），
+    契约校验只查 schema **声明过的**字段（`runtime/contract.py`
+    遍历 `schema.fields`）→ 上一跳多吐几个字段，运行时**完全合法**。
+
+    装配期却为它报红——**假红**：盒子装不上，而它跑起来好好的。
+    最坏的后果：人为了过检查，把多出来的字段删掉去迁就检查器，
+    而不是把检查器改对。
+
+    所以这里判的是结构化相容（协变）——
+    这正是「泛型约束」在 Python 里该有的语义，只是它能在**装配期**算：
+    - 下一跳要的必填字段，上游**保证**给（必填 + 类型对得上）
+    - 上游多给的，下游可以不要
+    - 上游声明成**可选**的字段 = 它**可能不给** → 这条边不保证喂得进
+    """
+
+    @staticmethod
+    def _schemas(*extra: SchemaDef) -> list[SchemaDef]:
+        """默认那套 + 这组用例额外要的 schema
+
+        **追加而不是替换**：换掉默认那套的话，声明里的 result_schema /
+        acceptance / exception 会一起失配，报错的说辞就不是「形状」这条了。
+        """
+        return list(SCHEMAS) + list(extra)
+
+    @staticmethod
+    def _two_ops(first_output: str, second_input: str):
+        """两跳：第一跳吐 first_output，第二跳吃 second_input
+
+        末跳固定吐 `s_out`——那才是声明里的产出契约。
+        """
+        return [
+            Component(
+                op_id="demo_first", type="demo_first",
+                input_from="external", input="s_in", output=first_output,
+                next=["demo_second"], handler=_handler,
+            ),
+            Component(
+                op_id="demo_second", type="demo_second",
+                input_from="demo_first", input=second_input, output="s_out",
+                handler=_handler,
+            ),
+        ]
+
+    def test_upstream_giving_more_fields_is_allowed(self):
+        """上游多吐几个字段 → 运行时合法 → 装配期不该报红"""
+        wide = SchemaDef(
+            id="s_wide",
+            fields=[
+                FieldDef(name="a", type="string", required=True),
+                FieldDef(name="extra", type="number", required=False),
+            ],
+        )
+        narrow = SchemaDef(
+            id="s_narrow",
+            fields=[FieldDef(name="a", type="string", required=True)],
+        )
+        box = _assemble(
+            schemas=self._schemas(wide, narrow),
+            components=self._two_ops("s_wide", "s_narrow"),
+        )
+        assert box.definition.id == "demo_box"
+
+    def test_upstream_missing_a_required_field_is_refused_and_says_which(self):
+        """上游没吐下游要的必填字段 → 报红，且**说清缺哪个字段**"""
+        missing = SchemaDef(
+            id="s_missing",
+            fields=[FieldDef(name="other", type="string")],
+        )
+        narrow = SchemaDef(
+            id="s_narrow",
+            fields=[FieldDef(name="a", type="string", required=True)],
+        )
+        err = _broken(
+            schemas=self._schemas(missing, narrow),
+            components=self._two_ops("s_missing", "s_narrow"),
+        )
+        assert "形状对不上" in str(err)
+        assert "'a'" in str(err)
+
+    def test_an_optional_upstream_field_does_not_guarantee_anything(self):
+        """上游把字段声明成**可选** = 它可能不给 → 不算保证喂得进"""
+        maybe = SchemaDef(
+            id="s_maybe",
+            # **显式 required=False**：FieldDef.required 默认是 True
+            # （不写就是必填）——默认必填的 schema 才谈得上「保证给」。
+            fields=[FieldDef(name="a", type="string", required=False)],
+        )
+        narrow = SchemaDef(
+            id="s_narrow",
+            fields=[FieldDef(name="a", type="string", required=True)],
+        )
+        err = _broken(
+            schemas=self._schemas(maybe, narrow),
+            components=self._two_ops("s_maybe", "s_narrow"),
+        )
+        assert "可能不给" in str(err)
+
+    def test_a_type_mismatch_is_refused(self):
+        """字段名在，但类型对不上 → 运行时契约会拒 → 装配期就该拦"""
+        num = SchemaDef(
+            id="s_num",
+            fields=[FieldDef(name="a", type="number", required=True)],
+        )
+        stringy = SchemaDef(
+            id="s_str",
+            fields=[FieldDef(name="a", type="string", required=True)],
+        )
+        err = _broken(
+            schemas=self._schemas(num, stringy),
+            components=self._two_ops("s_num", "s_str"),
+        )
+        assert "形状对不上" in str(err)
+
+
 class TestC5NoOrphansNoCycles:
     def test_an_unreachable_op_is_refused(self):
         """走不到的跳永远不跑，也不报错——链在某处断了"""

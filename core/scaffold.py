@@ -320,6 +320,104 @@ class AssemblyError(Exception):
 # ============================================================
 
 
+# ============================================================
+# 形状相容：上一跳的产出能不能喂给下一跳
+# ============================================================
+#
+# ## 为什么不是「id 相等」
+#
+# 装配器原来判「上一跳的 output == 下一跳的 input」——**字符串相等**。
+# 那比运行时严：
+#
+# - 运行时下一跳收到的是上一跳的**整个产出**（`runtime/executor.py`
+#   的 `op_input = dict(op_output)`），
+# - 而契约校验只查 schema **声明过的**字段（`runtime/contract.py`
+#   的 `validate_payload` 遍历 `schema.fields`），
+# - 所以「上一跳多吐几个字段」在运行时**完全合法**。
+#
+# 装配期却会为它报红——**假红**：一只盒子装不上，
+# 而它跑起来好好的。这类假红最坏：人会以为「装配器挑刺」，
+# 于是把多出来的字段删掉去迁就检查器，而不是把检查器改对。
+#
+# ## 这里判的是「**保证**喂得进」，不是「形状对得上」
+#
+# 下一跳要一个必填字段，上游有它——**还不够**：
+# 上游那个字段必须是**必填**的。上游声明成可选 = 它**可能不给**，
+# 那这条边就不保证喂得进（运行时可能真的缺）。
+#
+# 这正是「泛型约束」在 Python 里该有的语义——
+# **结构化子类型（协变）**：下游要的，上游**保证**给；
+# 上游多给的，下游可以不要。
+# Python 的泛型是擦除的、只在静态检查期起作用；
+# 而这一条能在**装配期**算出来，所以它在装配期算，不在类型检查期算。
+#
+# 判不了的时候（schema 压根不存在）返回 None：
+# 那由 C6/C7 报「schema 不存在」，别在这儿重复报一遍。
+
+
+def _types_compatible(out_type: str, in_type: str) -> bool:
+    """上一跳吐的类型，下一跳吃不吃得下"""
+    if out_type == in_type:
+        return True
+    if in_type == "number_or_na":
+        # 下游接受「数字或 n/a」——上游给数字就行
+        return out_type in ("number", "integer")
+    if in_type == "object":
+        return out_type == "object" or out_type.startswith("ref:")
+    if in_type.startswith("ref:"):
+        # ref 装的是整份上游产出；上游给个对象也接得住
+        return out_type.startswith("ref:") or out_type == "object"
+    return False
+
+
+def _shape_gaps(
+    schema_by_id: dict[str, SchemaDef],
+    from_id: str,
+    to_id: str,
+) -> Optional[list[str]]:
+    """from 的产出能不能喂给 to
+
+    Returns:
+        None = 相容（或判不了，交给别的检查报）
+        list[str] = 不相容，每条说清**差在哪**（缺哪个字段 / 类型对不上）
+    """
+    from_schema = schema_by_id.get(from_id)
+    to_schema = schema_by_id.get(to_id)
+    if from_schema is None or to_schema is None:
+        return None
+
+    from_fields = {f.name: f for f in from_schema.fields}
+    gaps: list[str] = []
+    for want in to_schema.fields:
+        if not want.required:
+            # 下游自己要的可选字段，上游不给也接得住
+            continue
+        got = from_fields.get(want.name)
+        if got is None:
+            gaps.append(f"要必填字段 {want.name!r}（{want.type}），上游没吐")
+            continue
+        if not got.required:
+            # **上游声明成可选 = 它可能不给**——
+            # 「可能给」不等于「保证给」。这条边不保证喂得进。
+            gaps.append(
+                f"要必填字段 {want.name!r}（{want.type}），"
+                f"上游那个字段是**可选**的——上游可能不给，这条边喂不进去"
+            )
+            continue
+        if not _types_compatible(got.type, want.type):
+            gaps.append(
+                f"要必填字段 {want.name!r} 是 {want.type}，上游吐的是 {got.type}"
+            )
+            continue
+        if want.type == "enum" and want.values and got.values:
+            if not set(got.values) <= set(want.values):
+                gaps.append(
+                    f"要必填字段 {want.name!r} 只接受 {want.values}，"
+                    f"上游可能吐 {sorted(set(got.values) - set(want.values))}"
+                )
+    return gaps
+
+
 def assemble(
     declaration: BoxDeclaration,
     components: list[Component],
@@ -342,6 +440,9 @@ def assemble(
     box_id = declaration.id
     problems: list[str] = []
     checks: list[str] = []
+
+    # schema 索引（形状判定要用：字段集 + 必填性 + 类型）
+    schema_by_id: dict[str, SchemaDef] = {s.id: s for s in schemas}
 
     # ---- op 索引 ----
     by_id: dict[str, Component] = {}
@@ -411,20 +512,29 @@ def assemble(
             )
             continue
         if source.output != comp.input:
-            problems.append(
-                f"op {comp.op_id!r} 声明从 {comp.input_from!r} 取数据，"
-                f"但 {comp.input_from!r} 吐的是 {source.output!r}，"
-                f"而 {comp.op_id!r} 吃的是 {comp.input!r}——形状对不上。"
-                f"要么改 {comp.input_from!r} 的 output，要么改 {comp.op_id!r} 的 input"
-            )
+            gaps = _shape_gaps(schema_by_id, source.output, comp.input)
+            if gaps:
+                problems.append(
+                    f"op {comp.op_id!r} 声明从 {comp.input_from!r} 取数据，"
+                    f"但 {comp.input_from!r} 吐的是 {source.output!r}，"
+                    f"而 {comp.op_id!r} 吃的是 {comp.input!r}——形状对不上：\n"
+                    + "".join(f"    - {g}\n" for g in gaps)
+                    + f"  要么改 {comp.input_from!r} 的 output，要么改 {comp.op_id!r} 的 input"
+                )
     checks.append("C2 数据来源自洽")
 
     # ---- C3：入口的输入 == 投料的形状 ----
     if entry is not None and entry.input != declaration.task_schema:
-        problems.append(
-            f"入口跳 {entry.op_id!r} 吃的是 {entry.input!r}，"
-            f"但投料契约是 {declaration.task_schema!r}——投进来的东西不是它期待的形状"
-        )
+        # 投料整份喂给入口 → 投料必须**保证**有入口要的必填字段。
+        # 投料比入口多带几栏是合法的（入口只读它要的那几栏）。
+        gaps = _shape_gaps(schema_by_id, declaration.task_schema, entry.input)
+        if gaps:
+            problems.append(
+                f"入口跳 {entry.op_id!r} 吃的是 {entry.input!r}，"
+                f"但投料契约是 {declaration.task_schema!r}——"
+                f"投进来的东西不是它期待的形状：\n"
+                + "".join(f"    - {g}\n" for g in gaps)
+            )
     checks.append("C3b 入口吃的就是投料")
 
     # ---- C4：next 边 ----
@@ -440,12 +550,18 @@ def assemble(
             incoming[target] = incoming.get(target, 0) + 1
             nxt = by_id[target]
             if comp.output != nxt.input:
-                problems.append(
-                    f"op {comp.op_id!r} 跑完接着跑 {target!r}，"
-                    f"但 {comp.op_id!r} 吐的是 {comp.output!r}，"
-                    f"{target!r} 吃的是 {nxt.input!r}——"
-                    f"运行时会把前者直接喂给后者，形状对不上"
-                )
+                # **上一跳多吐几个字段是合法的**：运行时下一跳收到的是
+                # 上一跳的整个产出，契约只查声明过的字段，多余的被忽略。
+                # 所以这里问的是「下一跳要的，上一跳**保证**给吗」。
+                gaps = _shape_gaps(schema_by_id, comp.output, nxt.input)
+                if gaps:
+                    problems.append(
+                        f"op {comp.op_id!r} 跑完接着跑 {target!r}，"
+                        f"但 {comp.op_id!r} 吐的是 {comp.output!r}，"
+                        f"{target!r} 吃的是 {nxt.input!r}——"
+                        f"运行时会把前者直接喂给后者，形状对不上：\n"
+                        + "".join(f"    - {g}\n" for g in gaps)
+                    )
     checks.append("C4 执行顺序上的数据形状")
 
     # ---- C5：唯一入口 + 没有孤岛 + 没有环 ----
