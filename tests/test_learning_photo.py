@@ -309,6 +309,55 @@ class TestWhatThePhotoContributes:
             f"n/a 不该判红：{record.get('acceptance_detail')}"
         )
 
+    def test_a_photo_with_a_nonsense_score_still_produces_a_card(self, monkeypatch, store):
+        """照片里读出**负分** → 当没读出来这一格，**别把主路径掐断**
+
+        实测踩过：模型把图上一个符号读成了负号（`-3.0`），
+        整条履约判失败——家长拿到的不是错题卡，是一句报错。
+        得分这一格读不出来就是 `n/a`（进 missing_fields），
+        **错题和训练方案照样给**。
+        """
+        _fake_photo_facts(
+            monkeypatch, "learning_math_box",
+            score=-3.0, total=100, observed_at="2026-11-01",
+            activity="数学作业",
+            wrong_questions_status="found",
+            wrong_questions=[{
+                "no": "3", "question": "38+27=?", "student_answer": "55",
+                "correct_answer": None,
+            }],
+        )
+        run = trigger_task(
+            "learning_math_box", "run_math",
+            {"photo": TINY_JPEG}, store,
+        )
+        record = store.get_run(run["task_run_id"])
+        assert record["status"] == "completed", record.get("error_reason")
+        artifact = record["artifact"]
+        assert artifact["mastery"] == "n/a", (
+            f"负分不该算出掌握度：{artifact['mastery']!r}"
+        )
+        assert "score" in artifact["missing_fields"], (
+            f"这一格没读出来要说清：{artifact['missing_fields']}"
+        )
+        assert artifact["wrong_count"] == 1, "错题清单丢了"
+
+    def test_a_score_the_human_typed_wrong_is_refused(self, monkeypatch, store):
+        """**手填**负分 → 当场拒（人要来说清哪个是对的）
+
+        照片路径读到负数是模型看错，可以丢那一格；
+        **人手填的负分是事实写错了** → 当场报错，不让它进档案。
+        """
+        run = trigger_task(
+            "learning_math_box", "run_math",
+            _math_payload(score=-5), store,
+        )
+        record = store.get_run(run["task_run_id"])
+        assert record["status"] == "failed", "手填的负分居然记了一条"
+        assert "负数" in str(record.get("error_reason")), (
+            f"报错要说清是哪个数不对：{record.get('error_reason')}"
+        )
+
     def test_what_the_human_typed_wins_over_what_the_model_read(self, monkeypatch, store):
         """手填优先：人填 80，模型读出 92 → 记 80"""
         _fake_photo_facts(

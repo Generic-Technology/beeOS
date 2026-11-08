@@ -512,12 +512,22 @@ def math_intake_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     # 训练卡照样出——并把这件事写进产出的 missing_fields，
     # 不藏。
     if total is not None and total <= 0:
-        raise ValueError(
-            f"total（满分）必须是正数，现在拿到 {total!r}——"
-            "没有满分就算不出得分率"
-        )
+        if digest:
+            # **照片里读出来的满分是 0 或负数 → 不可能是满分**：
+            # 当没读出来（这一格是 n/a），别让主路径断掉。
+            total = None
+        else:
+            raise ValueError(
+                f"total（满分）必须是正数，现在拿到 {total!r}——"
+                "没有满分就算不出得分率"
+            )
     if score is not None and score < 0:
-        raise ValueError(f"score（得分）不能是负数：{score!r}")
+        if digest:
+            # 同上：负分不是得分，是模型把别的符号读成了负号。
+            # 丢掉这一格（进 missing_fields），别让整张错题卡出不来。
+            score = None
+        else:
+            raise ValueError(f"score（得分）不能是负数：{score!r}")
     if score is not None and total is not None and score > total:
         if digest:
             score = None
@@ -547,6 +557,10 @@ def math_intake_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     merged["source_kind"] = source_kind
     merged["evidence"] = evidence
     merged["observed_at"] = observed_at
+    # **写回**：上面把读不通的数字丢掉了（负分、非正满分），
+    # 不写回去的话，下游那一跳拿到的还是那个废数。
+    merged["score"] = score
+    merged["total"] = total
 
     out: dict[str, Any] = {
         "plan": f"记一次数学练习：{activity}（{source_kind}）",
