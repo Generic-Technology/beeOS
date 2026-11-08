@@ -104,7 +104,9 @@ _PHOTO_PROMPT = """你是一张数学作业照片的抄写员。给你一张数�
     「看不清」和「都对」是两件事，填错了等于跟家长说这次全对）
 - wrong_questions: 错题清单。**status="found" 时才填**，一条错题一项：
   - no: 题号（"3" 或 "第3题"）
-  - question: 题目原文（**照抄**，别改写；题目太长就抄能认出的关键部分）
+  - question: **题干**（照抄，**只到等号为止**——
+    例：图上写着「3) 38 + 27 = 55」，question 是「38 + 27」，
+    那个 55 是**孩子的答案**，归到 student_answer，别抄进题干）
   - student_answer: 孩子写的答案（照抄；**空着没写填空串，看不清填 null**——
     「没做」和「没看清」是两件事，别混）
   - correct_answer: 图上印着的正确答案（红笔批注、参考答案区、书上印的）；
@@ -125,7 +127,8 @@ _ANALYZE_PROMPT = f"""你是一位小学数学老师。下面是一次作业里*
 1. **每道错题的判断**（按给的顺序，一题一条，**不要自己加题**）：
    - index: 这道题在下面清单里的序号（**照抄**）
    - topic: 这题考什么知识点/题型
-   - correct_answer: 正确答案。图上印着就用印着的；**图上没有就自己算**
+   - correct_answer: 正确答案。**必须给**：
+     图上印着就用印着的；**图上没有就自己算出来**（这是数学题，你能算）。
    - answer_source: 正确答案的来路——图上印的写「照片」，你自己算的写「模型推算」
    - error_type: 错因，**只能从这张表里选**：
      {' / '.join(ERROR_TYPES)}
@@ -203,6 +206,28 @@ def _photo_date(value: Any) -> str | None:
     return f"{year:04d}-{month:02d}-{day:02d}"
 
 
+def _split_answer_out_of_question(text: str) -> tuple[str, str | None]:
+    """题干里混着等号后的答案 → **机械地拆出来**
+
+    模型常把「38 + 27 = 55」整句当题干抄下来，答案那一格就空了。
+    后果不是小事故：孩子明明写了 55，却被判成「未作答」——
+    训练方案整个跑偏（练「怎么写答案」而不是练「怎么算」）。
+
+    所以这里按**最后一个等号**拆一次：
+    - 等号后面有内容 → 那就是答案（`38 + 27` + `55`）
+    - 等号后面空的 → 保持原样，**不替模型说「空着没做」**
+      （「没看清」和「空着没写」它自己分得清，别替它下结论）
+    """
+    if "=" not in text:
+        return text, None
+    head, _, tail = text.rpartition("=")
+    head = head.strip()
+    tail = tail.strip()
+    if not head or not tail:
+        return text, None
+    return head, tail
+
+
 def _clean_wrong_questions(raw: Any) -> list[dict[str, str]]:
     """模型抄出来的错题 → 干净的条目（只抄，不判）
 
@@ -230,6 +255,12 @@ def _clean_wrong_questions(raw: Any) -> list[dict[str, str]]:
         if item.get("student_answer") is None:
             # 看不清 ≠ 空着没做
             entry["student_answer"] = None  # type: ignore[assignment]
+        # 题干里混着答案 → 拆出来（模型常整句抄）
+        if entry["student_answer"] is None and entry["question"]:
+            question, answer = _split_answer_out_of_question(entry["question"])
+            entry["question"] = question
+            if answer is not None:
+                entry["student_answer"] = answer
         # 一条什么都没有的条目（比如模型吐了个空对象）不算一道错题
         if not any(entry.values()):
             continue

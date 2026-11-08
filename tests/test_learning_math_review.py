@@ -217,6 +217,25 @@ class TestTheModelCannotInventFacts:
         assert second["student_answer"] == ""
         assert second["error_type"] == "未作答"
 
+    def test_an_answer_mixed_into_the_question_is_split_out(self, monkeypatch, store):
+        """模型把「38 + 27 = 55」整句当题干抄了 → **机械地拆出来**
+
+        不拆的话：孩子明明写了 55，答案那格空着 →
+        错因被判成「未作答」→ 训练方案整个跑偏
+        （练「怎么写答案」而不是练「怎么算」）。
+        """
+        module = __import__(
+            "boxes.learning_math.runner", fromlist=["_clean_wrong_questions"]
+        )
+        cleaned = module._clean_wrong_questions([{
+            "no": "3",
+            "question": "38 + 27 = 55",
+            "student_answer": None,
+            "correct_answer": None,
+        }])
+        assert cleaned[0]["question"] == "38 + 27"
+        assert cleaned[0]["student_answer"] == "55"
+
     def test_a_plan_for_an_error_that_did_not_happen_is_dropped(self, monkeypatch, store):
         """针对**这次没出现**的错因的方案 → 丢掉
 
