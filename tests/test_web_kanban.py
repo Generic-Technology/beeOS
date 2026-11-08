@@ -1735,6 +1735,26 @@ class TestTheBoxContextIsACatalogCard:
             _extract_js_function("renderBoxMetrics")
         ), "指标段要写明是实测，不是判据"
 
+    def test_the_card_keeps_its_own_name(self):
+        """那节的名字得是 **BOX CONTEXT**——不许改成 DOMAIN CONTEXT / SCOPE CONTEXT
+
+        两个词都有主了：`domain` 指**领域知识**（DDD），`scope` 指**查看范围**
+        （看板当前看的是哪个协作边界，URL `?scope=`）。硬塞进来就是撞车。
+
+        而且这不是「取个好听的名字」的问题：改了名，读者会以为里面装的是
+        **整个域**的东西——而它装的是**这只盒子**的一份契约。
+        （决定写在 `kanban/trigger.py::box_context()` 的 docstring 里；
+        这里让那条决定不再只活在一段注释里。）
+        """
+        card = _strip_js_comments(_extract_js_function("renderBoxContext"))
+        assert "BOX CONTEXT" in card, "目录卡的名字必须是 BOX CONTEXT"
+        for bad in ("DOMAIN CONTEXT", "SCOPE CONTEXT"):
+            assert bad not in card, (
+                f"目录卡不许改叫 {bad!r}——"
+                f"domain 指领域知识、scope 指查看范围，两个词都撞车；"
+                f"而且这节装的是这只盒子的契约，不是整个域的东西"
+            )
+
     def test_the_wiring_row_lives_on_the_nameplate_only(self):
         """接线那一行只在**单盒门牌**上给
 

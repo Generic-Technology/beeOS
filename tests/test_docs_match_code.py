@@ -113,6 +113,28 @@ RETIRED_NAMES = (
     # 跟着改名一起退休的**测试文件名**（测试文件也是「定义了新东西」）
     "test_domain_declaration",
     "test_domain_stability",
+    # ---- 2026-11-08：盒子上下文那节，考虑过但**否掉**的两个名字 ----
+    #
+    # 有人在问「BOX CONTEXT 能不能改成 DOMAIN CONTEXT」——
+    # 结论是不行，理由早就写在 `kanban/trigger.py::box_context()` 的
+    # docstring 里，现在补进退休名单，让它**不再是只活在一段注释里**：
+    #
+    # - `domain` 现在指**领域知识**（DDD：`boxes/wms_design/domain.py`
+    #   是 WMS 领域词表，设计盒那边还有 `renderDddDesign`）。
+    #   叫 domain context 会跟 DDD 的 bounded context 撞车。
+    # - `scope` 现在指**查看范围**（看板当前看的是哪个协作边界，
+    #   URL `?scope=`）。叫 scope context 会跟「查看范围」撞车——
+    #   而那已经是**看板自己的**一个轴了。
+    #
+    # 那一节根本不是领域模型，也不是范围：**它就是这只盒子自己的声明**
+    # （吃什么、吐什么、跑得怎么样）。邻居也全是 `box_*`
+    # （box_manifest / box_meta / box_metrics_readings），
+    # 夹个别的词根在中间像个混血。
+    #
+    # **判据同样是「不许再定义」**——docstring 里提到这两个名字
+    # （解释为什么不用它们）是正当的，不算定义。
+    "domain_context",
+    "scope_context",
 )
 
 #: **退休的散文词**（2026-11-07：学习事件 → 学习记录）
