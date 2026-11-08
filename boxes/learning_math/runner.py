@@ -177,6 +177,8 @@ _ANALYZE_PROMPT = f"""你是一位小学数学老师。下面是**一次作业�
    - minutes: 大概练多少分钟
 
 3. **training_summary**：一句人话，说清这次错在哪、下一步怎么练。
+   **不要写「错了几道题」这种计数**——数字由系统按算出来的错题数填，
+   你数的那个数是在剔除做对的题之前数的，对不上。
    （说**真正错了几道**——算下来是对的题不算错题。）
 
 **如果给的是手填的错题描述**（不是完整题目）：
@@ -709,6 +711,12 @@ def _clean_analysis(raw: dict[str, Any], questions: list[dict[str, str]]) -> dic
 
     plan = _clean_plan(raw.get("training_plan"), judged, error_types)
     summary = str(raw.get("training_summary") or "").strip()
+    # **模型自己数的错题数不可信**：它是在「剔除做对的题」之前数的，
+    # 剔完就对不上了。实测过：清单里 1 道错题，总结里写「错了 2 道」。
+    # 卡片上的数字只能有一个来源——**代码算出来的**。
+    # 模型总结里的计数跟清单对不上 → 整段作废，改用代码版的总结。
+    if summary and not _count_agrees(summary, len(judged)):
+        summary = ""
     if not summary:
         summary = _fallback_summary(judged, error_types, plan, dropped)
     elif dropped:
@@ -810,13 +818,48 @@ def _fallback_group(error_type: str, judged: list[dict[str, str]]) -> dict[str, 
     }
 
 
+# 中文数字（一到十）——模型写「两道题」也得认
+_CN_NUMBERS = {
+    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+}
+
+# 「N 道（题）」——总结里说错了几道
+_COUNT_RE = re.compile(r"(\d+|[一二两三四五六七八九十]+)\s*道")
+
+
+def _count_agrees(text: str, n: int) -> bool:
+    """总结里说的「几道」跟清单对得上吗？
+
+    **只看道数**，不看题号（「第 2 题」不是数）。
+    对不上就是模型自己数错了——它在「剔掉做对的题」之前数的，
+    剔完就对不上了。这种总结不能用：**卡上不能有两个打架的数字**。
+    """
+    for match in _COUNT_RE.finditer(text):
+        token = match.group(1)
+        value = int(token) if token.isdigit() else _CN_NUMBERS.get(token)
+        if value is None:
+            continue
+        if value != n:
+            return False
+    return True
+
+
 def _fallback_summary(
     questions: list[dict[str, str]],
     error_types: list[str],
     plan: list[dict[str, Any]],
     dropped: int = 0,
 ) -> str:
-    """模型没给总结时的兜底（**用算出来的数**，不编）"""
+    """总结（**用算出来的数**，不编）
+
+    这段总结在两种情况下用：
+    1. 模型没给总结；
+    2. 模型给的总结里**自己数的错题数跟清单对不上**（它数的是剔除前的题）。
+
+    所以这里的每个数都来自代码算出来的清单——
+    **卡上不会出现两个互相打架的数字**。
+    """
     if not questions:
         if dropped:
             # 看着像错题、算下来是对的 → 说清这是怎么回事
@@ -828,6 +871,18 @@ def _fallback_summary(
     causes = "、".join(error_types)
     tail = f"按上面 {len(plan)} 组方案练。" if plan else "（还没有训练方案。）"
     head = f"这次错了 {len(questions)} 题，错因是{causes}。"
+    # **具体是哪几题**——家长要照着这个去翻作业本
+    details: list[str] = []
+    for q in questions:
+        label = str(q.get("no") or q.get("topic") or "").strip() or "有一题"
+        error_type = str(q.get("error_type") or "").strip() or "其它"
+        note = str(q.get("error_note") or "").strip()
+        part = f"{label}（{error_type}）"
+        if note:
+            part += f"：{note}"
+        details.append(part)
+    if details:
+        head += "具体是：" + "；".join(details) + "。"
     if dropped:
         head += f"（另有 {dropped} 道题看着像错题，算下来是对的，没算进来。）"
     return head + tail

@@ -444,6 +444,46 @@ class TestTheWrongQuestionsAreVerifiedByCalculating:
 
 
 # ------------------------------------------------------------------
+# 2d. 卡上的数字只有一个来源
+# ------------------------------------------------------------------
+class TestTheCountOnTheCardComesFromTheCode:
+    def test_a_summary_whose_own_count_is_wrong_is_not_used(self, monkeypatch, store):
+        """模型自己数的「错了几道」跟清单对不上 → **这段总结不用**
+
+        实测踩过：模型在「剔掉做对的题」之前数的，清单里 1 道，
+        总结里写「这次真正错了2道」——卡上两个数字打架。
+        数字只能来自代码算出来的清单。
+        """
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["training_summary"] = "这次真正错了3道：进位加法和分数空着没做。"
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        summary = record["artifact"]["training_summary"]
+        assert "3道" not in summary and "3 道" not in summary, (
+            f"总结里的数跟清单对不上还留着：{summary}"
+        )
+        assert record["artifact"]["wrong_count"] == 2
+        assert "2" in summary, f"该用代码算出来的数：{summary}"
+        # 作废模型的话之后，**代码版的总结也得说清是哪几题**
+        assert "满十" in summary, f"代码版的总结太干：{summary}"
+
+    def test_a_summary_without_a_count_is_kept(self, monkeypatch, store):
+        """模型没写「几道」→ **原样保留**（它的话是有用的）"""
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["training_summary"] = "这次错在进位加法和分数空着没做。"
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        summary = record["artifact"]["training_summary"]
+        assert "进位加法" in summary, f"模型的话被丢了：{summary}"
+
+    def test_a_summary_whose_count_matches_is_kept(self, monkeypatch, store):
+        """模型数对了 → 保留它的话"""
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["training_summary"] = "这次错了2道，错在进位加法和分数空着没做。"
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        summary = record["artifact"]["training_summary"]
+        assert "进位加法" in summary, f"模型的话被丢了：{summary}"
+
+
+# ------------------------------------------------------------------
 # 4. 「看不清」不许说成「都对」
 # ------------------------------------------------------------------
 class TestUnclearIsNotAllRight:
