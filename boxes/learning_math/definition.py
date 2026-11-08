@@ -1,25 +1,36 @@
 """
 boxes.learning_math.definition - 数学盒的声明
 
-把一次数学练习记成一条带出处的学习记录
+拍一张作业照 → **错在哪 + 针对这些错怎么练**
 
-**成熟度：live**。腿是真的：投料 → 算得分率 → 装出带出处的一条学习记录。
+**成熟度：live**。腿是真的：投料 → 看图抄题 → 判错因 → 出训练方案 → 装产出。
 
-**这一盒只干一件事**：把「这次练习的事实」变成一条**能被追溯**的学习记录。
-它不判断孩子学得好不好——那是家里和老师的事；
-它只保证记下来的那条**有出处、算数、装得进档案**。
+**这一盒现在干两件事**：
 
-## 判据为什么是这三条
+1. **错题训练卡**（这次的主产出）：哪几题错了、错在哪（错因）、
+   针对每一类错该怎么练。
+2. **一条带出处的学习记录**（交给成长记录盒）：这次练习的事实，
+   掌握度是这次练习的**得分率**。
 
-- `mastery >= 0` / `mastery <= 1` —— 掌握度是个**比率**，越界就是投料错了
+它不判断孩子聪不聪明，也不排名——它只保证：
+**拍一张就能得到一份能照着练的东西**，而且**读不出来的地方不编**。
+
+## 判据为什么是这四条
+
+- `mastery >= 0` / `mastery <= 1` —— 掌握度是个**比率**，越界就是投料错了。
+  照片里没读出得分/满分时它是 `n/a`（这次这个量用不上），
+  判据对 `n/a` 判「不适用」，既不判过也不判红。
 - `ratio_exact` —— 掌握度**确实是本盒口径的得分率**：
   装配跳拿原始分与满分复算一遍，跟工作跳算出来的那份对不上就判红。
   这一条防的是「掌握度被写成了一个跟分数无关的数」（比如写死 0.8）。
+- `training_covers_errors` —— 训练方案把这次出现的**每一类错因**都覆盖到了。
+  漏了一类就是「练了但没练到点上」，这张卡就不成立。
 
-## 例外为什么是这两条
+## 例外为什么是这三条
 
 - `mastery > 1` —— 得分超过满分：投料错了，升级人工
 - `ratio_exact == false` —— 两跳算出来的数对不上：升级人工
+- `training_covers_errors == false` —— 错因有，方案没覆盖到：升级人工
 
 **为什么是 `BoxDeclaration` 而不是 `BeeBoxDefinition`**：
 盒子只声明**它是什么**，不负责把声明拼成运行时认识的那几样。
@@ -42,17 +53,19 @@ from core.scaffold import BoxDeclaration
 
 DECLARATION = BoxDeclaration(
     id="learning_math_box",
-    version=1,
+    version=2,
     description=(
-        "把一次数学练习记成一条带出处的学习记录\n\n"
-        "**成熟度：live**。腿是真的：投料 → 算得分率 → "
-        "装出带出处的一条学习记录。"
+        "拍一张作业照 → 错在哪 + 针对这些错怎么练\n\n"
+        "**成熟度：live**。腿是真的：投料 → 看图抄题 → 判错因 → "
+        "出针对性训练方案 → 装产出。\n\n"
+        "**读不出来的地方不编**：照片里没有得分/满分/日期时，"
+        "那些格子留空、掌握度记 `n/a`，并把缺了哪几个写明。"
     ),
 
     # ---- 归属：这只盒子在企业里站在哪 ----
     display_name="数学盒",
     value_stream="Learning",
-    role="数学学习记录的履约",
+    role="数学错题分析与针对性训练的履约",
 
     # ---- 投料入口（Intent）----
     task_type="run_math",
@@ -65,30 +78,34 @@ DECLARATION = BoxDeclaration(
     # 读者看不到「哪件任务」。**明明产出里有，却没声明，所以拿不到。**
     subject_ref_from_result="record_id",
     subject_kind="learning_record",
-    task_trigger="记一次数学练习：作业、单元测、订正、复习",
+    task_trigger="拍一张作业照：要错题清单和针对性训练方案",
 
     # ---- 产出契约（Contract）----
     result_type="learning_math_result",
     result_schema="schema_learning_math_output",
     maturity="live",
-    artifact_view="generic",
+    artifact_view="math_review",
     acceptance=[
         # **判据读的是产出里的字段名**——字段不在产出 schema 里，
         # 这条判据就永远读不到值。
         AcceptanceRule(metric="mastery", op="gte", value=0),
         AcceptanceRule(metric="mastery", op="lte", value=1),
         AcceptanceRule(metric="ratio_exact", op="eq", value=True),
+        # 训练方案要盖住这次出现的每一类错因
+        AcceptanceRule(metric="training_covers_errors", op="eq", value=True),
     ],
     exceptions=[
         ExceptionRule(condition="mastery > 1", action="escalate"),
         ExceptionRule(condition="ratio_exact == false", action="escalate"),
+        ExceptionRule(condition="training_covers_errors == false", action="escalate"),
     ],
 
     # ---- 作业路线（Procedure）----
-    beeline_id="beeline_learning_math_v2",
-    beeline_version=2,
+    beeline_id="beeline_learning_math_v3",
+    beeline_version=3,
     beeline_description=(
-        "数学盒 履约作业路线：math_intake → math_work → math_packager"
+        "数学盒 履约作业路线："
+        "math_read_photo → math_intake → math_analyze → math_work → math_packager"
     ),
 
     # ---- 履约政策（Policy）----

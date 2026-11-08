@@ -86,14 +86,70 @@ def _math_payload(**over):
 
 
 def _fake_photo_facts(monkeypatch, box_id: str, **facts):
-    """把「看图那一跳」的模型换成假的，返回它读出来的事实"""
+    """把「看图那一跳」的模型换成假的，返回它读出来的事实
+
+    **看图和判错因是两跳**，所以这个假模型按提示词分道：
+    抄图那一跳回 `facts`；判错因那一跳按提示词里带来的错题清单
+    现编一份**盖得住错因**的方案——不然测试会被「方案没覆盖」
+    判红，而那跟被测的东西没关系。
+    """
     module = _runner_module(box_id)
     seen = {}
 
     def fake_complete_json(prompt, **kwargs):
         seen["images"] = kwargs.get("images")
         seen["prompt"] = prompt
-        return dict(facts)
+        if "抄写员" in prompt:
+            return dict(facts)
+        return _analysis_for_prompt(prompt)
+
+    monkeypatch.setattr(module, "complete_json", fake_complete_json)
+    return seen
+
+
+def _analysis_for_prompt(prompt: str) -> dict:
+    """提示词里带着错题清单（JSON）→ 按它编一份盖得住错因的方案"""
+    marker = "照抄回去）：\n"
+    if marker not in prompt:
+        return {}
+    context = json.loads(prompt.split(marker, 1)[1])
+    questions = []
+    plan = []
+    for i, item in enumerate(context):
+        error_type = "其它"
+        questions.append({
+            "index": i,
+            "topic": "",
+            "correct_answer": item.get("correct_answer", ""),
+            "answer_source": item.get("correct_answer") and "照片" or "",
+            "error_type": error_type,
+            "error_note": "测试用的判断",
+        })
+        plan.append({
+            "focus": error_type,
+            "error_type": error_type,
+            "how": "测试用的练法",
+            "drills": ["例题一", "例题二"],
+            "minutes": 10,
+        })
+    return {
+        "wrong_questions": questions,
+        "training_plan": plan,
+        "training_summary": "这是测试用的分析结果。",
+    }
+
+
+def _fake_llm(monkeypatch, box_id: str, *, photo: dict, analysis: dict):
+    """把两跳的模型都换成假的：看图回 photo，判错因回 analysis"""
+    module = _runner_module(box_id)
+    seen = {}
+
+    def fake_complete_json(prompt, **kwargs):
+        seen["prompt"] = prompt
+        seen["images"] = kwargs.get("images")
+        if "抄写员" in prompt:
+            return dict(photo)
+        return json.loads(json.dumps(analysis))
 
     monkeypatch.setattr(module, "complete_json", fake_complete_json)
     return seen
@@ -197,37 +253,61 @@ class TestWhatThePhotoContributes:
         artifact = record["artifact"]
         assert artifact["mastery"] == pytest.approx(0.92)
 
-    def test_a_photo_with_no_readable_score_fails_loudly(self, monkeypatch, store):
-        """认不出得分就中止，并说清「哪个字段没读出来」"""
+    def test_a_photo_with_nothing_readable_fails_loudly(self, monkeypatch, store):
+        """整张照片**什么都没读出来** → 中止，并说清要拍什么
+
+        拍了一张桌子、书包的照，跑完只会得到一张空卡片——
+        那不是「这次没问题」，是「这次什么都不知道」。
+        """
         _fake_photo_facts(
             monkeypatch, "learning_math_box",
-            score=None, total=None, observed_at=None, activity=None, errors=None,
+            score=None, total=None, observed_at=None, activity=None, notes=None,
         )
         run = trigger_task(
             "learning_math_box", "run_math",
             {"photo": TINY_JPEG}, store,
         )
         record = store.get_run(run["task_run_id"])
-        assert record["status"] == "failed", "照片里没有分数居然记了一条"
+        assert record["status"] == "failed", "什么都没读出来居然记了一条"
         reason = str(record.get("error_reason"))
-        assert "得分" in reason, f"报错要说清是得分没读出来：{reason}"
-        assert "score" in reason, f"报错要指名要填哪个字段：{reason}"
+        assert "照片" in reason, f"报错要说清是照片的问题：{reason}"
 
-    def test_a_photo_with_no_readable_full_score_fails_loudly(self, monkeypatch, store):
-        """满分读不出来也不许默认 100——猜的满分会污染以后每一份比率"""
+    def test_a_photo_without_a_full_score_still_produces_a_card(self, monkeypatch, store):
+        """照片上有得分、没满分 → 照常出训练卡，掌握度记 `n/a`
+
+        **不猜满分**：猜一个 100 会把错的比率写进以后每一份档案。
+        但「没满分」不是「这次白跑」——错题和训练方案照样给。
+        """
         _fake_photo_facts(
             monkeypatch, "learning_math_box",
             score=92, total=None, observed_at="2026-11-01",
-            activity="数学作业", errors=None,
+            activity="数学作业",
+            wrong_questions_status="found",
+            wrong_questions=[{
+                "no": "3", "question": "38+27=?", "student_answer": "55",
+                "correct_answer": None,
+            }],
         )
         run = trigger_task(
             "learning_math_box", "run_math",
             {"photo": TINY_JPEG}, store,
         )
         record = store.get_run(run["task_run_id"])
-        assert record["status"] == "failed", "猜了个满分就记了一条"
-        reason = str(record.get("error_reason"))
-        assert "满分" in reason or "total" in reason, reason
+        assert record["status"] == "completed", record.get("error_reason")
+        artifact = record["artifact"]
+        assert artifact["mastery"] == "n/a", (
+            f"没满分不该算出掌握度：{artifact['mastery']!r}"
+        )
+        assert artifact["ratio_exact"] == "n/a", (
+            "没什么可复算的，ratio_exact 该是 n/a"
+        )
+        assert "total" in artifact["missing_fields"], (
+            f"缺了哪几个没说清：{artifact['missing_fields']}"
+        )
+        assert artifact["wrong_count"] == 1, "错题清单丢了"
+        assert record["acceptance_status"] == "accepted", (
+            f"n/a 不该判红：{record.get('acceptance_detail')}"
+        )
 
     def test_what_the_human_typed_wins_over_what_the_model_read(self, monkeypatch, store):
         """手填优先：人填 80，模型读出 92 → 记 80"""

@@ -65,9 +65,13 @@ LEARNING_GROWTH_SUBJECT_RESULT_SCHEMA = SchemaDef(
         ),
         FieldDef(
             name="mastery",
-            type="number",
+            type="number_or_na",
             required=True,
-            description="掌握度 0..1",
+            description=(
+                "掌握度 0..1（这次练习的**得分率**）；"
+                "上游没读出得分/满分时是 `n/a`——**这次这个量用不上**，"
+                "不是 0，也不是猜一个数"
+            ),
         ),
         FieldDef(
             name="evidence",
@@ -182,9 +186,12 @@ LEARNING_GROWTH_OUTPUT_SCHEMA = SchemaDef(
         ),
         FieldDef(
             name="mastery",
-            type="number",
+            type="number_or_na",
             required=True,
-            description="掌握度 0..1（从学科盒那边接过来的原值）",
+            description=(
+                "掌握度 0..1（从学科盒那边接过来的原值；"
+                "那边没有得分率时接过来的是 `n/a`）"
+            ),
         ),
         FieldDef(
             name="evidence",

@@ -137,7 +137,7 @@ BOX_REGISTRY: dict[
     ),
     "learning_math_box": (
         get_learning_math_definition,
-        {"beeline_learning_math_v2": get_learning_math_beeline},
+        {"beeline_learning_math_v3": get_learning_math_beeline},
     ),
     "learning_chinese_box": (
         get_learning_chinese_definition,

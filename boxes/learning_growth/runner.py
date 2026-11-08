@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.models import NOT_APPLICABLE
 from runtime.runner import HandlerRunner
 
 
@@ -83,26 +84,34 @@ def growth_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     """op 2：核对这条记录 —— 它真的能进档案吗"""
     result = input_data["subject_result"]
 
-    try:
-        mastery = float(result["mastery"])
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"mastery 不是数：{result.get('mastery')!r}——档案不收算不出来的数"
-        )
-    if mastery < 0 or mastery > 1:
-        raise ValueError(
-            f"mastery={mastery:g} 越界（0..1）——上游算错了，这条不入档"
-        )
+    # **掌握度可能是 `n/a`**：这次的照片里没有得分/满分。
+    # 那是「这次这个量用不上」，**不是 0，也不是一个猜出来的数**——
+    # 档案里留着这一格，比编一个比率诚实。
+    raw_mastery = result.get("mastery")
+    if raw_mastery == NOT_APPLICABLE:
+        mastery: Any = NOT_APPLICABLE
+    else:
+        try:
+            mastery = float(raw_mastery)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"mastery 不是数：{raw_mastery!r}——档案不收算不出来的数"
+            )
+        if mastery < 0 or mastery > 1:
+            raise ValueError(
+                f"mastery={mastery:g} 越界（0..1）——上游算错了，这条不入档"
+            )
 
     detail = str(result.get("detail") or "")
     notes = str(result.get("notes") or "")
     if notes:
         detail = detail + "；备注：" + notes
 
+    ratio = "n/a" if mastery == NOT_APPLICABLE else f"{mastery:.2f}"
     return {
         "observed": (
             f"{result.get('subject')} · {result.get('activity')} · "
-            f"掌握度 {mastery:.2f} · {result.get('source_kind')}"
+            f"掌握度 {ratio} · {result.get('source_kind')}"
         ),
         "detail": detail,
         "subject_result": result,
@@ -112,6 +121,12 @@ def growth_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
 def growth_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     """op 3：装配成档案里的一条"""
     result = input_data["subject_result"]
+    raw_mastery = result.get("mastery")
+    mastery: Any = (
+        NOT_APPLICABLE
+        if raw_mastery == NOT_APPLICABLE
+        else float(raw_mastery)
+    )
 
     return {
         # **沿用上游的号**：同一个事实一个号，
@@ -120,7 +135,7 @@ def growth_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "subject": str(result.get("subject") or ""),
         "activity": str(result.get("activity") or ""),
         "observed_at": str(result.get("observed_at") or ""),
-        "mastery": float(result["mastery"]),
+        "mastery": mastery,
         "evidence": str(result.get("evidence") or ""),
         "source_kind": str(result.get("source_kind") or ""),
         "detail": str(input_data.get("detail") or result.get("detail") or ""),

@@ -49,6 +49,10 @@ python -m kanban.web
 
 在另一个终端进入仓库并激活 `.venv`，运行以下命令。它把一次数学练习整理为带出处的学习记录，检查得分率，并将本次运行写入本地记录。
 
+> 数学盒的**主路径是拍照**：在看板的投料口拍一张作业照，
+> 盒子会读出错题清单，并给出针对这些错的训练方案。
+> 下面这条命令走的是**手填**那条路（不碰模型也能跑），演示的是验收规则。
+
 ```bash
 source .venv/bin/activate
 python - <<'PY'
@@ -92,7 +96,7 @@ mastery: 0.9
 |---|---|---|
 | WMS 软件履约 | 需求捕获、仓储设计、代码生成、场景验证、运维核对、效果分析与系统档案 | [需求盒](boxes/wms_requirement/README.md)、[闭环实测记录](docs/wms-closure-plan.md) |
 | 小票识别 | 从图片生成结构化小票，并检查金额等业务约束 | [小票盒](boxes/receipt/README.md) |
-| 学习记录 | 数学、语文、英语的学习记录与成长档案，保留记录出处 | [数学](boxes/learning_math/README.md)、[语文](boxes/learning_chinese/README.md)、[英语](boxes/learning_english/README.md)、[成长档案](boxes/learning_growth/README.md) |
+| 学习记录 | 数学（拍一张作业照 → 错题清单 + 针对性训练方案）、语文、英语的学习记录与成长档案，保留记录出处 | [数学](boxes/learning_math/README.md)、[语文](boxes/learning_chinese/README.md)、[英语](boxes/learning_english/README.md)、[成长档案](boxes/learning_growth/README.md) |
 
 WMS 协作边界已定义并串联如下履约链，各阶段产物同时汇入系统档案盒：
 
@@ -255,7 +259,7 @@ python scripts/new_box.py --help
   | [`wms_analysis/`](boxes/wms_analysis/README.md) | `wms_analysis_box` | WMS | 4 | 2 | live |
   | [`wms_system/`](boxes/wms_system/README.md) | `wms_system_box` | WMS | 5 | 3 | live |
   | [`receipt/`](boxes/receipt/README.md) | `receipt_capture_box` | 未归范围 | 6 | 2 | live |
-  | [`learning_math/`](boxes/learning_math/README.md) | `learning_math_box` | Learning | 3 | 2 | live |
+  | [`learning_math/`](boxes/learning_math/README.md) | `learning_math_box` | Learning | 4 | 3 | live |
   | [`learning_chinese/`](boxes/learning_chinese/README.md) | `learning_chinese_box` | Learning | 3 | 2 | live |
   | [`learning_english/`](boxes/learning_english/README.md) | `learning_english_box` | Learning | 3 | 2 | live |
   | [`learning_growth/`](boxes/learning_growth/README.md) | `learning_growth_box` | Learning | 4 | 2 | live |

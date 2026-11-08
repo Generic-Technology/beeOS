@@ -1332,6 +1332,17 @@ HTML_PAGE = f"""<!DOCTYPE html>
   }}
   .media-fields[hidden] {{ display: none; }}
   .mf-title {{ font-size: 11px; color: #64748b; }}
+  /* 「只拍一张」是主路径：照片之外的那些格子**默认收起来**。
+     摊开十行输入框，投料口看着就像一张表——而它不是表，
+     它是「拍一张照」的第一步。 */
+  .mf-more {{ border-top: 1px dashed #e2e8f0; padding-top: 6px; }}
+  .mf-more > summary {{
+    font-size: 11px; color: #64748b; cursor: pointer; list-style: none;
+  }}
+  .mf-more > summary::before {{ content: '＋ '; color: #94a3b8; }}
+  .mf-more[open] > summary::before {{ content: '－ '; }}
+  .mf-more > summary::-webkit-details-marker {{ display: none; }}
+  .mf-rows {{ display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }}
   .mf-row {{
     display: grid; grid-template-columns: 96px 1fr; gap: 6px 8px;
     align-items: center;
@@ -1381,6 +1392,48 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .rc-sum > div {{ display: flex; gap: 10px; color: #475569; }}
   .rc-sum b {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; min-width: 72px; text-align: right; }}
   .rc-total {{ color: #0f172a; font-weight: 700; border-top: 1px solid #e2e8f0; padding-top: 3px; }}
+  /* ===== math_review 视图：错题训练卡 =====
+     这张卡是给家长看的，只有两个问题：**错在哪**、**接下来练什么**。
+     所以顺序固定：错题清单 → 训练方案。得分率只是附注——
+     读不出来就写「没有得分率」，不摆一个 0.00 装成算过。 */
+  .mr-head {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 6px; }}
+  .mr-count {{ font-size: 14px; font-weight: 700; color: #0f172a; }}
+  .mr-chip {{
+    font-size: 10px; color: #475569; background: #f1f5f9;
+    border: 1px solid #e2e8f0; border-radius: 999px; padding: 1px 8px;
+  }}
+  .mr-summary {{ font-size: 12px; color: #334155; margin: 2px 0 8px; }}
+  .mr-note {{
+    font-size: 11px; color: #b45309; background: #fffbeb;
+    border: 1px solid #fde68a; border-radius: 6px; padding: 4px 8px; margin-bottom: 8px;
+  }}
+  .mr-sec {{ font-size: 12px; font-weight: 600; color: #0f172a; margin: 10px 0 4px; }}
+  .mr-table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+  .mr-table th {{
+    text-align: left; font-weight: 600; color: #64748b; font-size: 10px;
+    border-bottom: 1px solid #e2e8f0; padding: 3px 6px;
+  }}
+  .mr-table td {{ padding: 4px 6px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }}
+  .mr-no {{ color: #94a3b8; width: 26px; }}
+  .mr-q {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #0f172a; }}
+  .mr-wrong {{ color: #b91c1c; }}
+  .mr-right {{ color: #15803d; }}
+  .mr-src {{ color: #94a3b8; font-size: 10px; }}
+  .mr-note-inline {{ color: #64748b; font-size: 10px; margin-top: 2px; }}
+  .mr-tag {{
+    font-size: 10px; color: #475569; background: #f1f5f9;
+    border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+  }}
+  .mr-plan {{
+    border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px;
+    margin-bottom: 8px; background: #f8fafc;
+  }}
+  .mr-plan-focus {{ font-size: 12px; font-weight: 600; color: #0f172a; }}
+  .mr-plan-how {{ font-size: 11px; color: #475569; margin-top: 3px; }}
+  .mr-drills {{ margin: 5px 0 0; padding-left: 18px; font-size: 11px; color: #334155; }}
+  .mr-min {{ font-size: 10px; color: #94a3b8; margin-left: 6px; }}
+  .mr-empty {{ font-size: 11px; color: #94a3b8; padding: 8px 0; }}
+  .mr-foot {{ margin-top: 8px; border-top: 1px dashed #e2e8f0; padding-top: 6px; }}
   .link-btn {{
     background: none; border: none; padding: 0; cursor: pointer;
     color: #2563eb; font-size: inherit; text-decoration: underline;
@@ -3470,6 +3523,7 @@ const ARTIFACT_VIEWS = {{
   flow_graph: renderRequirementSet,
   ddd_design: renderDddDesign,
   receipt: renderReceipt,
+  math_review: renderMathReview,
 }};
 
 // 小票：抬头 + 商品行表 + 金额区 + 校验结论。
@@ -3521,6 +3575,94 @@ function renderReceipt(r) {{
     </div>
     <div class="rs-hint">机械校验只证明「数字对得上」，不证明「字认对了」——
       正确性靠人工对账，盲区写在 definition 顶部。</div>
+  </div>`;
+}}
+
+// 数学盒：错题训练卡。
+//
+// 家长拿着这张卡只有两个问题：**错在哪**、**接下来练什么**。
+// 所以顺序固定：错题清单 → 训练方案。得分率只是附注——
+// 照片里没读出来就写「没有得分率」，**不摆一个 0.00 装成算过**。
+function renderMathReview(r) {{
+  const questions = Array.isArray(r.wrong_questions) ? r.wrong_questions : [];
+  const plan = Array.isArray(r.training_plan) ? r.training_plan : [];
+  const types = Array.isArray(r.error_types) ? r.error_types : [];
+  const missing = Array.isArray(r.missing_fields) ? r.missing_fields : [];
+  const na = (v) => v === 'n/a' || v === null || v === undefined || v === '';
+  // **用全局的 esc**：卡上的每一格都是模型写出来的，
+  // 不转义的话模型吐一句 <script> 就进了看板上所有人的页面。
+  // （别在这里定义同名局部函数——那会把转义悄悄关掉。）
+
+  const masteryText = na(r.mastery)
+    ? '没有得分率' : ('掌握度 ' + Number(r.mastery).toFixed(2));
+  const chips = types.map((t) => `<span class="mr-chip">${{esc(t)}}</span>`).join('');
+  const head = `<div class="mr-head">
+    <span class="mr-count">错 ${{questions.length}} 题</span>
+    <span class="mr-chip">${{esc(masteryText)}}</span>
+    ${{chips}}
+  </div>`;
+
+  // **缺了哪几个要说出来**：空着的格子不说，读者会以为「就是这样」。
+  const notes = [];
+  if (missing.length) {{
+    notes.push(`<div class="mr-note">这次没拿到：${{esc(missing.join('、'))}} ——
+      那些格子留空了，没有猜。</div>`);
+  }}
+
+  const summary = r.training_summary
+    ? `<div class="mr-summary">${{esc(r.training_summary)}}</div>` : '';
+
+  const rows = questions.map((q, i) => {{
+    const src = q.answer_source === '模型推算'
+      ? '<span class="mr-src">（模型推算）</span>' : '';
+    return `<tr>
+      <td class="mr-no">${{esc(q.no || (i + 1))}}</td>
+      <td class="mr-q">${{esc(q.question || '—')}}</td>
+      <td class="mr-wrong">${{esc(q.student_answer || '（空）')}}</td>
+      <td class="mr-right">${{esc(q.correct_answer || '—')}}${{src}}</td>
+      <td><span class="mr-tag">${{esc(q.error_type || '未分类')}}</span>
+        ${{q.error_note ? `<div class="mr-note-inline">${{esc(q.error_note)}}</div>` : ''}}</td>
+    </tr>`;
+  }}).join('');
+
+  const questionBlock = questions.length
+    ? `<div class="mr-sec">错在哪</div>
+       <table class="mr-table">
+         <thead><tr><th>#</th><th>题目</th><th>孩子的答案</th><th>正确答案</th><th>错因</th></tr></thead>
+         <tbody>${{rows}}</tbody>
+       </table>`
+    : '<div class="mr-sec">错在哪</div><div class="mr-empty">这次没读出错题。</div>';
+
+  const plans = plan.map((p) => {{
+    const drills = Array.isArray(p.drills) ? p.drills : [];
+    const drillHtml = drills.length
+      ? `<ul class="mr-drills">${{drills.map((d) => `<li>${{esc(d)}}</li>`).join('')}}</ul>`
+      : '<div class="mr-plan-how">（这一组没给具体要练的题）</div>';
+    return `<div class="mr-plan">
+      <div class="mr-plan-focus">${{esc(p.focus || p.error_type || '针对性训练')}}
+        <span class="mr-tag">${{esc(p.error_type || '')}}</span>
+        ${{p.minutes ? `<span class="mr-min">约 ${{esc(p.minutes)}} 分钟</span>` : ''}}
+      </div>
+      ${{p.how ? `<div class="mr-plan-how">怎么练：${{esc(p.how)}}</div>` : ''}}
+      ${{drillHtml}}
+    </div>`;
+  }}).join('');
+
+  const planBlock = plan.length
+    ? `<div class="mr-sec">接下来怎么练</div>${{plans}}`
+    : '<div class="mr-sec">接下来怎么练</div><div class="mr-empty">这次没有要针对练的错因。</div>';
+
+  const meta = [r.activity, r.observed_at, r.evidence]
+    .filter((v) => v !== null && v !== undefined && v !== '')
+    .map((v) => `<span class="mr-chip">${{esc(v)}}</span>`).join(' ');
+
+  return `<div class="mr">
+    ${{head}}
+    ${{notes.join('')}}
+    ${{summary}}
+    ${{questionBlock}}
+    ${{planBlock}}
+    <div class="mr-foot">${{meta}}</div>
   </div>`;
 }}
 
@@ -4215,7 +4357,10 @@ function renderMediaFields(entry) {{
       + input + flag + desc
       + `</div>`;
   }}).join('');
-  box.innerHTML = `<div class="mf-title">照片之外的事实（照片读不出来的，填这里）</div>${{rows}}`;
+  box.innerHTML = `<details class="mf-more">
+    <summary class="mf-title">可选：照片之外的事实（照片读不出来的，填这里）</summary>
+    <div class="mf-rows">${{rows}}</div>
+  </details>`;
   box.hidden = false;
 }}
 

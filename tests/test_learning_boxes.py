@@ -48,6 +48,27 @@ def _fields(schema) -> dict:
     return {f.name: f for f in schema.fields}
 
 
+def _consumer_accepts(consumer_type: str, producer_type: str) -> bool:
+    """**消费者收不收得下生产者吐出来的东西**
+
+    守卫要问的是这个，**不是「两边一样不一样」**。
+
+    为什么不一样也行：交接通道是拿**消费者声明的形状**去校验上游产出的。
+    消费者说「我收 number_or_na」，那上游吐一个 number 当然接得住——
+    number 本来就是 number_or_na 的合法值。
+
+    反过来不行：消费者只收 number，上游吐了 `n/a`（字符串），
+    交接通道会当场拒——**而这个失败要等到某天真的投料才发现**。
+
+    所以口径是：**消费者收得下的类型集合 ⊇ 生产者可能吐出的类型**。
+    """
+    if consumer_type == producer_type:
+        return True
+    base = consumer_type[:-6] if consumer_type.endswith("_or_na") else ""
+    # 三态类型（number_or_na / boolean_or_na）收得下它的基础类型
+    return bool(base) and producer_type == base
+
+
 # ------------------------------------------------------------------
 # 1. 形状不许漂
 # ------------------------------------------------------------------
@@ -74,6 +95,16 @@ class TestTheShapesStayCompatible:
 
     @pytest.mark.parametrize("box_id", SUBJECT_BOXES)
     def test_the_shared_fields_have_the_same_type_on_both_sides(self, box_id):
+        """两边的类型要**接得上**——不是「一模一样」
+
+        消费者说「我收 number_or_na」，上游吐 number 是接得住的；
+        反过来（消费者只收 number、上游吐 n/a）就接不住——
+        而接不住的表现是「交接通道在某一次悄悄拒了」。
+
+        **为什么这条要放宽**：数学盒的照片里常常没有得分/满分，
+        那次记录的掌握度就是 `n/a`。档案那侧因此声明成三态，
+        而语文/英语盒照样吐普通数字——**接得住，就不红**。
+        """
         consumed = _fields(_schema(GROWTH_BOX, CONSUMED_SCHEMA))
         produced = _fields(_schema(box_id, _definition(box_id).result.result_schema))
 
@@ -81,10 +112,10 @@ class TestTheShapesStayCompatible:
             f"{name}: 档案收 {consumed[name].type} / "
             f"{box_id} 吐 {produced[name].type}"
             for name in sorted(set(consumed) & set(produced))
-            if consumed[name].type != produced[name].type
+            if not _consumer_accepts(consumed[name].type, produced[name].type)
         ]
         assert not mismatched, (
-            "同一份形状，两边的类型不一样：\n  " + "\n  ".join(mismatched)
+            "档案接不上下游吐出来的类型：\n  " + "\n  ".join(mismatched)
         )
 
     def test_the_archive_only_accepts_the_two_known_source_kinds(self):

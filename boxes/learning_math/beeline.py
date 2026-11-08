@@ -1,13 +1,19 @@
 """
 boxes.learning_math.beeline - 数学盒 的作业路线（组件链）
 
-op 链（v2）：
-  1. `math_read_photo` 看照片 → 把图上印着的事实抄出来（没投照片就跳过）
+op 链（v3）：
+  1. `math_read_photo` 看照片 → 把图上印着的事实**抄**出来（没投照片就跳过）
   2. `math_intake`      取投料 → 这一跳要做什么（手工填的优先，照片补空）
-  3. `math_work`        真干活 → 真的观测到的东西
-  4. `math_packager`    装配产出
+  3. `math_analyze`     当老师 → 判错因、出**针对性训练方案**
+  4. `math_work`        真干活 → 算得分率
+  5. `math_packager`    装配产出
 
-**为什么加了这一跳**：v1 只有手工投料，家长得把分数一个个数进表单。
+**为什么加了「当老师」这一跳**（v3）：这一盒的产出从「一条学习记录」
+变成了「**错在哪 + 怎么针对性练**」。判错因要看着题目、孩子的答案和
+正确答案一起想，图上没印答案时还得**解一次题**——
+这是另一件活，跟「照着抄」混在一跳里，看图失败和判断失败就分不开了。
+
+**为什么加了这一跳**（v1 → v2）：v1 只有手工投料，家长得把分数一个个数进表单。
 2026-11-01 起投料口能拍作业照片——但**看图是模型那一腿的事**，
 它得是独立的一跳：只有这样，看图失败、照片读不出分数、
 人工补字段这三件事在履约轨迹上才分得开（op_trace 里看得见停在哪一跳）。
@@ -51,16 +57,27 @@ COMPONENTS: list[Component] = [
         input_from="math_read_photo",
         input="schema_learning_math_photo_read",
         output="schema_learning_math_plan",
-        next=["math_work"],
+        next=["math_analyze"],
         bee_type="math_intake_handler",
+        idempotency=IDEMPOTENT_BY_TASK,
+    ),
+
+    Component(
+        op_id="math_analyze",
+        type="math_analyze",
+        input_from="math_intake",
+        input="schema_learning_math_plan",
+        output="schema_learning_math_analysis",
+        next=["math_work"],
+        bee_type="math_analyze_handler",
         idempotency=IDEMPOTENT_BY_TASK,
     ),
 
     Component(
         op_id="math_work",
         type="math_work",
-        input_from="math_intake",
-        input="schema_learning_math_plan",
+        input_from="math_analyze",
+        input="schema_learning_math_analysis",
         output="schema_learning_math_observation",
         next=["math_packager"],
         bee_type="math_work_handler",

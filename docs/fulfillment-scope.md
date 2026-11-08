@@ -704,8 +704,18 @@ Learning 协作边界（4 只盒子：math / chinese / english → growth）是*
 
 **三条边全是真交接（handoff），而且共用同一个通道字段。**
 三科的产出是三个不同的 schema（`schema_learning_math_output` / `_chinese_` / `_english_`），
-但**字段完全相同**（10 个，名字和类型都一样），
-growth 声明的接料形状 `schema_learning_subject_result` 是那 10 个字段的**子集**（9 个）。
+**共用同一份「学科结果」形状**——growth 声明的接料形状
+`schema_learning_subject_result` 那 9 个字段，三科都吐得出。
+
+**数学盒的产出是超集**：除了那 9 个（+ `ratio_exact`），
+它还多出**错题训练卡**那几项（`wrong_questions` / `wrong_count` /
+`error_types` / `training_plan` / `training_summary` /
+`training_covers_errors` / `missing_fields`）——多出来的字段**不影响交接**，
+交接只校验下游声明的那 9 个。
+
+**掌握度是三态的**（`number_or_na`）：照片里没读出得分/满分时，
+那次记录的掌握度是 `n/a`。消费者声明 `number_or_na` 就**收得下**
+上游吐的普通数字——守卫守的是「接得上」，不是「两边一模一样」。
 
 **于是 §5.3 那三条规则，Learning 边界里有两条不适用**：
 
@@ -1455,10 +1465,10 @@ learning_english_box -> learning_growth_box   subject_result: ref:schema_learnin
 ```
 
 三科产出是**三个不同 schema**（`schema_learning_math_output` / `_chinese_` / `_english_`），
-但**字段完全相同**（10 个，名字和类型都一样）：
+**共用同一份「学科结果」形状**（数学盒是超集，多了错题训练卡那几项）：
 
 ```
-math    产出: {record_id, subject, activity, observed_at, mastery, evidence, source_kind, detail, notes, ratio_exact}
+math    产出: {record_id, subject, activity, observed_at, mastery, evidence, source_kind, detail, notes, ratio_exact, +错题训练卡}
 growth 接料: {record_id, subject, activity, observed_at, mastery, evidence, source_kind, detail, notes}
                                       ↑ 上游的子集（9 个，去掉 ratio_exact，notes 放宽成可选）
 ```
