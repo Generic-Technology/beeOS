@@ -190,6 +190,21 @@ _PAGE = r"""<!DOCTYPE html>
   }
   .pill b { color: var(--fg); font-weight: 600; }
   main { padding: 20px 28px 60px; max-width: 1180px; margin: 0 auto; }
+  /* ===== 选哪只盒子 =====
+     以前 12 只盒子各占一大张卡（结论 + 判据 + 例外 + 指标 + 接线全铺开），
+     十几屏，而且大部分是「已验 · 通过」的绿条。
+     现在**选一只看一只**：选择器 + 一张卡。 */
+  .picker {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .picker-label { color: var(--dim); font-size: 13px; }
+  .picker-select {
+    background: var(--panel); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 10px; font: inherit; min-width: 280px;
+  }
+  .picker-select:focus { outline: 1px solid var(--accent); }
+  .picker-note { color: var(--dim); font-size: 12px; }
   .box {
     background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     margin-bottom: 18px; overflow: hidden;
@@ -199,7 +214,7 @@ _PAGE = r"""<!DOCTYPE html>
     /* 窄屏时标签**整块**换到下一行**，不要把一个标签里的字从中间折断
        （"协作边界 · 学习成长" 折成两行，读起来像两个字是两个词）。 */
     flex-wrap: wrap;
-    cursor: pointer; user-select: none; background: var(--panel-2);
+    user-select: none; background: var(--panel-2);
   }
   .box > .head:hover { background: #232833; }
   .name { font-weight: 600; font-size: 15px; white-space: nowrap; }
@@ -256,7 +271,14 @@ _PAGE = r"""<!DOCTYPE html>
   <div class="sub">盒子体检台 · 只读——把每只盒子声明得对不对摊开给人看。判定在 runtime/box_health.py，守卫和这个页面读同一份。</div>
   <div class="counts" id="counts"></div>
 </header>
-<main id="catalog"></main>
+<main>
+  <div class="picker">
+    <label class="picker-label" for="box-picker">看哪只盒子</label>
+    <select class="picker-select" id="box-picker"></select>
+    <span class="picker-note" id="picker-note"></span>
+  </div>
+  <div id="catalog"></div>
+</main>
 <script id="workshop-data" type="application/json">__WORKSHOP_DATA__</script>
 <script>
 (function () {
@@ -325,7 +347,77 @@ _PAGE = r"""<!DOCTYPE html>
     counts.appendChild(p);
   });
 
+  // ===== 选哪只盒子 =====
+  //
+  // 以前 12 只盒子各占一大张卡（体检结论 + 判据 + 例外 + 指标 + 接线全铺开），
+  // 十几屏，而且**大部分是「已验 · 通过」的绿条**——
+  // 读者要滚很久才能看完，而真正要看的（哪只盒子有问题）埋在中间。
+  //
+  // 现在**选一只看一只**。但纯下拉有个洞：**「哪只盒子有问题」被折叠了**——
+  // 展开 12 个选项才看得见。所以：
+  // 1. 选项文字**带状态**（`体检有问题` / `部分没验到` / `体检通过`），
+  //    不靠颜色单独表达；
+  // 2. 选项**有问题排前面**（体检台是诊断工具，最该先看见的是坏的那只），
+  //    默认就选中它；
+  // 3. 选择器旁边**永远写着有问题的盒子是谁**——一眼可见，不靠展开。
+  var VERDICT_ORDER = { fail: 0, unknown: 1, pass: 2 };
+
+  function orderForPicker(boxes) {
+    // **稳定排序**：同一种结论的盒子保持原来的先后
+    //（Array.prototype.sort 自 ES2019 起是稳定的），
+    // 所以「有问题的那几只」之间的次序不会因为这次排序而变来变去。
+    //
+    // **用 `??` 不用 `||`**：`fail` 的序号是 **0**，而 `0 || 9` = 9——
+    // falsy 的 0 会被当成「这个键不存在」，
+    // 于是**有问题的盒子被排到了最后**（正好和这个函数的目的相反）。
+    return boxes.slice().sort(function (a, b) {
+      return (VERDICT_ORDER[a.health.verdict] ?? 9)
+        - (VERDICT_ORDER[b.health.verdict] ?? 9);
+    });
+  }
+
+  function pickInitialBox(boxes, requestedId) {
+    // URL 指名的优先——分享出去的链接得打开就是那只。
+    if (requestedId) {
+      for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].box_id === requestedId) return boxes[i];
+      }
+    }
+    // 否则选最坏的那只：有问题 → 没验到 → 全过。
+    var ordered = orderForPicker(boxes);
+    return ordered.length ? ordered[0] : null;
+  }
+
+  function optionText(box) {
+    // 状态写进**文字**，不只靠颜色——
+    // 「没验到」和「通过」必须长得不一样，这是三态在选择器上的落点。
+    return box.display_name + " · " + VERDICT_TEXT[box.health.verdict];
+  }
+
+  function boxIdFromUrl() {
+    var m = /[?&]box=([^&]*)/.exec(location.search);
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+
   var catalog = document.getElementById("catalog");
+  var picker = document.getElementById("box-picker");
+  var note = document.getElementById("picker-note");
+
+  orderForPicker(data.boxes).forEach(function (box) {
+    var opt = el("option", null, optionText(box));
+    opt.value = box.box_id;
+    picker.appendChild(opt);
+  });
+
+  // 有问题的盒子是谁——**一眼可见**，不用展开下拉。
+  var sick = data.boxes.filter(function (b) { return b.health.verdict !== "pass"; });
+  if (sick.length) {
+    note.appendChild(document.createTextNode("有问题：" + sick.map(function (b) {
+      return b.display_name + "（" + VERDICT_TEXT[b.health.verdict] + "）";
+    }).join("、")));
+  } else {
+    note.appendChild(document.createTextNode("全部盒子体检通过。"));
+  }
 
   function table(headers, rows) {
     var t = el("table");
@@ -354,7 +446,8 @@ _PAGE = r"""<!DOCTYPE html>
     return wrap;
   }
 
-  data.boxes.forEach(function (box, index) {
+  // 一只盒子的**完整体检**：结论 + 判据 + 例外 + 指标 + 接线，一段都不少。
+  function renderBox(box) {
     var card = el("div", "box");
     var head = el("div", "head");
     head.appendChild(el("span", "name", box.display_name));
@@ -377,9 +470,6 @@ _PAGE = r"""<!DOCTYPE html>
     head.appendChild(el("span", "tag", box.maturity === "skeleton" ? "未实现" : "已实现"));
     var v = el("span", "verdict " + box.health.verdict, VERDICT_TEXT[box.health.verdict]);
     head.appendChild(v);
-    head.addEventListener("click", function () {
-      card.classList.toggle("open");
-    });
     card.appendChild(head);
 
     var body = el("div", "body");
@@ -430,14 +520,42 @@ _PAGE = r"""<!DOCTYPE html>
     body.appendChild(section("接线",
       wire.length ? el("div", "desc", wire.join("　|　")) : el("div", "empty", "没有声明接线")));
 
+    card.classList.add("open");
     card.appendChild(body);
-    catalog.appendChild(card);
-    if (index === 0) card.classList.add("open");
+    return card;
+  }
+
+  function show(box) {
+    catalog.textContent = "";
+    if (!box) {
+      catalog.appendChild(el("div", "empty", "目录里一只盒子都没有。"));
+      return;
+    }
+    catalog.appendChild(renderBox(box));
+  }
+
+  var current = pickInitialBox(data.boxes, boxIdFromUrl());
+  if (current) picker.value = current.box_id;
+  show(current);
+  // URL 跟着选中的盒子走——不然没法把「这只盒子有问题」发给同事。
+  // 初次渲染用 replaceState（不堆历史），用户自己换盒子才 pushState
+  //（后退能回到上一只，而不是直接离开这个页面）。
+  if (current) {
+    history.replaceState(null, "", "?box=" + encodeURIComponent(current.box_id));
+  }
+
+  picker.addEventListener("change", function () {
+    var box = data.boxes.filter(function (b) { return b.box_id === picker.value; })[0];
+    if (!box) return;
+    show(box);
+    history.pushState(null, "", "?box=" + encodeURIComponent(box.box_id));
   });
 
-  if (!data.boxes.length) {
-    catalog.appendChild(el("div", "empty", "目录里一只盒子都没有。"));
-  }
+  window.addEventListener("popstate", function () {
+    var box = pickInitialBox(data.boxes, boxIdFromUrl());
+    if (box) picker.value = box.box_id;
+    show(box);
+  });
 })();
 </script>
 </body>
