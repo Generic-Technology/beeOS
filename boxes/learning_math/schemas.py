@@ -689,6 +689,15 @@ LEARNING_MATH_OUTPUT_SCHEMA = SchemaDef(
             required=True,
             description="错了几题",
         ),
+        FieldDef(
+            name="verified_right_count",
+            type="number",
+            required=True,
+            description=(
+                "「看着像错题、算下来是对的」剔掉了几道——"
+                "**错题是算出来的，不是看出来的**，剔掉的要说明白"
+            ),
+        ),
         _error_types_field(),
         _training_plan_field(),
         FieldDef(

@@ -88,14 +88,22 @@ DECLARATION = BoxDeclaration(
     acceptance=[
         # **判据读的是产出里的字段名**——字段不在产出 schema 里，
         # 这条判据就永远读不到值。
-        AcceptanceRule(metric="mastery", op="gte", value=0),
-        AcceptanceRule(metric="mastery", op="lte", value=1),
+        #
+        # **这张卡只管两件事**：掌握度确实是得分率（复算过），
+        # 训练方案盖住了每一类错因。
+        #
+        # **掌握度有没有越界不在这里判**：那两条（`mastery` ≥ 0 / ≤ 1）
+        # 归成长记录盒——**得分率是档案腿的事**，在档案那条腿上有判据。
+        # 照片路径上读不出得分/满分时，这一格是 `n/a`，
+        # 判据判「不适用」——这里摆着两条永远不适用的判据只是噪音。
         AcceptanceRule(metric="ratio_exact", op="eq", value=True),
         # 训练方案要盖住这次出现的每一类错因
         AcceptanceRule(metric="training_covers_errors", op="eq", value=True),
     ],
     exceptions=[
-        ExceptionRule(condition="mastery > 1", action="escalate"),
+        # 掌握度越界那条**不在这里**：得分率是档案腿的事，
+        # 越界由成长记录盒判（那边有 mastery 的范围判据）。
+        # 而且投料口已经拦了「得分 > 满分」，这里那条判不到。
         ExceptionRule(condition="ratio_exact == false", action="escalate"),
         ExceptionRule(condition="training_covers_errors == false", action="escalate"),
     ],

@@ -1639,6 +1639,15 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .ac-rule::before {{ content: '判据 '; color: #94a3b8; }}
   .ac-actual {{ grid-column: 2; font-size: 10px; color: #475569; word-break: break-all; }}
   .ac-row.bad .ac-actual {{ color: #b91c1c; font-weight: 600; }}
+  /* 「这次用不上」的那几条折起来：它们在照片路径上永远是灰的，
+     摊开三行只会让人以为漏验了什么。 */
+  .ac-na {{ margin-top: 2px; }}
+  .ac-na > summary {{
+    font-size: 10px; color: #94a3b8; cursor: pointer; list-style: none;
+  }}
+  .ac-na > summary::-webkit-details-marker {{ display: none; }}
+  .ac-na > summary::before {{ content: '－ '; }}
+  .ac-na[open] > summary::before {{ content: '＋ '; }}
   .ac-row.na .ac-actual {{ color: #94a3b8; font-style: italic; }}
   /* 验收闸：菱形，颜色随判定结果走 */
   /* 菱形不挂状态灯：填充色本身就是状态（待机米 / 判定中黄 / 通过绿 / 没过红），
@@ -3469,11 +3478,12 @@ function renderAcceptance(a) {{
     if (typeof v === 'number') return String(v);
     return esc(v);
   }};
-  const items = rows.map((r) => {{
+  const isNa = (r) => r.outcome === 'not_applicable' || r.not_applicable;
+  const items = rows.filter((r) => !isNa(r)).map((r) => {{
     // 三态：passed / failed / not_applicable。
     // n/a 绝不能画成 ✓——「这条票型用不上这条判据」和「这条验过了」是两回事，
     // 混起来就变成用 6/6 冒充「全都验过了」。
-    const na = r.outcome === 'not_applicable' || r.not_applicable;
+    const na = isNa(r);
     const passed = !na && !!r.passed;
     const cls = na ? 'na' : (passed ? 'ok' : 'bad');
     const mark = na ? '—' : (passed ? '✓' : '✗');
@@ -3486,15 +3496,28 @@ function renderAcceptance(a) {{
     </div>`;
   }}).join('');
   const nOk = rows.filter((r) => r.outcome === 'passed' || (!r.not_applicable && r.passed)).length;
-  const nNa = rows.filter((r) => r.outcome === 'not_applicable' || r.not_applicable).length;
+  const naRows = rows.filter((r) => isNa(r));
+  const nNa = naRows.length;
   // 分母只数真正判过的。6 条里 1 条不适用，说「5/6」会让人以为还有一条没过。
   const nJudged = nOk + (rows.length - nOk - nNa);
   const naNote = nNa ? ` · ${{nNa}} 条不适用` : '';
+  // **不适用的那几条折起来**：照片路径上它们永远是「不适用」，
+  // 摊开三行灰字，家长只会以为漏验了什么。折成一行，要看再点开。
+  const naItems = naRows.map((r) => `<div class="ac-row na">
+      <span class="ac-mark">—</span>
+      <span class="ac-metric">${{esc(r.metric)}}</span>
+      <span class="ac-rule">${{esc(r.op)}} ${{fmt(r.expected)}}</span>
+      <span class="ac-actual">这次用不上</span>
+    </div>`).join('');
+  const naBlock = nNa
+    ? `<details class="ac-na"><summary>另有 ${{nNa}} 条这次用不上（点开看）</summary>${{naItems}}</details>`
+    : '';
   return `<div class="ac">
     <div class="ac-summary ${{ok ? 'ok' : 'bad'}}">
       ${{ok ? '✓ 全部通过' : '✗ 未通过'}} · ${{nOk}} / ${{nJudged}} 条判据${{naNote}}
     </div>
     <div class="ac-rows">${{items}}</div>
+    ${{naBlock}}
   </div>`;
 }}
 

@@ -98,11 +98,11 @@ _PHOTO_PROMPT = """你是一张数学作业照片的抄写员。给你一张数�
 
 错题（这是这张照片最重要的部分）：
 - wrong_questions_status:
-  - "found": 你看得出**哪几题错了**（空白、红叉、擦掉重写、明显做错的痕迹）
+  - "found": 你看得出**哪些题像是错了**（空白、红叉、擦改、明显做错的痕迹）
   - "none": 你看得出整页，而且**每题都对**（每题都有对勾、满分的痕迹）
   - "unclear": 你**看不清**哪些题错了（拿不准就填这个——
     「看不清」和「都对」是两件事，填错了等于跟家长说这次全对）
-- wrong_questions: 错题清单。**status="found" 时才填**，一条错题一项：
+- wrong_questions: **候选错题清单**。status="found" 时才填，一条一项：
   - no: 题号（"3" 或 "第3题"）
   - question: **题干**（照抄，**只到等号为止**——
     例：图上写着「3) 38 + 27 = 55」，question 是「38 + 27」，
@@ -112,6 +112,11 @@ _PHOTO_PROMPT = """你是一张数学作业照片的抄写员。给你一张数�
   - correct_answer: 图上印着的正确答案（红笔批注、参考答案区、书上印的）；
     图上没有就 null——**不要自己算**，算答案不是抄写员的事
 
+**你只管抄「像是错了」的题，不用管它到底对不对**——
+对不对由下一跳**算出来**再比。你抄错了没关系，
+下一跳会把它剔出去；你漏抄了，那道题就永远出不来。
+所以宁可多列几道候选，也别只列你觉得错的那几道。
+
 **不要自己做算术**：score 和 total 各自抄图上印着的那一格。
 看到「92/100」就填 92 和 100；只看到「92」就 score=92、total=null
 （除非别处印着满分）。
@@ -119,18 +124,25 @@ _PHOTO_PROMPT = """你是一张数学作业照片的抄写员。给你一张数�
 只输出 JSON，不要解释。"""
 
 
-_ANALYZE_PROMPT = f"""你是一位小学数学老师。下面是一次作业里**错在哪**的材料：
-题号、题目原文、孩子写的答案，图上印着的正确答案（可能没有）。
+_ANALYZE_PROMPT = f"""你是一位小学数学老师。下面是**一次作业里可能是错的题**（照片上抄下来的）：
+题号、题目、孩子的答案，图上印着的正确答案（可能没有）。
+
+**这些题只是「候选」——照片上看着像错题而已，到底哪几题真的错了，要靠算。**
 
 请给出三样东西：
 
-1. **每道错题的判断**（按给的顺序，一题一条，**不要自己加题**）：
+1. **每道题的判断**（按给的顺序，一题一条，**不要自己加题**）：
    - index: 这道题在下面清单里的序号（**照抄**）
+   - verdict: 先算出这题的正确答案，再和孩子的答案比：
+     - 算出来和孩子的答案**一样** → verdict 写 "right"（这题其实做对了，别算成错题）
+     - 算出来**不一样** → verdict 写 "wrong"
+     - 算不出来 / 题目没抄全 → verdict 写 "unclear"
    - topic: 这题考什么知识点/题型
-   - correct_answer: 正确答案。**必须给**：
-     图上印着就用印着的；**图上没有就自己算出来**（这是数学题，你能算）。
+   - correct_answer: 正确答案。**必须算出来**：
+     图上印着就用印着的；**图上没有就自己算**（这是数学题，你能算）。
    - answer_source: 正确答案的来路——图上印的写「照片」，你自己算的写「模型推算」
-   - error_type: 错因，**只能从这张表里选**：
+   - error_type: 错因（**只在 verdict 是 "wrong" 时判**），
+     **只能从这张表里选**：
      {' / '.join(ERROR_TYPES)}
    - error_note: 错在哪（人话一句，比如「个位满十忘了进一」）
 
@@ -147,13 +159,14 @@ _ANALYZE_PROMPT = f"""你是一位小学数学老师。下面是一次作业里*
 2. **针对性训练方案**（training_plan）：**按错因分组**，这次出现的每一类错因
    都要有一组方案，一组一条：
    - focus: 针对什么（人话，比如「两位数加法的进位」）
-   - error_type: 这一组针对的错因（从上面那张表里选）
+   - error_type: 这一组针对的错因（**从上面你判出来的错因里原样抄**）
    - how: 怎么练（步骤/口诀/检查习惯，一两句）
    - drills: **具体要练的题或题型**，3 到 5 条，一条一个
      （例："38+27（进位加法）×5"；不要写"多练"这种空话）
    - minutes: 大概练多少分钟
 
 3. **training_summary**：一句人话，说清这次错在哪、下一步怎么练。
+   （说**真正错了几道**——算下来是对的题不算错题。）
 
 **如果给的是手填的错题描述**（不是完整题目）：
 照着描述判断错因；topic 写你推断的知识点；correct_answer 留空
@@ -547,6 +560,25 @@ def _as_questions(value: Any) -> list[dict[str, str]]:
     return out
 
 
+def _same_answer(left: str, right: str) -> bool:
+    """两个答案是不是同一个（数字按值比，别的按去空格的字面比）
+
+    「55」和「55」是同一个；「55」和「55.0」也是同一个（同一个数）。
+    分数写法的差别（「1/2」和「0.5」）认不出来——那就当**不一样**：
+    宁可多留一道题让人看，也不要悄悄剔掉一道真的错了的。
+    """
+    a = str(left or "").strip().replace(" ", "")
+    b = str(right or "").strip().replace(" ", "")
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    try:
+        return abs(float(a) - float(b)) < 1e-9
+    except ValueError:
+        return False
+
+
 def _clean_analysis(raw: dict[str, Any], questions: list[dict[str, str]]) -> dict[str, Any]:
     """模型判出来的错因/训练方案 → 干净的值
 
@@ -554,6 +586,15 @@ def _clean_analysis(raw: dict[str, Any], questions: list[dict[str, str]]) -> dic
     题号、题目、孩子的答案**一律以抄下来的为准**，
     模型返回的对应位置按序号对齐，多出来的条目丢掉。
     不然模型一发挥，多出一道题，家长照着练一道不存在的题。
+
+    ## 「错题」是**算出来**的，不是看出来的
+
+    看图那一跳只负责**抄候选题**（它分不清红叉和对勾）。
+    到底哪几题真的错了，**靠算**：算出正确答案，跟孩子的答案比。
+    比过了 → 剔出清单。
+
+    不这么做就会出这种事：照片上 4 道「错题」里 2 道其实是对的，
+    而家长要照着练的就是那 2 道。
     """
     by_index: dict[int, dict[str, Any]] = {}
     for item in raw.get("wrong_questions") or []:
@@ -566,13 +607,14 @@ def _clean_analysis(raw: dict[str, Any], questions: list[dict[str, str]]) -> dic
         by_index[index] = item
 
     judged: list[dict[str, str]] = []
+    dropped = 0
     for i, question in enumerate(questions):
         said = by_index.get(i, {})
         topic = str(said.get("topic") or "").strip()
         correct = str(said.get("correct_answer") or "").strip()
         source = str(said.get("answer_source") or "").strip()
         if not correct:
-            correct = question.get("correct_answer", "")
+            correct = question.get("correct_answer", "") or ""
         if not correct:
             source = ""
         elif question.get("correct_answer") and correct == question["correct_answer"]:
@@ -580,44 +622,81 @@ def _clean_analysis(raw: dict[str, Any], questions: list[dict[str, str]]) -> dic
             source = "照片"
         elif source not in ANSWER_SOURCES:
             source = "模型推算"
+
+        # **算出来是对的 → 这题不是错题**，剔出去。
+        # 两条路都算数：模型自己说"right"，或者两个答案**字面/数值相同**。
+        verdict = str(said.get("verdict") or "").strip().lower()
+        student_answer = question.get("student_answer")
+        if verdict == "right" or _same_answer(correct, student_answer or ""):
+            dropped += 1
+            continue
+
         error_type = str(said.get("error_type") or "").strip()
         if error_type not in ERROR_TYPES:
             # 说不出个正经错因 → 归「其它」，不硬塞进某一类
             error_type = "其它"
-        if not question.get("student_answer"):
+        if student_answer == "":
             # **空串** = 图上空着没做 → 错因就是「未作答」（不用模型判）。
             # `None` = 那一格没看清 → 不强制判，交给模型按看到的来。
-            if question.get("student_answer") == "":
-                error_type = "未作答"
+            error_type = "未作答"
         judged.append({
             "no": question.get("no", ""),
             "topic": topic,
             "question": question.get("question", ""),
-            "student_answer": question.get("student_answer", ""),
+            "student_answer": student_answer if student_answer is not None else "",
             "correct_answer": correct,
             "answer_source": source,
             "error_type": error_type,
             "error_note": str(said.get("error_note") or "").strip(),
         })
 
-    # 错因清单：**从错题里算出来**，不信模型自己报的那份
+    # 错因清单：**从留下的错题里算出来**，不信模型自己报的那份
     error_types: list[str] = []
     for item in judged:
         if item["error_type"] not in error_types:
             error_types.append(item["error_type"])
 
-    # 训练方案：只留**这次真出现的错因**的方案，一类一组
-    plan: list[dict[str, Any]] = []
-    covered: set[str] = set()
-    for item in raw.get("training_plan") or []:
+    plan = _clean_plan(raw.get("training_plan"), judged, error_types)
+    summary = str(raw.get("training_summary") or "").strip()
+    if not summary:
+        summary = _fallback_summary(judged, error_types, plan, dropped)
+    elif dropped:
+        # 模型自己写的总结可能还在说「错了 4 题」——**把剔掉的补上**，
+        # 不然卡片上的数跟清单对不上
+        summary += f"（另有 {dropped} 道题看着像错题，算下来是对的，没算进来。）"
+    return {
+        "wrong_questions": judged,
+        "error_types": error_types,
+        "training_plan": plan,
+        "training_summary": summary,
+        # 剔掉了几道「看着像错题、算下来是对的」——产出里要看得见，
+        # 不然家长会以为漏了题
+        "verified_right_count": dropped,
+    }
+
+
+def _clean_plan(
+    raw: Any,
+    judged: list[dict[str, str]],
+    error_types: list[str],
+) -> list[dict[str, Any]]:
+    """训练方案 → 每一类错因都有一组（**缺了兜底，不整条判红**）
+
+    **为什么要有兜底**：模型判了「其它」、方案却写在「计算失误」名下，
+    或者干脆没给方案——这时候整条履约判红，家长拿到的是一张**空卡**
+    加一句「未通过」。那不是诚实，是没用。
+
+    所以：每一类错因都要有组方案。模型给的就用模型的；
+    对不上号就把**模型那组方法**挪过来（方法是对的，标签错了）；
+    实在没有，就机械兜底：**把这几道题逐题重做并讲一遍**。
+    """
+    groups: list[dict[str, Any]] = []
+    for item in raw or []:
         if not isinstance(item, dict):
             continue
         error_type = str(item.get("error_type") or "").strip()
-        if error_type not in ERROR_TYPES or error_type not in error_types:
+        if error_type not in ERROR_TYPES:
             continue
-        if error_type in covered:
-            continue
-        drills = _as_str_list(item.get("drills"))[:_MAX_DRILLS]
         minutes = item.get("minutes")
         try:
             minutes = float(minutes) if minutes not in (None, "") else None
@@ -625,23 +704,58 @@ def _clean_analysis(raw: dict[str, Any], questions: list[dict[str, str]]) -> dic
             minutes = None
         if minutes is not None and minutes == int(minutes):
             minutes = int(minutes)
-        plan.append({
+        groups.append({
             "focus": str(item.get("focus") or "").strip() or error_type,
             "error_type": error_type,
-            "drills": drills,
+            "drills": _as_str_list(item.get("drills"))[:_MAX_DRILLS],
             "how": str(item.get("how") or "").strip(),
             "minutes": minutes,
         })
-        covered.add(error_type)
 
-    summary = str(raw.get("training_summary") or "").strip()
-    if not summary:
-        summary = _fallback_summary(judged, error_types, plan)
+    by_type: dict[str, dict[str, Any]] = {}
+    spare: list[dict[str, Any]] = []
+    for group in groups:
+        if group["error_type"] in by_type:
+            continue
+        if group["error_type"] in error_types:
+            by_type[group["error_type"]] = group
+        else:
+            # 这次没出现的错因 → 先当备胎（标签错了、方法可能是对的）
+            spare.append(group)
+
+    # 每一类错因都要有组方案
+    for error_type in error_types:
+        if error_type in by_type:
+            continue
+        if spare:
+            # 模型给了一组方法，只是标签对不上 → **把标签改过来**
+            group = dict(spare.pop(0))
+            group["error_type"] = error_type
+            by_type[error_type] = group
+            continue
+        # 模型没给 → 机械兜底：逐题重做并讲一遍
+        by_type[error_type] = _fallback_group(error_type, judged)
+
+    return [by_type[t] for t in error_types]
+
+
+def _fallback_group(error_type: str, judged: list[dict[str, str]]) -> dict[str, Any]:
+    """模型没给方案时的机械兜底——**不编方法**，只给能做的事
+
+    说清「这次没看出具体练法」，然后给一件**现在就能做**的事：
+    把这几道题逐题重做，每题讲清楚错在哪一步。
+    """
+    questions = [q for q in judged if q.get("error_type") == error_type]
+    drills = []
+    for q in questions:
+        no = q.get("no") or "这道"
+        drills.append(f"第{no}题：重做一遍，并讲清楚错在哪一步")
     return {
-        "wrong_questions": judged,
-        "error_types": error_types,
-        "training_plan": plan,
-        "training_summary": summary,
+        "focus": f"{error_type}（这次没看出具体练法）",
+        "error_type": error_type,
+        "drills": drills[:_MAX_DRILLS],
+        "how": "这几道题逐题重做，每题说清错在哪一步；先弄懂再做，别急着刷题。",
+        "minutes": 5 * max(1, len(questions)),
     }
 
 
@@ -649,13 +763,23 @@ def _fallback_summary(
     questions: list[dict[str, str]],
     error_types: list[str],
     plan: list[dict[str, Any]],
+    dropped: int = 0,
 ) -> str:
     """模型没给总结时的兜底（**用算出来的数**，不编）"""
     if not questions:
+        if dropped:
+            # 看着像错题、算下来是对的 → 说清这是怎么回事
+            return (
+                f"照片上有 {dropped} 道题看着像做错了，按算式核对下来答案是对的——"
+                "这次没有要针对练的错题。"
+            )
         return "这次没有错题信息。"
     causes = "、".join(error_types)
     tail = f"按上面 {len(plan)} 组方案练。" if plan else "（还没有训练方案。）"
-    return f"这次错了 {len(questions)} 题，错因是{causes}。{tail}"
+    head = f"这次错了 {len(questions)} 题，错因是{causes}。"
+    if dropped:
+        head += f"（另有 {dropped} 道题看着像错题，算下来是对的，没算进来。）"
+    return head + tail
 
 
 def math_analyze_handler(input_data: dict[str, Any]) -> dict[str, Any]:
@@ -830,6 +954,9 @@ def math_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "training_summary": str(input_data.get("training_summary") or ""),
         "training_covers_errors": training_covers_errors,
         "missing_fields": unread,
+        # 「看着像错题、算下来是对的」剔掉了几道——**说在明面上**，
+        # 不然家长会以为漏了题
+        "verified_right_count": int(input_data.get("verified_right_count") or 0),
     }
 
 

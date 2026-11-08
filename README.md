@@ -259,7 +259,7 @@ python scripts/new_box.py --help
   | [`wms_analysis/`](boxes/wms_analysis/README.md) | `wms_analysis_box` | WMS | 4 | 2 | live |
   | [`wms_system/`](boxes/wms_system/README.md) | `wms_system_box` | WMS | 5 | 3 | live |
   | [`receipt/`](boxes/receipt/README.md) | `receipt_capture_box` | 未归范围 | 6 | 2 | live |
-  | [`learning_math/`](boxes/learning_math/README.md) | `learning_math_box` | Learning | 4 | 3 | live |
+  | [`learning_math/`](boxes/learning_math/README.md) | `learning_math_box` | Learning | 2 | 2 | live |
   | [`learning_chinese/`](boxes/learning_chinese/README.md) | `learning_chinese_box` | Learning | 3 | 2 | live |
   | [`learning_english/`](boxes/learning_english/README.md) | `learning_english_box` | Learning | 3 | 2 | live |
   | [`learning_growth/`](boxes/learning_growth/README.md) | `learning_growth_box` | Learning | 4 | 2 | live |

@@ -327,24 +327,93 @@ class TestHandWrittenErrorsAlsoGetAPlan:
 # 3. 方案要盖住每一类错因
 # ------------------------------------------------------------------
 class TestThePlanMustCoverTheErrors:
-    def test_a_missing_group_for_an_error_type_is_rejected(self, monkeypatch, store):
-        """漏了一类错因的方案 → 判红
+    def test_a_missing_group_is_filled_in_mechanically(self, monkeypatch, store):
+        """漏了一类错因的方案 → **兜底补上**，不整条判红
 
-        「练了但没练到点上」不是「练了」——那张卡不成立。
+        「练了但没练到点上」是要补的活，不是要把整次履约判红的理由。
+        家长拿到一张空卡加一句「未通过」，那是没用，不是诚实。
         """
         analysis = json.loads(json.dumps(ANALYSIS))
         analysis["training_plan"] = [analysis["training_plan"][0]]
         record = _run_photo(monkeypatch, store, analysis=analysis)
         artifact = record["artifact"]
-        assert artifact["training_covers_errors"] is False
-        assert record["acceptance_status"] != "accepted", (
-            "方案漏了一类错因居然验收通过"
+        assert artifact["training_covers_errors"] is True
+        assert len(artifact["training_plan"]) == 2, "少了一类错因的方案"
+        record_status = record.get("acceptance_status")
+        assert record_status == "accepted", (
+            f"兜底补上了还不通过：{record.get('acceptance_detail')}"
         )
-        failed = [
-            r for r in record.get("acceptance_detail") or []
-            if r.get("metric") == "training_covers_errors" and not r.get("passed")
+
+    def test_the_fallback_group_says_it_is_a_fallback(self, monkeypatch, store):
+        """兜底的那组要**说清是兜底**——不假装模型给过方法"""
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["training_plan"] = [analysis["training_plan"][0]]
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        plan = record["artifact"]["training_plan"]
+        fallback = [g for g in plan if g["error_type"] == "未作答"]
+        assert fallback, "少的那类没补上"
+        assert "没看出具体练法" in fallback[0]["focus"], (
+            f"兜底组没说清自己是兜底：{fallback[0]['focus']}"
+        )
+        assert fallback[0]["drills"], "兜底组也要给出今晚能做的事"
+
+    def test_a_group_with_a_mismatched_label_gets_relabelled(self, monkeypatch, store):
+        """模型判「其它」却把方案写在「计算失误」名下 → **把标签改过来**
+
+        方法是对的、标签错了的时候，扔掉方法才是浪费。
+        """
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["wrong_questions"][0]["error_type"] = "其它"
+        analysis["training_plan"][0]["error_type"] = "计算失误"
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        artifact = record["artifact"]
+        assert artifact["error_types"] == ["其它", "未作答"]
+        plan_types = [g["error_type"] for g in artifact["training_plan"]]
+        assert plan_types == ["其它", "未作答"], f"方案没跟错因对上：{plan_types}"
+        assert artifact["training_covers_errors"] is True
+        # 方法是模型给的那套，只是标签被改过来了
+        assert "进位" in artifact["training_plan"][0]["focus"]
+
+
+# ------------------------------------------------------------------
+# 2c. 「错题」是算出来的，不是看出来的
+# ------------------------------------------------------------------
+class TestTheWrongQuestionsAreVerifiedByCalculating:
+    def test_a_question_whose_answer_is_right_gets_dropped(self, monkeypatch, store):
+        """孩子答对了的题 → **剔出错题清单**
+
+        照片上看着像错题（红叉看错、批改痕迹看错）很常见。
+        算一遍就知道对不对——不剔的话，家长要照着练的是**做对的题**。
+        """
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["wrong_questions"][0]["verdict"] = "right"
+        analysis["wrong_questions"][0]["correct_answer"] = "55"
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        artifact = record["artifact"]
+        assert artifact["wrong_count"] == 1, "做对的题还在清单里"
+        assert artifact["verified_right_count"] == 1
+        assert "55" not in [
+            q.get("student_answer") for q in artifact["wrong_questions"]
         ]
-        assert failed, "判红时要说清是哪条判据没过"
+
+    def test_the_model_saying_wrong_does_not_override_the_arithmetic(self, monkeypatch, store):
+        """模型说「错了」，但算出来答案一样 → **照样剔掉**"""
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["wrong_questions"][0]["verdict"] = "wrong"
+        analysis["wrong_questions"][0]["correct_answer"] = "55"  # 孩子的答案也是 55
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        artifact = record["artifact"]
+        assert artifact["wrong_count"] == 1
+        assert artifact["verified_right_count"] == 1
+
+    def test_the_dropped_count_is_written_in_the_summary(self, monkeypatch, store):
+        """剔掉的题数要**说在明面上**——不然家长以为漏了题"""
+        analysis = json.loads(json.dumps(ANALYSIS))
+        analysis["wrong_questions"][0]["verdict"] = "right"
+        analysis["wrong_questions"][0]["correct_answer"] = "55"
+        record = _run_photo(monkeypatch, store, analysis=analysis)
+        summary = record["artifact"]["training_summary"]
+        assert "看着像错题" in summary, f"没说清剔掉了什么：{summary}"
 
 
 # ------------------------------------------------------------------
