@@ -1745,6 +1745,20 @@ class TestTheBoxContextIsACatalogCard:
         **整个域**的东西——而它装的是**这只盒子**的一份契约。
         （决定写在 `kanban/trigger.py::box_context()` 的 docstring 里；
         这里让那条决定不再只活在一段注释里。）
+
+        ## 也考虑过 `BOX PROFILE · 盒子概览`，否掉了
+
+        - **英文和中文本来就「不对应」，那不是毛病**：这一页的模式是
+          **英文给概念，中文给概念 + 物件化**——
+          TASK IN · 投料口 / BEELINE · 履约流水线 / ARTIFACTS OUT · 产出口 /
+          ACCEPTANCE · 验收闸。`CONTEXT`（上下文）+ 一张「目录卡」正是在这个模式里。
+        - **「概览」是抽象名词**，而这一行五个中文名全是物件（口 / 流水线 / 出口 /
+          闸 / 卡）。换过去，它成了这一行里唯一的异类。
+        - **PROFILE 太泛**：这节装的是这只盒子自己的**契约 + 实测**。
+          PROFILE 什么都能装，读者点进来看到两份契约，会觉得名字比内容大。
+        - **改名要连函数一起改**（UI 一词一名），而 `box_context()` 的返回字段
+          **全部有人在读**（门牌的接线行就是从它的 `fed_by`/`handoffs` 来的）——
+          它装的确实是上下文，名字没毛病。
         """
         card = _strip_js_comments(_extract_js_function("renderBoxContext"))
         assert "BOX CONTEXT" in card, "目录卡的名字必须是 BOX CONTEXT"
