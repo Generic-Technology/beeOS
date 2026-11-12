@@ -31,7 +31,11 @@ from runtime.models import (
 from runtime.executor import BeelineExecutor
 from runtime.runner import HandlerRunner
 from runtime.acceptance import evaluate_acceptance
-from runtime.queen import default_queen_escalation_handler
+from runtime.plugins import EXTENSION_ESCALATE
+# **导入即登记**：`runtime/queen.py` 在被 import 时登记「升级决策」这个插件类型
+# 和它的实现。盒子在 import 时就装配，所以登记必须早于装配——
+# 否则盒子的插件声明会撞上「类型没登记」。
+from runtime.queen import QUEEN_ESCALATION_IMPL, QUEEN_ESCALATION_PLUGIN
 
 __all__ = [
     # models
@@ -51,6 +55,8 @@ __all__ = [
     "HandlerRunner",
     # acceptance
     "evaluate_acceptance",
-    # queen
-    "default_queen_escalation_handler",
+    # plugins
+    "EXTENSION_ESCALATE",
+    "QUEEN_ESCALATION_PLUGIN",
+    "QUEEN_ESCALATION_IMPL",
 ]

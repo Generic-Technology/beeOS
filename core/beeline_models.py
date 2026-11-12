@@ -15,6 +15,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from core.plugins import PluginBinding
+
 
 # ============================================================
 # operation 内部资源
@@ -80,6 +82,13 @@ class Operation(BaseModel):
     idempotency: Optional[Idempotency] = None
     bee: Optional[Bee] = None
     external_system: Optional[ExternalSystem] = None
+
+    #: 这一跳挂的**插件绑定**（装配器从声明层编译而来）。
+    #:
+    #: **这里只放可序列化的东西**：类型 id / 作用位置 / 参数 / 实现键。
+    #: 实现本体不进这里——它跟 handler 一样走盒子给的表
+    #: （`Operation` 要落盘、要导出 JSON 做差分比对）。
+    plugins: list[PluginBinding] = Field(default_factory=list)
 
     #: 这一跳**成功之后会不会留下东西**（产物 / 副作用）。
     #:

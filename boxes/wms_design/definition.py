@@ -36,8 +36,26 @@ from core.models import (
     QueenDef,
     QueenRules,
 )
+from core.plugins import PluginSpec
 from core.scaffold import BoxDeclaration
 
+
+#: **升级规则的真源**（2026-11-12 从 `queen.rules` 搬到这里）
+#:
+#: 升级决策收编成盒级插件 `queen_escalation` 之后，
+#: 规则住在**插件参数**里——`queen.rules` 那边不再有它。
+ESCALATION_RULES = [
+    {"trigger": "requirement_count > 1000", "action": "escalate_to_human"},
+    # **原来这里还有一条 `rule_conflicts > 5`，删掉了**
+    # （2026-11-01）：这个盒子**从来没算过规则冲突**——
+    # `rule_conflicts` 恒是空数组，而且只存在于 evidence 里面，
+    # 不在产出顶层。条件求值时字段根本取不到 →
+    # 这条规则**一次都不会触发** = 一句空承诺。
+    #
+    # 「声明了却拿不到」比不声明更坏：读者以为规则在守着。
+    # 等盒子真的算出冲突数（rule_consistency 现在还是 mock），
+    # 再把这条加回来——那时候它才是真的。
+]
 
 DECLARATION = BoxDeclaration(
     id="wms_design_box",
@@ -235,18 +253,6 @@ DECLARATION = BoxDeclaration(
                 "rule_conflict_resolution": "flag_for_human_review",
                 "missing_trace_target": "auto_infer_from_description",
                 "ambiguous_classification": "assign_to_most_likely_type",
-                "escalation_rules": [
-                    {"trigger": "requirement_count > 1000", "action": "escalate_to_human"},
-                    # **原来这里还有一条 `rule_conflicts > 5`，删掉了**
-                    # （2026-11-01）：这个盒子**从来没算过规则冲突**——
-                    # `rule_conflicts` 恒是空数组，而且只存在于 evidence 里面，
-                    # 不在产出顶层。条件求值时字段根本取不到 →
-                    # 这条规则**一次都不会触发** = 一句空承诺。
-                    #
-                    # 「声明了却拿不到」比不声明更坏：读者以为规则在守着。
-                    # 等盒子真的算出冲突数（rule_consistency 现在还是 mock），
-                    # 再把这条加回来——那时候它才是真的。
-                ],
             },
             continuous_improvement={
                 "monitor_metrics": [
@@ -298,4 +304,16 @@ DECLARATION = BoxDeclaration(
         # cost 暂时空着：没有成本记账就不声明成本指标，
         # 等于在看板上挂一个永远读不出数的槽。记账做起来再加回来。
     ),
+    # ---- 升级决策插件（盒级）----
+    #
+    # **升级规则搬到这里了**（2026-11-12）：升级决策收编成盒级插件，
+    # 规则的**唯一真源**是插件参数——
+    # `queen.rules.exception_handling` 那边不再有它（那边的键已退休）。
+    plugins=[
+        PluginSpec(
+            id="queen_escalation",
+            extension_point="box.escalate",
+            params={"escalation_rules": ESCALATION_RULES},
+        ),
+    ],
 )

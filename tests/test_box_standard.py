@@ -771,8 +771,15 @@ class TestRegistryCoverage:
                 if keys and set(keys) <= box_ids and len(keys) > 1:
                     for t in targets:
                         # BOX_REGISTRY / METRIC_COMPUTERS / RUNNER_REGISTRY 是
-                        # 按 box_id 索引没错，但值是注册元组 / 算法表，不是归属
-                        if t.id in ("BOX_REGISTRY", "METRIC_COMPUTERS", "RUNNER_REGISTRY"):
+                        # 按 box_id 索引没错，但值是注册元组 / 算法表，不是归属。
+                        # PLUGIN_CONTEXT_REGISTRY 同理：值是**这只盒子装配时冻结的
+                        # 插件上下文**（指向盒子自己的东西），不是业务归属事实。
+                        if t.id in (
+                            "BOX_REGISTRY",
+                            "METRIC_COMPUTERS",
+                            "RUNNER_REGISTRY",
+                            "PLUGIN_CONTEXT_REGISTRY",
+                        ):
                             continue
                         offenders.append(f"{path.name}:{node.lineno} {t.id}")
         assert not offenders, (

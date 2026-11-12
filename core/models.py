@@ -14,6 +14,8 @@ from typing import Any, Literal, Mapping, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from core.plugins import PluginBinding
+
 #: **不许静默吞掉不认识的参数。**
 #:
 #: pydantic 的默认行为是 `extra="ignore"`：传一个它不认识的参数，
@@ -387,6 +389,31 @@ class QueenRules(BaseModel):
     exception_handling: Optional[dict[str, Any]] = None
     continuous_improvement: Optional[dict[str, Any]] = None
 
+    @model_validator(mode="after")
+    def _escalation_rules_retired(self) -> "QueenRules":
+        """**升级规则退休了**（2026-11-12）——它搬去盒级插件了
+
+        升级决策已收编成盒级插件 `queen_escalation`，
+        规则的唯一真源是**插件参数**
+        （`BoxDeclaration.plugins` 里那个插件的 `params.escalation_rules`）。
+
+        这里（`exception_handling`）留着的是**别的**东西：
+        各盒自己的无条件策略声明（`wms_design` 的 `rule_conflict_resolution` 等），
+        **runtime 不消费它们**——它们描述的是这只盒子自己的行为。
+
+        **为什么退休要报错而不是静默忽略**：写在这儿的话，
+        规则永远不会被求值（runtime 只读插件参数），
+        读者却以为它在守着——「声明了却没人执行」比不声明更坏。
+        """
+        handling = self.exception_handling or {}
+        if "escalation_rules" in handling:
+            raise ValueError(
+                "queen.rules.exception_handling 里的 'escalation_rules' 退休了——"
+                "升级规则改挂成盒级插件（queen_escalation）："
+                "写进 BoxDeclaration.plugins 里那个插件的 params.escalation_rules"
+            )
+        return self
+
 
 class QueenDef(BaseModel):
     """履约政策（Policy）：beeBox queen 自治配置"""
@@ -474,6 +501,11 @@ class BeeBoxDefinition(BaseModel):
     result: ResultDef
     queen: QueenDef
     metrics: MetricsDef
+    #: 挂在**整盒**上的插件绑定（装配器从 `BoxDeclaration.plugins` 编译而来）。
+    #:
+    #: **可序列化**：实现本体不进这里（走盒子给的实现表），
+    #: 这里只放类型 id / 作用位置 / 参数 / 实现键。
+    plugins: list[PluginBinding] = Field(default_factory=list)
     # ---- 展示位（原来住在 placement 里，退休后摊平到顶层）----
     display_name: str = Field(default="", description="给人看的名字")
     value_stream: str = Field(default="", description="所属企业价值流")

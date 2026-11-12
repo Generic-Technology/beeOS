@@ -41,14 +41,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from pydantic import BaseModel, ConfigDict, Field
+
+from core.plugins import (
+    PluginType,
+    register_implementation,
+    register_plugin_type,
+)
 from runtime.acceptance import evaluate_condition
 from runtime.models import (
     ALL_DECISIONS,
     DECISION_AUTO_RESOLVE,
     DECISION_HUMAN_REVIEW,
     DECISION_OBSERVE_ONLY,
-    TaskRun,
 )
+from runtime.plugins import EXTENSION_ESCALATE
 
 
 # **决策词表在 runtime/models.py**（唯一的真源，两层共用）：
@@ -96,24 +103,25 @@ class QueenDecision:
 
 
 def decide_escalation(
-    task_run: TaskRun,
+    result: dict[str, Any],
     failed_rules: list[dict[str, Any]],
-    queen_rules: Optional[dict[str, Any]] = None,
+    rules: list[dict[str, Any]],
 ) -> QueenDecision:
     """按**盒子自己声明的**升级规则做一次 escalate 决策
 
     Args:
-        task_run: 已 COMPLETED 的这次履约（条件在它的 result 上求值）
+        result: 这次履约的产出（条件在它上面求值）
         failed_rules: 验收失败的判据（写进理由，让读者知道为什么升级）
-        queen_rules: 盒子声明的 `queen.rules`（`model_dump()` 后的 dict）
+        rules: 盒子声明的升级规则（每条 `trigger` + `action`）
 
     Returns:
         QueenDecision（`decision` ∈ 三个决策词之一）
-    """
-    result = task_run.result or {}
-    handling = (queen_rules or {}).get("exception_handling") or {}
-    rules = handling.get("escalation_rules") or []
 
+    **为什么不再收 `task_run` 和 `queen_rules`**：
+    这两样现在分别由**插件的受限视图**（`result`）和**插件自己的参数**
+    （`rules`）提供——升级决策已经收编成盒级插件，
+    规则的唯一真源是插件参数，不再住在 `queen.rules` 里。
+    """
     if not rules:
         return QueenDecision(
             decision=DECISION_HUMAN_REVIEW,
@@ -164,13 +172,104 @@ def decide_escalation(
     )
 
 
-def default_queen_escalation_handler(
-    task_run: TaskRun,
-    failed_rules: list[dict[str, Any]],
-    queen_rules: Optional[dict[str, Any]] = None,
-) -> str:
-    """兼容入口：只要**决策字符串**的老调用方
+# ============================================================
+# 升级决策插件（盒级）
+# ============================================================
+#
+# **升级决策已经收编成盒级插件**（2026-11-12）。
+#
+# **为什么收编**：它本来就是「挂在盒子上、盒子声明规则、runtime 通用求值、
+# 决策落进 task run 可追溯」的横切能力——**形态已经是插件了**，只是没人叫它插件。
+# 而且它证明「盒级插件 + 条件触发扩展点 + 公共层实现 + 记录证据」这条路走得通。
+#
+# **收编后规则住哪**：升级规则的唯一真源是**插件参数**
+# （`BoxDeclaration.plugins` 里那个 `queen_escalation` 的 `params`），
+# 不再住在 `queen.rules.exception_handling` 里——
+# 那边留着的是**别的**东西（各盒自己的无条件策略声明，runtime 不消费）。
 
-    新代码用 `decide_escalation`——它还带理由和用不上的规则。
+#: 插件类型 id
+QUEEN_ESCALATION_PLUGIN = "queen_escalation"
+
+#: 实现键（实现在哪张表里）
+QUEEN_ESCALATION_IMPL = "queen.escalation"
+
+
+class EscalationRule(BaseModel):
+    """一条升级规则
+
+    **不许静默吞字段**：写错当场报错。
     """
-    return decide_escalation(task_run, failed_rules, queen_rules).decision
+
+    model_config = ConfigDict(extra="forbid")
+
+    trigger: str = Field(description="触发条件（在这次履约的产出上求值）")
+    action: str = Field(description="命中后的动作（映射到 runtime 的决策词表）")
+
+
+class QueenEscalationParams(BaseModel):
+    """升级决策插件的参数：这只盒子声明的升级规则"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    escalation_rules: list[EscalationRule] = Field(
+        default_factory=list, description="这只盒子自己的升级规则"
+    )
+
+
+def default_escalation_decision() -> dict[str, Any]:
+    """**没挂升级决策插件时的默认口径**：升级 = 交给人
+
+    理由跟「这只盒子声明了插件但没写规则」时**完全一样**——
+    Queen 只能按盒子明说的降级，不许自己决定不升级。
+    （不装插件的盒子拿到的决策，与装了插件但规则为空的盒子**逐字相同**。）
+    """
+    return QueenDecision(
+        decision=DECISION_HUMAN_REVIEW,
+        reason="这只盒子没有声明升级规则 → 按『升级 = 交给人』处理",
+    ).to_dict()
+
+
+def queen_escalation_plugin(view: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+    """**升级决策插件的实现**（盒级插件 `queen_escalation`）
+
+    **它吃两样东西**：
+
+    - `view` —— runtime 给的**受限视图**：`result`（这次履约的产出）
+      + `failed_rules`（没过的判据）。视图是**深拷贝**，插件改不到宿主的数据。
+    - `params` —— 插件**自己的参数**：这只盒子声明的升级规则。
+
+    **返回完整决策对象**（不是光一个词）——
+    理由、命中的规则、用不上的规则都在里面。
+    少一项读者就看不到发生了什么：尤其「用不上的规则」——
+    一条规则指向产出里根本没有的量 → 它永远不会触发 →
+    读者以为它在守着，其实它一次都没触发过。
+    """
+    decision = decide_escalation(
+        dict(view.get("result") or {}),
+        list(view.get("failed_rules") or []),
+        list(params.get("escalation_rules") or []),
+    )
+    return decision.to_dict()
+
+
+def register_queen_escalation_plugin() -> None:
+    """登记这个插件类型与它的实现
+
+    **登记主体是 runtime（公共提供方）**——
+    升级决策的**机制**是通用的（runtime 做通用求值，不认识任何业务词），
+    通用型插件由公共提供方登记一次，各盒子只声明绑定。
+    """
+    register_plugin_type(
+        PluginType(
+            id=QUEEN_ESCALATION_PLUGIN,
+            allowed_hosts=("box",),
+            extension_points=(EXTENSION_ESCALATE,),
+            implementation_key=QUEEN_ESCALATION_IMPL,
+            params_model=QueenEscalationParams,
+            summary="盒级升级决策：验收没过且例外要求升级时，由这只盒子自己声明的规则决定",
+        )
+    )
+    register_implementation(QUEEN_ESCALATION_IMPL, queen_escalation_plugin)
+
+
+register_queen_escalation_plugin()

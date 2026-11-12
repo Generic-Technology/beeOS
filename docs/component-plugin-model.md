@@ -3,7 +3,8 @@
 > **这是定稿，不是提案。** 每条决策都对着仓里的真实代码查证过（§0.1 列出出处），
 > 迁移按批次走，每批都要差分验证。
 > **日期**：2026-11-11（2026-11-12 两轮评审后修订）
-> **定位**：core 提供**机制**（协议 + 注册 + 校验 + 执行），`boxes/` 提供**业务组件与业务插件**。
+> **定位**：core 提供**协议、注册、装配与校验**，runtime 负责**执行**，
+> `boxes/` 提供**业务组件与业务插件**。
 > **前置**：[architecture-upgrade.md](./architecture-upgrade.md)（盒子脚手架化，已上线）
 
 ---
@@ -25,7 +26,7 @@
 | **数据是直通传递的**：下一跳吃的是上一跳的**整个产出**（`op_input = dict(op_output)`），**没有统一上下文对象** | `runtime/executor.py` |
 | **重试循环与 op 调用现在是同一层**：`while` 循环体就是一次尝试，重试 = 再走一遍循环体 | `runtime/executor.py` |
 | **状态机是白名单**：`running → partially_completed` 允许；**`completed → partially_completed` 不允许**（`completed` 只允许去 `failed` / `rejected` / `waiting_external`） | `runtime/models.py`（`ALLOWED_TRANSITIONS`） |
-| **`completed` 不是终态**，它是「beeline 走完了」；交付由验收决定，验收后可**调整**成别的状态 | `runtime/models.py` / `runtime/acceptance.py` |
+| **`completed` 表示「beeline 走完了」**：代码把它列进 `TERMINAL_STATUSES`，但转移白名单仍允许它在验收阶段被**调整**成 `failed` / `rejected` / `waiting_external`——交付由验收决定 | `runtime/models.py` / `runtime/acceptance.py` |
 | **升级决策发生在 `completed` 之后**：beeline 走完 → 状态 `completed` → 验收 → 命中 `escalate` → queen 决策 → 可能改成 `waiting_external` | `runtime/acceptance.py`（`apply_acceptance_to_run`） |
 | **产出契约的校验是 schema id 相等**：末跳的 `output` 必须等于声明的 `result_schema` | `core/scaffold.py`（C10） |
 | **每只盒子在 import 时就装配**（`ASSEMBLED = assemble(...)` 写在 `boxes/*/__init__.py` 里） | `boxes/*/__init__.py` |
@@ -685,12 +686,12 @@ runtime 是**执行**（真的把它做出来）。通用重试、审计这类�
 
 ## 7. 迁移路径（批次，每批都要差分验证）
 
-| 批 | 内容 | 行为变化 | 验收 |
-| --- | --- | --- | --- |
-| **M0** | 术语与撞名消解：改 `architecture-upgrade.md` 那处「插件」用词；新增本稿；旧词进退休名单 | 无 | 文档层 + 代码层退休守卫 |
-| **M1** | core 插件协议 + **开放注册机制** + `PluginType` / `PluginSpec` / `PluginBinding` + 插件类型表（空的）+ 装配期校验（I5–I13） | **无**（没人挂插件） | 全部盒子的声明 JSON + 作业路线 JSON **归一后**逐字节相同（§9.1）+ 每条新校验各配一条**会红**的守卫（喂反例验真红） |
-| **M2** | runtime **最小插件执行机制**（只支撑**盒级**钩子）：钩子注册表 + 调用接口（受限深拷贝视图、返回契约、失败即中止）+ **失败状态按阶段落**（§4.6.7）+ 失败记录落盘 | 无（没人挂） | 机制自测：受限视图确实改不到宿主数据；**盒级钩子异常 → `completed → failed` 且原因落盘** |
-| **M3** | **收编 queen 的升级决策**：把 `queen.rules.exception_handling.escalation_rules` 变成升级决策钩子的参数（双写 → runtime 改读 → 退休 `QueenRules.exception_handling` 一格）；钩子返回**完整决策对象** | **行为等价** | `policy_decision` **逐条四项相同**（decision / reason / triggered_rule / unusable_rules）+ **字段搬迁断言**（§9.1） |
+| 批 | 内容 | 行为变化 | 验收 | 状态 |
+| --- | --- | --- | --- | --- |
+| **M0** | 术语与撞名消解：改 `architecture-upgrade.md` 那处「插件」用词；新增本稿；旧词进退休名单 | 无 | 文档层 + 代码层退休守卫 | ✅ 已落地 |
+| **M1** | core 插件协议 + **开放注册机制** + `PluginType` / `PluginSpec` / `PluginBinding` + 插件类型表（空的）+ 装配期校验（I5–I13） | **无**（没人挂插件） | 全部盒子的声明 JSON + 作业路线 JSON **归一后**逐字节相同（§9.1）+ 每条新校验各配一条**会红**的守卫（喂反例验真红） | ✅ 已落地 |
+| **M2** | runtime **最小插件执行机制**（只支撑**盒级**钩子）：钩子注册表 + 调用接口（受限深拷贝视图、返回契约、失败即中止）+ **失败状态按阶段落**（§4.6.7）+ 失败记录落盘 | 无（没人挂） | 机制自测：受限视图确实改不到宿主数据；**盒级钩子异常 → `completed → failed` 且原因落盘** | ✅ 已落地 |
+| **M3** | **收编 queen 的升级决策**：把 `queen.rules.exception_handling.escalation_rules` 变成升级决策钩子的参数（双写 → runtime 改读 → 退休 `QueenRules.exception_handling` 一格）；钩子返回**完整决策对象** | **行为等价** | `policy_decision` **逐条四项相同**（decision / reason / triggered_rule / unusable_rules）+ **字段搬迁断言**（§9.1） | ✅ 已落地 |
 | **M4** | **业务插件**：盒子贡献自己的插件类型 + 参数模型 + 实现 | 新能力 | **单独拍板**（§11） |
 | **M5** | **执行外层插件 + 逐次语义 + 超时 + 通用补丁**：per_attempt 粒度、嵌套顺序、补丁范围与重新校验 + **执行器把「一次调用」与「多次尝试」拆成两层** | 新能力 | — |
 | **M6** | **递归组合**：一般复合组件（复合里装复合）+ 插件挂在任意节点 | 新能力 | 下一阶段 |
@@ -890,3 +891,43 @@ runtime 是**执行**（真的把它做出来）。通用重试、审计这类�
    本稿建议**本期不补**（那要加状态机转换 + 改状态表 + 改看板），
    但要**记下来**——它是「状态说谎」的同一族病，
    跟插件化无关，是验收层的独立改造。
+
+---
+
+## 12. 实现现状（2026-11-12，M0–M3 已落地）
+
+### 12.1 落地了什么
+
+| 件 | 落在哪 | 它是什么 |
+| --- | --- | --- |
+| 插件协议 + **开放注册** | `core/plugins.py` | 三张表（类型 / 扩展点 / 实现）+ 校验函数 + 冻结快照 |
+| 插件声明字段 | `core/scaffold.py` / `core/models.py` / `core/beeline_models.py` | `Component.plugins` / `requires_plugins`、`BoxDeclaration.plugins` / `requires_plugins`、`Operation.plugins`、`BeeBoxDefinition.plugins` |
+| 装配期校验 | `core/scaffold.py` | I5–I13（类型 / 宿主 / 扩展点 / 参数 / 重复 / 决策钩子唯一 / 实现存在 / 必需插件 / 重复登记） |
+| 执行机制 | `runtime/plugins.py` | 钩子注册表 + 受限深拷贝视图 + 返回契约 + 失败按阶段落 + 失败落盘 |
+| 升级决策插件 | `runtime/queen.py` | `queen_escalation` 类型 + `queen.escalation` 实现（**通用型**，由 runtime 登记一次） |
+| 触发器接线 | `kanban/trigger.py` | `PLUGIN_CONTEXT_REGISTRY`（每盒一份冻结快照）+ 决策走插件 + 插件失败即中止 |
+
+### 12.2 实现与方案的三处偏差（都想清楚了）
+
+| 方案说的 | 实际做的 | 为什么 |
+| --- | --- | --- |
+| 迁 `queen.rules.exception_handling.escalation_rules` | **只迁了那一格**；`exception_handling` 里的其它内容（`wms_design` 的三档无条件策略）**留在原位** | 那三档 **runtime 从来不消费**——它们是这只盒子自己的行为声明。搬进插件参数会让「插件参数 = runtime 读的事实」这条边界糊掉 |
+| `QueenRules.exception_handling` 整格退休 | **只退休了它里面的 `escalation_rules` 那个键**（再写进去当场报错） | 同上：整格退休会把那三档策略一起端掉，而它们还有读者 |
+| 运行时用「冻结的快照」 | 快照进 `AssembledBox.plugin_context`，触发器按 box_id 取 | 快照要**拿得到**才叫快照。触发器本来就有「按 box_id 取实现表」的位置（`RUNNER_REGISTRY`），插件上下文是同一类东西 |
+
+### 12.3 验证形态
+
+| 验什么 | 怎么验的 | 结果 |
+| --- | --- | --- |
+| 声明结构没变 | 12 只盒子的声明 + 作业路线 JSON，归一（去新增插件字段 + 把升级规则归一到同一位置）后逐字比 | ✅ 12/12 相同 |
+| **规则搬迁没改内容** | **先**断言「旧位置的规则 == 新插件参数里的规则」逐条相同，**再**归一比较（顺序不能反） | ✅ 12/12 通过（其中 6 只带规则） |
+| **行为没变** | 在 M3 之前的提交树上开 worktree，跑**同一份**差分脚本，比对决策四項 + 履约终态 + 产出 + 事件流 | ✅ **逐字相同**（含升级路径：判据没过 → `escalate` → `human_review` → `waiting_external`） |
+| 每条新校验都会红 | 每条校验配一条**喂反例**的守卫 | ✅ 14 + 15 + 11 条 |
+| 全量 | `pytest -q` | ✅ 1818 passed / 14 skipped |
+
+### 12.4 还没做的（下一阶段的入口）
+
+- **M4 业务插件**：盒子贡献自己的插件类型（候选：证据登记 / 度量采集）——待拍板
+- **M5 执行外层插件**：per_attempt 粒度、嵌套顺序、超时、通用补丁 + 执行器把「一次调用」与「多次尝试」拆成两层
+- **M6 递归组合**：一般复合组件 + 插件挂在任意节点
+- **已知缺口**（与插件化无关，另开一批）：`queen` 那几档无消费点的配置、链走完后的现场残留状态机表达不了、跨盒共享业务类型受 import 顺序限制

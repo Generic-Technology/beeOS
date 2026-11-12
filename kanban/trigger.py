@@ -69,6 +69,18 @@ from boxes.learning_english import get_beeline as get_learning_english_beeline
 from boxes.learning_english.measure import COMPUTERS as LEARNING_ENGLISH_COMPUTERS
 from boxes.learning_english.runner import RUNNER as LEARNING_ENGLISH_RUNNER
 from boxes.learning_english import get_definition as get_learning_english_definition
+from boxes.wms_requirement import ASSEMBLED as WMS_REQUIREMENT_ASSEMBLED
+from boxes.wms_design import ASSEMBLED as WMS_DESIGN_ASSEMBLED
+from boxes.wms_system import ASSEMBLED as WMS_SYSTEM_ASSEMBLED
+from boxes.wms_development import ASSEMBLED as WMS_DEVELOPMENT_ASSEMBLED
+from boxes.wms_testing import ASSEMBLED as WMS_TESTING_ASSEMBLED
+from boxes.wms_ops import ASSEMBLED as WMS_OPS_ASSEMBLED
+from boxes.wms_analysis import ASSEMBLED as WMS_ANALYSIS_ASSEMBLED
+from boxes.receipt import ASSEMBLED as RECEIPT_ASSEMBLED
+from boxes.learning_growth import ASSEMBLED as LEARNING_GROWTH_ASSEMBLED
+from boxes.learning_math import ASSEMBLED as LEARNING_MATH_ASSEMBLED
+from boxes.learning_chinese import ASSEMBLED as LEARNING_CHINESE_ASSEMBLED
+from boxes.learning_english import ASSEMBLED as LEARNING_ENGLISH_ASSEMBLED
 from core import metrics as core_metrics
 from core.beeline_models import Beeline
 from core.fulfillment_scope import AssembledFulfillmentScope, assemble_fulfillment_scope
@@ -86,8 +98,10 @@ from runtime import BeelineExecutor, create_task_run, evaluate_acceptance
 from runtime.acceptance import apply_acceptance_to_run
 from runtime.contract import validate_payload
 from runtime.handoff import HandoffError, assemble_handoff
-from runtime.models import TaskRunStatus
-from runtime.queen import QueenDecision, decide_escalation
+from runtime.models import DECISION_HUMAN_REVIEW, TaskRunStatus
+from core.plugins import PluginContext
+from runtime.plugins import EXTENSION_ESCALATE, PluginFailure, abort_on_plugin_failure, call_plugins
+from runtime.queen import default_escalation_decision
 from runtime.runner import HandlerRunner
 from runtime.store import TaskRunStore
 
@@ -186,6 +200,27 @@ RUNNER_REGISTRY: dict[str, HandlerRunner] = {
     "learning_english_box": LEARNING_ENGLISH_RUNNER,
 }
 
+#: box_id → 该盒装配时**冻结**的插件上下文（类型表 / 扩展点表 / 实现表的快照）
+#:
+#: **为什么每盒一份**：盒子可以在 import 时登记自己的业务插件类型，
+#: 那张全局表对每只盒子不一定一样。
+#: 运行时**只认装配结果**——装配期验过的那份，必须就是运行时跑的那份
+#: （否则「装配时存在的实现」运行时不保证在，装配期的校验就白做了）。
+PLUGIN_CONTEXT_REGISTRY: dict[str, PluginContext] = {
+    "wms_requirement_box": WMS_REQUIREMENT_ASSEMBLED.plugin_context,
+    "wms_design_box": WMS_DESIGN_ASSEMBLED.plugin_context,
+    "wms_system_box": WMS_SYSTEM_ASSEMBLED.plugin_context,
+    "wms_development_box": WMS_DEVELOPMENT_ASSEMBLED.plugin_context,
+    "wms_testing_box": WMS_TESTING_ASSEMBLED.plugin_context,
+    "wms_ops_box": WMS_OPS_ASSEMBLED.plugin_context,
+    "wms_analysis_box": WMS_ANALYSIS_ASSEMBLED.plugin_context,
+    "receipt_capture_box": RECEIPT_ASSEMBLED.plugin_context,
+    "learning_growth_box": LEARNING_GROWTH_ASSEMBLED.plugin_context,
+    "learning_math_box": LEARNING_MATH_ASSEMBLED.plugin_context,
+    "learning_chinese_box": LEARNING_CHINESE_ASSEMBLED.plugin_context,
+    "learning_english_box": LEARNING_ENGLISH_ASSEMBLED.plugin_context,
+}
+
 # ~~Box 元信息（展示位）~~
 #
 # 原先这里有一张 BOX_META 表，写着每只盒子的 display_name / value_stream /
@@ -197,6 +232,41 @@ RUNNER_REGISTRY: dict[str, HandlerRunner] = {
 # 盒子自己那份只声明了 5 条交接，真实链路有 8 条——差的 3 条藏在编排脚本里。
 # 照抄那份 = 协作边界声明号称是唯一事实源，而它其实不是。
 
+def _decide_escalation_via_plugin(
+    box_id: str,
+    definition: BeeBoxDefinition,
+    task_run: Any,
+    failed_rules: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """按**盒级插件**做一次升级决策
+
+    规则住在**插件参数**里（`definition.plugins` 那个 `queen_escalation`），
+    runtime 只做通用求值——runtime 不认识任何业务词。
+
+    **返回完整决策对象**（理由 / 命中的规则 / 用不上的规则都在里面），
+    不光一个词——「用不上的规则必须看得见」是 queen 自己的纪律。
+
+    **插件失败 → 抛 `PluginFailure`**：宿主要据此中止履约（不降级）。
+    """
+    context = PLUGIN_CONTEXT_REGISTRY.get(box_id)
+    if context is None:
+        # **这只盒子没有装配快照**（比如手写 definition 的夹具盒）→
+        # 按默认口径处理。
+        return default_escalation_decision()
+    decisions = call_plugins(
+        context,
+        definition.plugins,
+        extension_point=EXTENSION_ESCALATE,
+        source={
+            "result": task_run.result or {},
+            "failed_rules": list(failed_rules),
+        },
+    )
+    if not decisions:
+        # **没挂升级决策插件** → 按「升级 = 交给人」处理
+        # （runtime 不许自己决定不升级）。
+        return default_escalation_decision()
+    return decisions[0]
 
 def box_meta(box_id: str) -> dict[str, str]:
     """盒子的展示元信息（未注册盒子返回空 dict）
@@ -1554,32 +1624,48 @@ def trigger_task(
     acceptance_passed = []
     acceptance_not_applicable = []
     if task_run.status == TaskRunStatus.COMPLETED:
-        # **Queen 的决策入口在这里**（2026-11-01 补上）：
+        # **Queen 的决策入口在这里**（2026-11-01 补上，2026-11-12 改成插件）：
         # 以前全系统**一次都没传过** `queen_decision_fn` →
         # escalate 永远落 rejected → **`waiting_external` 从没被走到过**。
         #
-        # 决策规则来自**盒子自己的声明**（`definition.queen.rules`），
+        # **现在决策走盒级插件**（`queen_escalation`）：
+        # 规则住在**插件参数**里（`definition.plugins`），
         # runtime 只做通用求值——runtime 不认识任何业务词。
-        queen_decisions: list[QueenDecision] = []
+        queen_decisions: list[dict[str, Any]] = []
+        plugin_failures: list[PluginFailure] = []
 
         def _queen_decision(tr: Any, failed: list[dict[str, Any]]) -> str:
-            decision = decide_escalation(
-                tr, failed, definition.queen.rules.model_dump(),
-            )
+            try:
+                decision = _decide_escalation_via_plugin(box_id, definition, tr, failed)
+            except PluginFailure as failure:
+                # **插件失败 → 履约中止**（不降级）。
+                # 这里只记下，状态与落盘在下面统一做——
+                # 因为状态一旦成了终态，就不能再 apply 验收结论了。
+                plugin_failures.append(failure)
+                return DECISION_HUMAN_REVIEW
             queen_decisions.append(decision)
-            return decision.decision
+            return str(decision.get("decision") or "")
 
         evaluation = evaluate_acceptance(
             task_run, definition.result, queen_decision_fn=_queen_decision,
         )
-        if queen_decisions:
-            # **决策落进 task run**（设计文档 §3.4.7：可追溯、可复盘）。
-            task_run.policy_decision = queen_decisions[0].to_dict()
-        # **验收结论落到履约层**（2026-11-01）：
-        # 不做这一步，一次「没交付」的履约在履约层写着 completed——
-        # 判据在验收层、交付在履约层，两层各说各话。
-        apply_acceptance_to_run(task_run, evaluation)
-        acceptance_status = evaluation.status.value
+        if plugin_failures:
+            # **插件失败：履约中止**。状态按**阶段**落
+            # （链走完之后 → `failed`；`completed → partially_completed`
+            # 状态机不允许），失败落盘（事件流 + 状态 reason）。
+            abort_on_plugin_failure(task_run, plugin_failures[0])
+            # **不再 apply 验收结论**——状态已经是终态（failed），
+            # 再 apply 会撞「illegal task run transition」。
+            acceptance_status = "plugin_failure"
+        else:
+            if queen_decisions:
+                # **决策落进 task run**（设计文档 §3.4.7：可追溯、可复盘）。
+                task_run.policy_decision = queen_decisions[0]
+            # **验收结论落到履约层**（2026-11-01）：
+            # 不做这一步，一次「没交付」的履约在履约层写着 completed——
+            # 判据在验收层、交付在履约层，两层各说各话。
+            apply_acceptance_to_run(task_run, evaluation)
+            acceptance_status = evaluation.status.value
         acceptance_passed = list(evaluation.passed_rules)
         acceptance_not_applicable = list(evaluation.not_applicable_rules)
         rejection_class = (

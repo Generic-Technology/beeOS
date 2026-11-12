@@ -138,8 +138,8 @@ from boxes.wms_analysis import get_definition, get_beeline
 from boxes.wms_analysis.runner import RUNNER
 from runtime import (
     create_task_run, BeelineExecutor, evaluate_acceptance,
-    default_queen_escalation_handler,
 )
+from runtime.queen import queen_escalation_plugin
 
 box = get_definition()
 beeline = get_beeline()
@@ -160,11 +160,14 @@ task_run = executor.execute(task_run, beeline, input_data)
 # → status: triggered → running → completed
 
 # 3. 跑 acceptance
+# **升级决策走盒级插件**（`queen_escalation`，2026-11-12 收编）：
+# 规则住在插件参数里，插件实现返回**完整决策对象**。
 eval_result = evaluate_acceptance(
     task_run, box.result,
-    queen_decision_fn=lambda tr, failed: default_queen_escalation_handler(
-        tr, failed, box.queen.rules.model_dump()
-    ),
+    queen_decision_fn=lambda tr, failed: queen_escalation_plugin(
+        {"result": tr.result or {}, "failed_rules": failed},
+        {"escalation_rules": box.plugins[0].params.get("escalation_rules", [])},
+    )["decision"],
 )
 # → status: ACCEPTED / REJECTED / COMPENSATING_ACCEPTANCE
 ```

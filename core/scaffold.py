@@ -77,6 +77,13 @@ from core.models import (
     SchemaDef,
     TaskDef,
 )
+from core.plugins import (
+    PluginContext,
+    PluginSpec,
+    check_host_plugins,
+    compile_bindings,
+    freeze_plugin_context,
+)
 
 
 #: 一跳的实现。**盒子提供，core 只负责调用。**
@@ -135,6 +142,14 @@ class Component(BaseModel):
         default=False,
         description="这一跳成功后会留下产物或副作用",
     )
+    #: 这一跳挂的**插件声明**（横切能力：权限、审计、限流…）。
+    #:
+    #: **插件必有宿主**：声明只可能出现在这里或 `BoxDeclaration.plugins` 两处，
+    #: 没有第三种放法 → 插件不可能悬空。
+    #: **插件不改形状**：插件没有 input/output 字段，它改不了宿主的形状。
+    plugins: list[PluginSpec] = Field(default_factory=list)
+    #: 这一跳**必需**的插件类型 id。缺了装配期就报错，不等到运行时才发现。
+    requires_plugins: list[str] = Field(default_factory=list)
     handler: Optional[Handler] = Field(
         default=None,
         description="这一跳的实现。留空则从盒子的 handler 表里按 type 找",
@@ -248,6 +263,16 @@ class BoxDeclaration(BaseModel):
     )
     metrics: MetricsDef = Field(default_factory=MetricsDef)
 
+    # ---- 插件（盒级）----
+    #
+    #: 挂在**整盒**上的插件声明（横切能力：升级决策、审计、限流…）。
+    #:
+    #: 跟作业组件的 `plugins` 分开，是因为宿主不同：
+    #: 这里的宿主是「整盒」，运行时在**盒级扩展点**上调用它。
+    plugins: list[PluginSpec] = Field(default_factory=list)
+    #: 整盒**必需**的插件类型 id。缺了装配期就报错。
+    requires_plugins: list[str] = Field(default_factory=list)
+
 
 class AssemblyReport(BaseModel):
     """装配报告——装配过了什么、验过什么"""
@@ -295,6 +320,15 @@ class AssembledBox(BaseModel):
     handlers: dict[str, Handler] = Field(
         default_factory=dict,
         description="op.type → 实现。执行器按这个表分派",
+    )
+    #: 装配时**冻结**的插件上下文（类型表 / 扩展点表 / 实现表的快照）。
+    #:
+    #: **运行时唯一认的东西**：它不重新查全局注册表——
+    #: 那样装配期的校验就形同虚设（装配时存在的实现，运行时不保证在），
+    #: 而且那是**第二份事实**。
+    plugin_context: PluginContext = Field(
+        default_factory=freeze_plugin_context,
+        description="插件类型 / 扩展点 / 实现的冻结快照",
     )
     report: AssemblyReport
 
@@ -683,6 +717,26 @@ def assemble(
     # 而两份判定迟早给出不同答案（边界里那份才是对的）。
     checks.append("接线（在协作边界声明里校验）")
 
+    # ---- 插件 ----
+    #
+    # **判定归 `core/plugins.py`**（装配器与守卫共用一份）——
+    # 抄一份规则到测试里 = 两份判定，迟早给出不同答案。
+    #
+    # 查的是**一整组**：逐个声明（类型 / 宿主 / 扩展点 / 参数 / 实现）
+    # + 整组（同一类型不重复、决策钩子唯一、必需插件已挂上）。
+    problems.extend(check_host_plugins(
+        list(declaration.plugins),
+        host_kind="box",
+        requires=list(declaration.requires_plugins),
+    ))
+    for comp in components:
+        problems.extend(check_host_plugins(
+            list(comp.plugins),
+            host_kind="op",
+            requires=list(comp.requires_plugins),
+        ))
+    checks.append("插件：类型 / 宿主 / 扩展点 / 参数 / 重复 / 实现 / 必需")
+
     if problems:
         raise AssemblyError(box_id, problems)
 
@@ -703,6 +757,7 @@ def assemble(
                 external_system=comp.external_system,
                 idempotency=comp.idempotency,
                 leaves_artifact=comp.leaves_artifact,
+                plugins=compile_bindings(list(comp.plugins)),
             )
             for comp in components
         ],
@@ -739,6 +794,7 @@ def assemble(
         ),
         queen=declaration.queen,
         metrics=declaration.metrics,
+        plugins=compile_bindings(list(declaration.plugins)),
         display_name=declaration.display_name,
         value_stream=declaration.value_stream,
         role=declaration.role,
@@ -757,6 +813,8 @@ def assemble(
         definition=definition,
         beeline=beeline,
         handlers=effective,
+        # **冻结**插件上下文：运行时只认这份快照，不查活表。
+        plugin_context=freeze_plugin_context(),
         report=report,
     )
 

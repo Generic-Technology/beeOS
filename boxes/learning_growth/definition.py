@@ -35,10 +35,18 @@ from core.models import (
     QueenDef,
     QueenRules,
 )
+from core.plugins import PluginSpec
 from core.scaffold import BoxDeclaration
 
 from boxes.learning_growth.schemas import ALL_SCHEMAS, SOURCE_KINDS
 
+
+#: **升级规则的真源**（2026-11-12 从 `queen.rules` 搬到这里）
+#:
+#: 升级决策收编成盒级插件 `queen_escalation` 之后，
+#: 规则住在**插件参数**里——`queen.rules` 那边不再有它。
+ESCALATION_RULES = [
+]
 
 DECLARATION = BoxDeclaration(
     id="learning_growth_box",
@@ -116,4 +124,16 @@ DECLARATION = BoxDeclaration(
     # 掌握度该定到多少，那是家里和老师定的——
     # 在这个数定下来之前声明一个，等于在看板上放一个**编出来的标准**。
     metrics=MetricsDef(),
+    # ---- 升级决策插件（盒级）----
+    #
+    # **升级规则搬到这里了**（2026-11-12）：升级决策收编成盒级插件，
+    # 规则的**唯一真源**是插件参数——
+    # `queen.rules.exception_handling` 那边不再有它（那边的键已退休）。
+    plugins=[
+        PluginSpec(
+            id="queen_escalation",
+            extension_point="box.escalate",
+            params={"escalation_rules": ESCALATION_RULES},
+        ),
+    ],
 )

@@ -33,8 +33,18 @@ from core.models import (
     QueenDef,
     QueenRules,
 )
+from core.plugins import PluginSpec
 from core.scaffold import BoxDeclaration
 
+
+#: **升级规则的真源**（2026-11-12 从 `queen.rules` 搬到这里）
+#:
+#: 升级决策收编成盒级插件 `queen_escalation` 之后，
+#: 规则住在**插件参数**里——`queen.rules` 那边不再有它。
+ESCALATION_RULES = [
+    {"trigger": "open_defect_count > 0", "action": "escalate_to_human"},
+    {"trigger": "case_pass_rate < 0.95", "action": "escalate_to_human"},
+]
 
 DECLARATION = BoxDeclaration(
     id='wms_testing_box',
@@ -137,16 +147,23 @@ DECLARATION = BoxDeclaration(
         ),
         rules=QueenRules(
             task_routing={},
-            exception_handling={
-                "escalation_rules": [
-                    {"trigger": "open_defect_count > 0", "action": "escalate_to_human"},
-                    {"trigger": "case_pass_rate < 0.95", "action": "escalate_to_human"},
-                ],
-            },
+            exception_handling={},
             continuous_improvement={},
         ),
     ),
 
     # ---- 履约度量（Metrics）----
     metrics=MetricsDef(),
+    # ---- 升级决策插件（盒级）----
+    #
+    # **升级规则搬到这里了**（2026-11-12）：升级决策收编成盒级插件，
+    # 规则的**唯一真源**是插件参数——
+    # `queen.rules.exception_handling` 那边不再有它（那边的键已退休）。
+    plugins=[
+        PluginSpec(
+            id="queen_escalation",
+            extension_point="box.escalate",
+            params={"escalation_rules": ESCALATION_RULES},
+        ),
+    ],
 )

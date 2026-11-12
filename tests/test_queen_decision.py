@@ -192,13 +192,9 @@ def _run_with_result(result: dict[str, Any]):
 def test_a_matching_rule_drives_the_decision():
     """条件成立 → 按盒子的 action 映射到 runtime 的决策词"""
     task_run = _run_with_result({"build_failed": True})
-    decision = decide_escalation(task_run, [], {
-        "exception_handling": {
-            "escalation_rules": [
-                {"trigger": "build_failed == true", "action": "escalate_to_human"},
-            ],
-        },
-    })
+    decision = decide_escalation(task_run.result or {}, [], [
+            {"trigger": "build_failed == true", "action": "escalate_to_human"},
+    ])
     assert decision.decision == DECISION_HUMAN_REVIEW
     assert decision.triggered_rule == "build_failed == true"
     assert decision.reason, "决策必须带理由"
@@ -211,13 +207,9 @@ def test_a_non_matching_rule_leaves_it_to_the_human():
     不许自己决定「这事不用人看」——没人看的拒绝比多问一句更糟。
     """
     task_run = _run_with_result({"build_failed": False})
-    decision = decide_escalation(task_run, [], {
-        "exception_handling": {
-            "escalation_rules": [
-                {"trigger": "build_failed == true", "action": "escalate_to_human"},
-            ],
-        },
-    })
+    decision = decide_escalation(task_run.result or {}, [], [
+            {"trigger": "build_failed == true", "action": "escalate_to_human"},
+    ])
     assert decision.decision == DECISION_HUMAN_REVIEW
     assert decision.triggered_rule == ""
 
@@ -225,13 +217,9 @@ def test_a_non_matching_rule_leaves_it_to_the_human():
 def test_the_box_may_say_it_resolves_itself():
     """**盒子明说「这个我自动解决」→ 才不升级**"""
     task_run = _run_with_result({"amount": 1})
-    decision = decide_escalation(task_run, [], {
-        "exception_handling": {
-            "escalation_rules": [
-                {"trigger": "amount < 10", "action": "auto_resolve"},
-            ],
-        },
-    })
+    decision = decide_escalation(task_run.result or {}, [], [
+            {"trigger": "amount < 10", "action": "auto_resolve"},
+    ])
     assert decision.decision == DECISION_AUTO_RESOLVE
 
 
@@ -241,13 +229,9 @@ def test_an_unknown_action_is_not_guessed():
     猜成 auto_resolve = 一次没人看的拒绝；猜成 human_review = 多问一句。
     """
     task_run = _run_with_result({"amount": 99})
-    decision = decide_escalation(task_run, [], {
-        "exception_handling": {
-            "escalation_rules": [
-                {"trigger": "amount > 1", "action": "ask_the_boss"},
-            ],
-        },
-    })
+    decision = decide_escalation(task_run.result or {}, [], [
+            {"trigger": "amount > 1", "action": "ask_the_boss"},
+    ])
     assert decision.decision == DECISION_HUMAN_REVIEW
     assert "ask_the_boss" in decision.reason, decision.reason
 
@@ -256,13 +240,11 @@ def test_the_decision_is_always_one_of_the_three_words():
     """决策词表是**封闭**的——履约层只认这三个"""
     task_run = _run_with_result({"amount": 1})
     for rules in (
-        {"exception_handling": {"escalation_rules": []}},
-        {"exception_handling": {"escalation_rules": [
-            {"trigger": "amount > 0", "action": "escalate_to_human"}]}},
-        {"exception_handling": {"escalation_rules": [
-            {"trigger": "amount > 999", "action": "escalate_to_human"}]}},
+        [],
+        [{"trigger": "amount > 0", "action": "escalate_to_human"}],
+        [{"trigger": "amount > 999", "action": "escalate_to_human"}],
     ):
-        decision = decide_escalation(task_run, [], rules)
+        decision = decide_escalation(task_run.result or {}, [], rules)
         assert decision.decision in ALL_DECISIONS, decision.decision
 
 
@@ -278,13 +260,9 @@ def test_a_rule_pointing_at_a_missing_field_is_reported():
     其实它一次都没触发过——**不许静默**。
     """
     task_run = _run_with_result({"amount": 1})
-    decision = decide_escalation(task_run, [], {
-        "exception_handling": {
-            "escalation_rules": [
-                {"trigger": "no_such_metric > 3", "action": "escalate_to_human"},
-            ],
-        },
-    })
+    decision = decide_escalation(task_run.result or {}, [], [
+            {"trigger": "no_such_metric > 3", "action": "escalate_to_human"},
+    ])
     assert decision.unusable_rules, "用不上的规则被吞了"
     assert "no_such_metric" in decision.unusable_rules[0]
     # 用不上 ≠ 规则生效：这条没命中，决策仍是「交给人」
@@ -294,13 +272,9 @@ def test_a_rule_pointing_at_a_missing_field_is_reported():
 def test_a_rule_comparing_the_wrong_type_is_reported():
     """拿数组跟数字比 → 也算「用不上」，不是「不成立」"""
     task_run = _run_with_result({"items": ["a", "b"]})
-    decision = decide_escalation(task_run, [], {
-        "exception_handling": {
-            "escalation_rules": [
-                {"trigger": "items > 3", "action": "escalate_to_human"},
-            ],
-        },
-    })
+    decision = decide_escalation(task_run.result or {}, [], [
+            {"trigger": "items > 3", "action": "escalate_to_human"},
+    ])
     assert decision.unusable_rules, "类型对不上被吞了"
 
 

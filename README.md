@@ -231,6 +231,7 @@ python scripts/new_box.py --help
   - `conditions.py` — 例外条件语法的**唯一真源**（runtime 从这里取，不另写一份）
   - `decl_checks.py` — 声明自洽判定的**唯一真源**（装配器与体检台共用一份）
   - `scaffold.py` — 装配器：按协议组装盒子，声明自相矛盾时**装配期就报错**
+  - `plugins.py` — 插件协议与**开放注册**机制：类型 / 扩展点 / 实现的登记与校验
   - `contract.py` — 「什么类型算兼容」的**唯一真源**（声明层兼容判定与运行时产物校验共用一份）
   - `fulfillment_scope.py` — 协作边界装配器：把边界声明装成产物，边界级声明不合法时**装配期就报错**
   - `wiring.py` — 接线投影：从**协作边界声明**派生出接线图（纯函数，不拥有事实）
@@ -273,7 +274,8 @@ python scripts/new_box.py --help
   - `contract.py` — 投料结构契约闸（履约前第一道闸）
   - `handoff.py` — 盒间接力：把上游产出接到下游投料的 `ref:` 字段上
   - `acceptance.py` — Acceptance 评估器（4 状态转移）
-  - `queen.py` — Queen escalation hook
+  - `queen.py` — Queen 升级决策（已收编成盒级插件 `queen_escalation`）
+  - `plugins.py` — 插件执行机制：扩展点钩子 + 受限视图调用 + 失败按阶段落状态
   - `resume.py` — 「等外部」的履约怎么回来（转人工后由人接回去）
   - `images.py` — 图片格式归一（HEIC → JPEG，模型接口才收得下）
   - `store.py` — TaskRunStore（JSONL 持久化 + 查询）

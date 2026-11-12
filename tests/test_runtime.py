@@ -25,7 +25,6 @@ from runtime import (
     AcceptanceStatus,
     create_task_run,
     evaluate_acceptance,
-    default_queen_escalation_handler,
 )
 from runtime.models import ALLOWED_TRANSITIONS
 
@@ -143,6 +142,19 @@ class TestHandlerRunner:
 # BeelineExecutor
 # ============================================================
 
+def _queen_decision_word(task_run, rules: list[dict]) -> str:
+    """按**盒级插件**做一次升级决策，取决策词
+
+    升级决策已收编成盒级插件（`queen_escalation`），
+    插件实现返回**完整决策对象**——这里只取其中的决策词。
+    """
+    from runtime.queen import queen_escalation_plugin
+
+    decision = queen_escalation_plugin(
+        {"result": task_run.result or {}, "failed_rules": []},
+        {"escalation_rules": rules},
+    )
+    return decision["decision"]
 
 def _make_simple_beeline() -> Beeline:
     """简单 beeline：a → b → c（终态）"""
@@ -471,8 +483,8 @@ class TestEndToEnd:
         eval_result = evaluate_acceptance(
             task_run,
             box.result,
-            queen_decision_fn=lambda tr, failed: default_queen_escalation_handler(
-                tr, failed, box.queen.rules.model_dump()
+            queen_decision_fn=lambda tr, failed: _queen_decision_word(
+                tr, box.plugins[0].params.get("escalation_rules", []),
             ),
         )
         assert eval_result.status in (
@@ -518,14 +530,10 @@ class TestEndToEnd:
         # 字段名是**盒子自己的**——runtime 不认识它，只管求值。
         task_run.result = {"amount": 600}
 
-        queen_rules = {
-            "exception_handling": {
-                "escalation_rules": [
-                    {"trigger": "amount > 500", "action": "escalate_to_human"},
-                ],
-            },
-        }
-        decision = default_queen_escalation_handler(task_run, [], queen_rules)
+        rules = [
+            {"trigger": "amount > 500", "action": "escalate_to_human"},
+        ]
+        decision = _queen_decision_word(task_run, rules)
         assert decision == "human_review"
 
     def test_queen_escalation_no_rule_match(self):
@@ -545,14 +553,10 @@ class TestEndToEnd:
         task_run = create_task_run("o", "i", "c", "r", "b", 1, "rt", "in")
         task_run.result = {"amount": 100}
 
-        queen_rules = {
-            "exception_handling": {
-                "escalation_rules": [
-                    {"trigger": "amount > 500", "action": "escalate_to_human"},
-                ],
-            },
-        }
-        decision = default_queen_escalation_handler(task_run, [], queen_rules)
+        rules = [
+            {"trigger": "amount > 500", "action": "escalate_to_human"},
+        ]
+        decision = _queen_decision_word(task_run, rules)
         assert decision == "human_review"
 
     def test_the_queen_may_downgrade_only_when_the_box_says_so(self):
@@ -564,12 +568,8 @@ class TestEndToEnd:
         task_run = create_task_run("o", "i", "c", "r", "b", 1, "rt", "in")
         task_run.result = {"amount": 100}
 
-        queen_rules = {
-            "exception_handling": {
-                "escalation_rules": [
-                    {"trigger": "amount < 200", "action": "auto_resolve"},
-                ],
-            },
-        }
-        decision = default_queen_escalation_handler(task_run, [], queen_rules)
+        rules = [
+            {"trigger": "amount < 200", "action": "auto_resolve"},
+        ]
+        decision = _queen_decision_word(task_run, rules)
         assert decision == "auto_resolve"

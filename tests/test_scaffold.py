@@ -874,3 +874,278 @@ class TestScaffoldStaysInTheLowerLayer:
         cond = "count > 0 and other == 'x'"
         assert runtime_parts(cond) == condition_parts(cond)
         assert runtime_fields(cond) == condition_fields(cond)
+
+
+# ============================================================
+# 插件：协议能不能挡住不自洽的插件声明
+# ============================================================
+#
+# **每条声明配一条会红的守卫**：这里造一只故意写坏的插件声明，
+# 断言装配器拒它，并且**说清楚该怎么改**。
+#
+# **守卫调的是被验者自己的解析方式**（`core.plugins` 的
+# `check_plugin_spec` / `check_host_plugins`）——
+# 抄一份规则到测试里 = 两份判定，迟早给出不同答案。
+
+
+@pytest.fixture
+def plugin_registry():
+    """登记表是全局的——测试要把它恢复原样，否则互相污染"""
+    from core import plugins as plugins_mod
+
+    saved = (
+        dict(plugins_mod.PLUGIN_TYPES),
+        dict(plugins_mod.EXTENSION_POINTS),
+        dict(plugins_mod.IMPLEMENTATIONS),
+    )
+    try:
+        yield plugins_mod
+    finally:
+        plugins_mod.PLUGIN_TYPES.clear()
+        plugins_mod.PLUGIN_TYPES.update(saved[0])
+        plugins_mod.EXTENSION_POINTS.clear()
+        plugins_mod.EXTENSION_POINTS.update(saved[1])
+        plugins_mod.IMPLEMENTATIONS.clear()
+        plugins_mod.IMPLEMENTATIONS.update(saved[2])
+
+
+def _register_ok(
+    plugins_mod,
+    *,
+    plugin_id: str = "demo_plugin",
+    impl_key: str = "demo_impl",
+    hosts: tuple = ("op", "box"),
+    points: tuple = ("demo.point",),
+    max_per_host: int = 1,
+    kind: str = "action",
+    params_model=None,
+):
+    """登记一套**能跑**的插件类型 / 扩展点 / 实现
+
+    默认 `max_per_host=1` 且 `kind="action"`——
+    「决策类钩子只许一个」那条要用 `kind="decision"` 单独测。
+    """
+    plugins_mod.register_extension_point(
+        plugins_mod.ExtensionPoint(
+            id="demo.point", kind=kind, max_bindings_per_host=max_per_host
+        )
+    )
+    plugins_mod.register_plugin_type(
+        plugins_mod.PluginType(
+            id=plugin_id,
+            allowed_hosts=hosts,
+            extension_points=points,
+            implementation_key=impl_key,
+            params_model=params_model,
+        )
+    )
+    plugins_mod.register_implementation(impl_key, lambda view: {"seen": view})
+    return plugins_mod
+
+
+class TestPluginHappyPath:
+    def test_a_valid_plugin_assembles_and_becomes_a_binding(self, plugin_registry):
+        """声明 → 编译成绑定 → 进 Operation（跳级）/ BeeBoxDefinition（盒级）"""
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry)
+        box = _assemble(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            ),
+            declaration=_declaration(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            ),
+        )
+        binding = box.beeline.operations[0].plugins[0]
+        assert binding.id == "demo_plugin"
+        assert binding.extension_point == "demo.point"
+        assert binding.implementation_key == "demo_impl"
+        # 盒级绑定进 definition
+        assert box.definition.plugins[0].id == "demo_plugin"
+
+    def test_the_binding_is_serializable(self, plugin_registry):
+        """绑定要进 Operation——而 Operation 要落盘、要导出 JSON 做差分
+
+        所以绑定里**不许**有实现本体，只有实现键。
+        """
+        import json
+
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry)
+        box = _assemble(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            )
+        )
+        payload = json.loads(box.beeline.model_dump_json())
+        assert payload["operations"][0]["plugins"][0]["implementation_key"] == "demo_impl"
+
+    def test_the_snapshot_does_not_see_later_registrations(self, plugin_registry):
+        """**装配完再改注册表，不许影响已经装好的盒子**
+
+        否则「装配期验过的那份」就不是「运行时跑的那份」了。
+        """
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry)
+        box = _assemble(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            )
+        )
+        # 装配之后，别处又登记了一个类型
+        plugin_registry.register_plugin_type(
+            plugin_registry.PluginType(
+                id="late_plugin",
+                allowed_hosts=("op",),
+                extension_points=("demo.point",),
+            )
+        )
+        assert box.plugin_context.has_type("demo_plugin")
+        assert not box.plugin_context.has_type("late_plugin")
+
+
+class TestPluginChecksReject:
+    def test_unregistered_type_is_rejected(self, plugin_registry):
+        """类型没登记 → 拒（并说清谁该登记）"""
+        from core.plugins import PluginSpec
+
+        err = _broken(
+            components=_components(
+                plugins=[PluginSpec(id="never_registered", extension_point="demo.point")]
+            )
+        )
+        assert any("没登记" in p for p in err.problems), err.problems
+
+    def test_a_type_cannot_be_mounted_on_the_wrong_host_kind(self, plugin_registry):
+        """宿主约束：只许挂 op 的类型，不许挂到盒上"""
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry, hosts=("op",))
+        err = _broken(
+            declaration=_declaration(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            )
+        )
+        assert any("不允许挂在 box 级宿主上" in p for p in err.problems), err.problems
+
+    def test_unregistered_extension_point_is_rejected(self, plugin_registry):
+        """扩展点没注册 → 拒（runtime 还没留这个钩子）"""
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry, points=("demo.point",))
+        err = _broken(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="no.such.point")]
+            )
+        )
+        assert any("扩展点" in p and "没注册" in p for p in err.problems), err.problems
+
+    def test_a_type_cannot_act_on_an_extension_point_it_does_not_allow(self, plugin_registry):
+        """类型允许的位置 ⊇ 声明的位置"""
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry, points=("demo.point",))
+        plugin_registry.register_extension_point(
+            plugin_registry.ExtensionPoint(id="other.point")
+        )
+        err = _broken(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="other.point")]
+            )
+        )
+        assert any("不能作用在扩展点" in p for p in err.problems), err.problems
+
+    def test_bad_params_are_rejected(self, plugin_registry):
+        """参数不合法 → 拒（用参数模型自己判，不抄规则）"""
+        from pydantic import BaseModel, Field
+
+        from core.plugins import PluginSpec
+
+        class DemoParams(BaseModel):
+            mode: str = Field()
+
+        _register_ok(plugin_registry, params_model=DemoParams)
+        err = _broken(
+            components=_components(
+                plugins=[
+                    PluginSpec(
+                        id="demo_plugin",
+                        extension_point="demo.point",
+                        params={"mode": 123},
+                    )
+                ]
+            )
+        )
+        assert any("参数不合法" in p for p in err.problems), err.problems
+
+    def test_the_same_type_cannot_be_mounted_twice_on_one_host(self, plugin_registry):
+        """同一宿主同一类型只许挂一次"""
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry)
+        spec = PluginSpec(id="demo_plugin", extension_point="demo.point")
+        err = _broken(components=_components(plugins=[spec, spec]))
+        assert any("挂了 2 次" in p for p in err.problems), err.problems
+
+    def test_a_decision_extension_point_takes_only_one_binding(self, plugin_registry):
+        """决策类钩子每个宿主只许一个绑定
+
+        两个实现同时决定这次履约的终态 → 那就没有「决策」了，
+        只是两套事实打架。
+        """
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry, plugin_id="demo_decision", kind="decision")
+        spec = PluginSpec(id="demo_decision", extension_point="demo.point")
+        err = _broken(components=_components(plugins=[spec, spec]))
+        assert any("每个宿主只许" in p for p in err.problems), err.problems
+
+    def test_a_missing_implementation_is_rejected(self, plugin_registry):
+        """实现没登记 → 拒（挂上去也不会被调用）"""
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry)
+        plugin_registry.IMPLEMENTATIONS.pop("demo_impl")
+        err = _broken(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            )
+        )
+        assert any("实现" in p and "没登记" in p for p in err.problems), err.problems
+
+    def test_a_missing_required_plugin_is_rejected(self, plugin_registry):
+        """宿主声明必需插件却没挂 → 拒（不等到运行时才发现）"""
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry)
+        err = _broken(
+            components=_components(
+                requires_plugins=["demo_plugin"],
+            )
+        )
+        assert any("必需插件" in p for p in err.problems), err.problems
+
+    def test_registering_the_same_type_twice_is_rejected(self, plugin_registry):
+        """同一个 id 登记两次 → 报错
+
+        两个来源说同一件事，迟早给出不同答案，而到那时没人知道该信哪份。
+        """
+        _register_ok(plugin_registry)
+        with pytest.raises(ValueError, match="登记过两次"):
+            plugin_registry.register_plugin_type(
+                plugin_registry.PluginType(
+                    id="demo_plugin",
+                    allowed_hosts=("op",),
+                    extension_points=("demo.point",),
+                )
+            )
+
+    def test_the_plugin_spec_swallows_no_unknown_fields(self):
+        """插件声明也不许静默吞字段——拼错当场报错"""
+        from core.plugins import PluginSpec
+
+        with pytest.raises(ValidationError):
+            PluginSpec(id="x", extension_point="y", not_a_field=1)

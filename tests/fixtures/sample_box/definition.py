@@ -22,6 +22,7 @@ from core.models import (
     ResultDef,
     TaskDef,
 )
+from core.plugins import PluginBinding
 from tests.fixtures.sample_box.schemas import ALL_SCHEMAS
 
 
@@ -68,14 +69,28 @@ SAMPLE_BOX = BeeBoxDefinition(
         ),
         rules=QueenRules(
             task_routing={"default_route": "sample_resolve"},
-            exception_handling={
+            exception_handling={},
+            continuous_improvement={"monitor_metrics": ["sample_pass_rate"]},
+        ),
+    ),
+
+    # **升级决策插件（盒级）**（2026-11-12）
+    #
+    # 升级决策已收编成盒级插件，规则的唯一真源是**插件参数**。
+    # 夹具盒手写 `BeeBoxDefinition`（不走装配器），所以这里直接写**绑定**
+    # （`PluginBinding` 是装配后的形状）。
+    plugins=[
+        PluginBinding(
+            id="queen_escalation",
+            extension_point="box.escalate",
+            params={
                 "escalation_rules": [
                     {"trigger": "sample_state == escalated", "action": "escalate_to_human"},
                 ],
             },
-            continuous_improvement={"monitor_metrics": ["sample_pass_rate"]},
+            implementation_key="queen.escalation",
         ),
-    ),
+    ],
 
     metrics=MetricsDef(
         quality=[MetricDef(name="sample_pass_rate", definition="夹具盒通过率", target=1.0)],

@@ -132,10 +132,18 @@ from core.models import (
     QueenDef,
     QueenRules,
 )
+from core.plugins import PluginSpec
 from core.scaffold import BoxDeclaration
 
 from boxes.receipt.schemas import ALL_SCHEMAS
 
+
+#: **升级规则的真源**（2026-11-12 从 `queen.rules` 搬到这里）
+#:
+#: 升级决策收编成盒级插件 `queen_escalation` 之后，
+#: 规则住在**插件参数**里——`queen.rules` 那边不再有它。
+ESCALATION_RULES = [
+]
 
 DECLARATION = BoxDeclaration(
     id="receipt_capture_box",
@@ -253,4 +261,16 @@ DECLARATION = BoxDeclaration(
             ),
         ],
     ),
+    # ---- 升级决策插件（盒级）----
+    #
+    # **升级规则搬到这里了**（2026-11-12）：升级决策收编成盒级插件，
+    # 规则的**唯一真源**是插件参数——
+    # `queen.rules.exception_handling` 那边不再有它（那边的键已退休）。
+    plugins=[
+        PluginSpec(
+            id="queen_escalation",
+            extension_point="box.escalate",
+            params={"escalation_rules": ESCALATION_RULES},
+        ),
+    ],
 )
