@@ -208,6 +208,7 @@ python scripts/new_box.py --help
 
 - **`docs/`** — 规格、设计稿与加固计划
   - `architecture-upgrade.md` — **盒子脚手架化**的定稿：协议 / 校验清单 / 迁移计划
+  - `component-plugin-model.md` — **组件与插件**的定稿：core 的两个基本概念、边界语义与迁移批次
   - `fulfillment-scope.md` — **协作边界声明**设计与实现边界：盒子之间关系的唯一事实源
   - `stability-plan.md` — 按 SOLID 分批加固组件的顺序与验收标准
   - `beebox-design.md` — 主设计稿（架构宣言 / 核心契约 / 执行语义 / 实现设计）
