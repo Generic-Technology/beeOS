@@ -38,6 +38,7 @@ from core.models import (
 )
 from core.plugins import PluginSpec
 from core.scaffold import BoxDeclaration
+from boxes.wms_design.plugins import OUTPUT_CHECK_PLUGIN
 
 
 #: **升级规则的真源**（2026-11-12 从 `queen.rules` 搬到这里）
@@ -314,6 +315,54 @@ DECLARATION = BoxDeclaration(
             id="queen_escalation",
             extension_point="box.escalate",
             params={"escalation_rules": ESCALATION_RULES},
+        ),
+        # ---- 这只盒子自己的业务插件（产出自检）----
+        #
+        # **类型、参数模型、实现都在 `boxes/wms_design/plugins.py`**——
+        # core 只定协议，这里填值。
+        #
+        # 挂的是盒级核验钩子 `box.verify`：产出定案后、验收之前跑。
+        # 它管的是**产出契约表达不了的那部分**：
+        # schema 说「这个字段在不在、类型对不对」，
+        # 说不了「**这个标志位说通过了，可它对应的内容其实是空的**」。
+        #
+        # 判据读的是**盒子自己算的标志位**——盒子说「我过了」就过了，
+        # 以前没人回头核对它说的对不对。这个插件就是来核对的。
+        PluginSpec(
+            id=OUTPUT_CHECK_PLUGIN,
+            extension_point="box.verify",
+            params={
+                "truth_checks": [
+                    # 说「需求都绑上 WMS 了」→ 没绑上的条数就该是 0
+                    {
+                        "flag": "wms_binding",
+                        "content": "requirements_without_wms_binding",
+                        "expect": "zero",
+                    },
+                    # 说「规则一致」→ 冲突清单就该是空的
+                    {
+                        "flag": "rule_consistency",
+                        "content": "evidence.evidence_detail.rule_conflicts",
+                        "expect": "empty",
+                    },
+                    # 说「引用完整」→ 断链清单就该是空的
+                    {
+                        "flag": "reference_integrity",
+                        "content": "evidence.evidence_detail.broken_references",
+                        "expect": "empty",
+                    },
+                    # 说「结构齐」→ 结构违规清单就该是空的
+                    {
+                        "flag": "structural_compliance",
+                        "content": "evidence.evidence_detail.structure_violations",
+                        "expect": "empty",
+                    },
+                    # **故意不查 `expectation_completeness`**：
+                    # 「没有 WMS 绑定」时它也是 True（绑定集合与预期集合**都空** = 相等），
+                    # 所以「它为 True ⟹ expectations 非空」是**错的**——
+                    # 那是这条规则设计时没想清楚的一处（已修，见插件的说明）。
+                ],
+            },
         ),
     ],
 )

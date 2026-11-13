@@ -40,11 +40,15 @@ from runtime.queen import decide_escalation, queen_escalation_plugin
 
 class TestRulesMoved:
     def test_every_registered_box_mounts_the_escalation_plugin(self):
-        """每只盒子都挂「升级决策」插件（盒级宿主）"""
+        """每只盒子都挂「升级决策」插件（盒级宿主）
+
+        **注意**：不要求**只有**这一个——
+        盒子可以再挂别的业务插件（设计盒就还挂了一个产出自检插件）。
+        """
         for box_id, (get_def, _bl) in BOX_REGISTRY.items():
             definition = get_def()
             ids = [p.id for p in definition.plugins]
-            assert ids == ["queen_escalation"], f"{box_id}: 插件 {ids}"
+            assert "queen_escalation" in ids, f"{box_id}: 插件 {ids}"
 
     def test_the_rules_live_in_the_plugin_params(self):
         """规则的**唯一真源**是插件参数"""

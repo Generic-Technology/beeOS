@@ -87,6 +87,7 @@ flowchart TB
 - `definition.py` — BoxDeclaration 声明（`assemble()` 装配后产出 BeeBoxDefinition）
 - `domain.py` — WMS 概念词表（实体 / 约束 / 指标 + 例词 + 代码落点）
 - `binder.py` — 需求 ↔ WMS 概念绑定
+- `plugins.py` — **这只盒子自己的业务插件**（产出自检）：类型 / 参数模型 / 实现都在这里
 - `runner.py` — 7 个 op 的 handler
 - `measure.py` — 指标采集
 - `beeline.py` — beeline_wms_design_v1

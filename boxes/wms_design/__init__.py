@@ -46,8 +46,13 @@ from core.scaffold import assemble
 
 from boxes.wms_design.beeline import COMPONENTS
 from boxes.wms_design.definition import DECLARATION
+from boxes.wms_design.plugins import register_design_output_check
 from boxes.wms_design.runner import MODEL_HANDLERS, RUNNER
 from boxes.wms_design.schemas import ALL_SCHEMAS
+
+# **业务插件的登记必须在装配之前**——
+# 装配器要认得这个插件类型（I5：类型已登记），否则盒子装不出来。
+register_design_output_check()
 
 
 # **装配在这一步发生。** 声明自相矛盾 → 这里抛 AssemblyError，

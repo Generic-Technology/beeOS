@@ -888,26 +888,6 @@ class TestScaffoldStaysInTheLowerLayer:
 # 抄一份规则到测试里 = 两份判定，迟早给出不同答案。
 
 
-@pytest.fixture
-def plugin_registry():
-    """登记表是全局的——测试要把它恢复原样，否则互相污染"""
-    from core import plugins as plugins_mod
-
-    saved = (
-        dict(plugins_mod.PLUGIN_TYPES),
-        dict(plugins_mod.EXTENSION_POINTS),
-        dict(plugins_mod.IMPLEMENTATIONS),
-    )
-    try:
-        yield plugins_mod
-    finally:
-        plugins_mod.PLUGIN_TYPES.clear()
-        plugins_mod.PLUGIN_TYPES.update(saved[0])
-        plugins_mod.EXTENSION_POINTS.clear()
-        plugins_mod.EXTENSION_POINTS.update(saved[1])
-        plugins_mod.IMPLEMENTATIONS.clear()
-        plugins_mod.IMPLEMENTATIONS.update(saved[2])
-
 
 def _register_ok(
     plugins_mod,

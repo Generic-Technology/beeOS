@@ -137,6 +137,8 @@ class ExtensionPoint:
     - `none` —— 只能返回 `None`
     - `decision` —— 必须返回一个带 `decision` 键的 dict
     - `patch` —— 只能返回 `None` 或一份补丁（M5 才用）
+    - `verdict` —— 核验类钩子：`None` = 通过，
+      或 `{"problems": [...]}` = 不通过（问题清单非空）
 
     `return_required_fields` 是**返回值必须齐的字段**——
     决策类钩子不只收一个词：理由、命中的规则、用不上的规则都在里面，
@@ -152,7 +154,7 @@ class ExtensionPoint:
     kind: Literal["decision", "action"] = "action"
     max_bindings_per_host: int = 1
     view_keys: tuple[str, ...] = ()
-    return_contract: Literal["none", "decision", "patch"] = "none"
+    return_contract: Literal["none", "decision", "patch", "verdict"] = "none"
     return_required_fields: tuple[str, ...] = ()
     decision_values: tuple[str, ...] = ()
     summary: str = ""

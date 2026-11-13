@@ -221,3 +221,24 @@ def stub_llm(monkeypatch):
 
     monkeypatch.setattr(llm, "complete_json", stub_llm_dispatch)
     return stub_llm_dispatch
+
+
+@pytest.fixture
+def plugin_registry():
+    """登记表是全局的——测试要把它恢复原样，否则互相污染"""
+    from core import plugins as plugins_mod
+
+    saved = (
+        dict(plugins_mod.PLUGIN_TYPES),
+        dict(plugins_mod.EXTENSION_POINTS),
+        dict(plugins_mod.IMPLEMENTATIONS),
+    )
+    try:
+        yield plugins_mod
+    finally:
+        plugins_mod.PLUGIN_TYPES.clear()
+        plugins_mod.PLUGIN_TYPES.update(saved[0])
+        plugins_mod.EXTENSION_POINTS.clear()
+        plugins_mod.EXTENSION_POINTS.update(saved[1])
+        plugins_mod.IMPLEMENTATIONS.clear()
+        plugins_mod.IMPLEMENTATIONS.update(saved[2])

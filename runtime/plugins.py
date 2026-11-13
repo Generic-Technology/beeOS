@@ -49,6 +49,16 @@ from runtime.models import ALL_DECISIONS, ALLOWED_TRANSITIONS, TaskRun, TaskRunS
 #: 它**不是**通用的「执行后」——挂在上面的是「这次履约的终态由谁定」。
 EXTENSION_ESCALATE = "box.escalate"
 
+#: 盒级核验钩子
+#:
+#: **触发时机**：产出定案之后、验收之前。
+#:
+#: **为什么在验收之前**：判据读的正是产出里的字段。
+#: 产出缺了什么，判据会判「用不上」——不吵，也不挡，
+#: 于是照样交付（这就是「产出从不过契约闸」那族病）。
+#: 核验钩子跑在验收前面，缺的东西就**当场说**，而不是让判据悄悄 n/a。
+EXTENSION_VERIFY = "box.verify"
+
 
 def register_runtime_extension_points() -> None:
     """登记 runtime 留的钩子
@@ -80,6 +90,19 @@ def register_runtime_extension_points() -> None:
             # 这里只引用它，不另抄一份。
             decision_values=ALL_DECISIONS,
             summary="产出验收失败、且例外要求升级时的决策点",
+        )
+    )
+    register_extension_point(
+        ExtensionPoint(
+            id=EXTENSION_VERIFY,
+            host_kinds=("box",),
+            kind="action",
+            # **一个宿主一个核验插件**——要多个核验，合并成一个。
+            # 两个核验各说各话，读者不知道该信谁的。
+            max_bindings_per_host=1,
+            view_keys=("result",),
+            return_contract="verdict",
+            summary="产出定案后的自检点：这只盒子自己核验自己的产出",
         )
     )
 
@@ -190,6 +213,21 @@ def check_return(point: ExtensionPoint, value: Any) -> Any:
                 f"收到的是 {type(value).__name__}"
             )
         return value
+    if point.return_contract == "verdict":
+        # **核验结论**：None = 通过；{"problems": [...]} = 不通过。
+        if value is None:
+            return None
+        if not isinstance(value, dict) or "problems" not in value:
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 要 None（通过）或 "
+                f"{{'problems': [...]}}（不通过），收到的是 {value!r}"
+            )
+        if not isinstance(value["problems"], list):
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的 'problems' 必须是列表，"
+                f"收到的是 {type(value['problems']).__name__}"
+            )
+        return value
     raise PluginContractError(f"扩展点 {point.id!r} 的返回契约 {point.return_contract!r} 不认识")
 
 
@@ -282,3 +320,68 @@ def abort_on_plugin_failure(
     if target not in ALLOWED_TRANSITIONS.get(current, set()):
         return
     task_run.transition_to(target, reason=reason)
+
+
+# ============================================================
+# 核验钩子：产出定案后，盒子自己核验自己的产出
+# ============================================================
+
+
+def verify_output(
+    context: PluginContext,
+    bindings: Sequence[PluginBinding],
+    *,
+    extension_point: str = EXTENSION_VERIFY,
+    source: Optional[Mapping[str, Any]] = None,
+) -> list[str]:
+    """跑核验插件，返回**问题清单**（空 = 全过）
+
+    **返回清单而不是抛异常**，是因为「核验没通过」和「插件自己坏了」
+    是两回事，读者要能分开看见：
+
+    - 核验没通过 → 履约中止，原因是**业务问题**（缺了什么）
+    - 插件自己坏了 → 履约中止，原因是**机制问题**（插件抛异常）
+
+    插件抛异常时这里**不吞**，它会冒成 `PluginFailure`——
+    由调用方按「插件坏了」那条路处理。
+    """
+    results = call_plugins(
+        context,
+        bindings,
+        extension_point=extension_point,
+        source=source or {},
+    )
+    problems: list[str] = []
+    for value in results:
+        if not value:
+            continue
+        problems.extend(str(p) for p in (value.get("problems") or []))
+    return problems
+
+
+def abort_on_verdict_failed(
+    task_run: TaskRun,
+    problems: Sequence[str],
+    *,
+    plugin_id: str = "",
+) -> None:
+    """核验没通过 → 履约中止（不降级），问题清单**落盘**
+
+    **为什么不是 `failed` 之外的状态**：产出不合这只盒子自己的规矩，
+    就是没交付。状态机里 `completed → failed` 是允许的 ✓。
+    """
+    reason = (
+        f"产出没通过 {plugin_id or '核验插件'} 的自检："
+        + "；".join(problems)
+    )
+    task_run.event_log.append(
+        event="verification_failed",
+        detail={
+            "plugin_id": plugin_id,
+            "problems": list(problems),
+        },
+    )
+    if task_run.status in ALLOWED_TRANSITIONS and (
+        TaskRunStatus.FAILED in ALLOWED_TRANSITIONS.get(task_run.status, set())
+    ):
+        task_run.transition_to(TaskRunStatus.FAILED, reason=reason)

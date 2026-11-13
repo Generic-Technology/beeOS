@@ -90,7 +90,16 @@ RECEIPT_PARSED = SchemaDef(
         FieldDef(name="receipt_no", type="string"),
         FieldDef(name="receipt_date", type="string", description="ISO 日期 YYYY-MM-DD"),
         FieldDef(name="receipt_time", type="string", description="HH:MM 或空串"),
-        FieldDef(name="items", type="ref:schema_receipt_item"),
+        # **数组，不是一个对象**（2026-11-13 修）：
+        # 一张小票上有**多行**商品，产出里 `items` 一直是数组
+        # （`merged["items"] = new_items`），而这里声明成单个 `ref:`
+        # → **产出违约**。以前没人发现，是因为产出从不过产出契约闸。
+        # 数组的元素照样深校验（`items` 指向一个 ref 类型的字段）。
+        FieldDef(
+            name="items",
+            type="array",
+            items=FieldDef(name="item", type="ref:schema_receipt_item"),
+        ),
         # exception `items_count == 0`（没读出任何商品行 → 不交付）读的量。
         # 以前产出里只有 items 数组、没有这个计数，于是那条规则指向一个
         # 不存在的字段，**从来没触发过**：一张只拍到票头、没拍到商品的

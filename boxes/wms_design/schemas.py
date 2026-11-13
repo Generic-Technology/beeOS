@@ -556,8 +556,15 @@ BUSINESS_DESIGN_PACKAGE = SchemaDef(
         # 这两条验的是「**这是不是一个 WMS 设计**」：需求有没有落到 WMS
         # 概念上，规则有没有约束 WMS 业务。少了这两条，一个纯通用的
         # 「当库存 > 0 时……」模型照样全绿，而盒子挂着 WMS 的招牌。
-        FieldDef(name="wms_binding", type="boolean"),
-        FieldDef(name="wms_rule_binding", type="boolean"),
+        # **三态，同上**（2026-11-13 修）：这两个是「这条判据有可能不适用」的字段——
+        # 产出里没绑上规则型需求时写的是 `"n/a"`（不是 false），
+        # 可这里声明的是 `boolean` → **产出违约**。
+        #
+        # **这个破损以前没人查**：产出从不过产出契约闸，
+        # 于是「声明是 boolean、产出是 n/a」一直没人发现。
+        # 盒级核验钩子接上之后，形状闸第一次把这件事翻出来。
+        FieldDef(name="wms_binding", type="boolean_or_na"),
+        FieldDef(name="wms_rule_binding", type="boolean_or_na"),
         # 绑定作废的原因（自造概念 / 证据不是原文 / 类别不匹配）。
         # **判了就要看得见**：只给一个「没绑上」的布尔值的话，
         # 读者分不清是「模型没认出来」还是「模型认错了」——

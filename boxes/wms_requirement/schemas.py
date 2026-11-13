@@ -255,12 +255,16 @@ REQUIREMENT_SET_PACKAGE = SchemaDef(
         FieldDef(name="no_hallucination", type="boolean"),
         # ---- 证据细节 ----
         FieldDef(name="evidence_detail", type="object", properties=[
+            # **「有才出现」的明细**（2026-11-13 修）：
+            # 这三项只在**真的有问题**时才写进明细（没漏句子就没有 uncovered_sentences），
+            # 声明成必填 → 正常的产出**违约**。
+            # 以前没人发现，是因为产出从不过产出契约闸。
             FieldDef(name="uncovered_sentences", type="array",
-                     items=FieldDef(name="s", type="string")),
+                     items=FieldDef(name="s", type="string"), required=False),
             FieldDef(name="broken_traces", type="array",
-                     items=FieldDef(name="b", type="string")),
+                     items=FieldDef(name="b", type="string"), required=False),
             FieldDef(name="hallucinated", type="array",
-                     items=FieldDef(name="h", type="string")),
+                     items=FieldDef(name="h", type="string"), required=False),
         ]),
         # ---- 人读的需求文档（机械投影）----
         FieldDef(name="document", type="ref:schema_requirement_document", required=False),
