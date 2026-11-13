@@ -120,6 +120,11 @@ class ExtensionPoint:
     **由 runtime 登记**，core 不认具体钩子的名字——
     否则 core 就得反向依赖 runtime。
 
+    `host_kinds` 说**这个钩子在哪类宿主上会触发**。
+    这一维不能省：没有它，一个 op 级的插件可以挂到盒级钩子上，
+    装配通过、运行时**永远不会被调用**——
+    那正是「声明了却没人执行」：读者以为它在守着，其实它一次都没跑过。
+
     `max_bindings_per_host` 解决「一个钩子上能挂几个」：
     决策类钩子（升级决策）**只许一个**——两个实现同时决定这次履约的终态，
     那就没有「决策」了，只是两套事实打架。
@@ -132,13 +137,24 @@ class ExtensionPoint:
     - `none` —— 只能返回 `None`
     - `decision` —— 必须返回一个带 `decision` 键的 dict
     - `patch` —— 只能返回 `None` 或一份补丁（M5 才用）
+
+    `return_required_fields` 是**返回值必须齐的字段**——
+    决策类钩子不只收一个词：理由、命中的规则、用不上的规则都在里面，
+    少一项读者就看不到发生了什么。
+
+    `decision_values` 是**「decision」键的合法取值**（决策词表）——
+    词表由 runtime 持有（`runtime/models.py` 是唯一真源），
+    不认识的词按「要人看」处理，不猜。
     """
 
     id: str
+    host_kinds: tuple[HostKind, ...]
     kind: Literal["decision", "action"] = "action"
     max_bindings_per_host: int = 1
     view_keys: tuple[str, ...] = ()
     return_contract: Literal["none", "decision", "patch"] = "none"
+    return_required_fields: tuple[str, ...] = ()
+    decision_values: tuple[str, ...] = ()
     summary: str = ""
 
 
@@ -193,7 +209,14 @@ def register_implementation(key: str, impl: PluginImpl) -> None:
 
     **重复登记同一个键 = 报错**，除非还是同一个函数
     （模块被重新 import 过一次的情况，不该因此炸掉）。
+
+    **不可调用的对象当场拒**：登记进去才发现调不动，
+    那是运行时才炸——装配期能查的就别留到运行时。
     """
+    if not callable(impl):
+        raise ValueError(
+            f"插件实现 {key!r} 不可调用——它是 {type(impl).__name__}"
+        )
     existing = IMPLEMENTATIONS.get(key)
     if existing is not None:
         if existing is impl:
@@ -247,16 +270,27 @@ def check_plugin_spec(spec: PluginSpec, *, host_kind: HostKind) -> list[str]:
             f"（它只允许 {list(ptype.allowed_hosts)}）"
         )
 
-    if spec.extension_point not in EXTENSION_POINTS:
+    point = EXTENSION_POINTS.get(spec.extension_point)
+    if point is None:
         problems.append(
             f"扩展点 {spec.extension_point!r} 没注册——runtime 还没留这个钩子。"
             f"已注册的：{sorted(EXTENSION_POINTS) or '（一个都没有）'}"
         )
-    elif spec.extension_point not in ptype.extension_points:
-        problems.append(
-            f"插件 {spec.id!r} 不能作用在扩展点 {spec.extension_point!r} 上"
-            f"（它允许的是 {list(ptype.extension_points)}）"
-        )
+    else:
+        if spec.extension_point not in ptype.extension_points:
+            problems.append(
+                f"插件 {spec.id!r} 不能作用在扩展点 {spec.extension_point!r} 上"
+                f"（它允许的是 {list(ptype.extension_points)}）"
+            )
+        if host_kind not in point.host_kinds:
+            # **「能挂上去」不等于「会被调用」**——
+            # 扩展点只在它声明的宿主上触发。挂错宿主 = 永远不被调用，
+            # 而读者以为它在守着（这就是「声明了却没人执行」）。
+            problems.append(
+                f"扩展点 {spec.extension_point!r} 只在 {list(point.host_kinds)} 级宿主上触发，"
+                f"挂到 {host_kind} 级宿主上**永远不会被调用**——"
+                f"换个作用点，或者让扩展点支持这种宿主"
+            )
 
     if ptype.params_model is not None:
         try:
@@ -266,14 +300,44 @@ def check_plugin_spec(spec: PluginSpec, *, host_kind: HostKind) -> list[str]:
                 f"插件 {spec.id!r} 的参数不合法：{_format_validation_error(e)}"
             )
 
-    if ptype.implementation_key and ptype.implementation_key not in IMPLEMENTATIONS:
+    # **实现绑定**：空键 / 没登记 / 不可调用，一律装配期拒。
+    # 空键尤其要拒：它会被「实现存在」那条检查跳过（空串是假值），
+    # 于是装配通过、运行时才炸——那正是装配期该拦的事。
+    if not ptype.implementation_key:
+        problems.append(
+            f"插件类型 {spec.id!r} 没有实现绑定（implementation_key 是空的）——"
+            f"挂上去也不会被调用"
+        )
+    elif ptype.implementation_key not in IMPLEMENTATIONS:
         problems.append(
             f"插件 {spec.id!r} 的实现 {ptype.implementation_key!r} 没登记——"
             f"挂上去也不会被调用。已登记的实现："
             f"{sorted(IMPLEMENTATIONS) or '（一个都没有）'}"
         )
+    elif not callable(IMPLEMENTATIONS[ptype.implementation_key]):
+        problems.append(
+            f"插件 {spec.id!r} 的实现 {ptype.implementation_key!r} 不可调用"
+            f"（它是 {type(IMPLEMENTATIONS[ptype.implementation_key]).__name__}）"
+        )
 
     return problems
+
+
+def validated_params(spec: PluginSpec) -> dict[str, Any]:
+    """校验并返回**规范化后的参数**（补默认值、转换类型）
+
+    **为什么不能直接用 `spec.params`**：参数模型允许省略（有默认值），
+    也允许字符串转成数字（`"4"` → `4`）。直接用原文的话，
+    插件拿到的就少了默认值、或者拿到的是没转换的字符串——
+    **声明说是一回事，传给插件是另一回事**。
+
+    校验不过时抛 `ValidationError`——装配期已经先报过红了，
+    走到这里说明参数是合法的。
+    """
+    ptype = PLUGIN_TYPES.get(spec.id)
+    if ptype is None or ptype.params_model is None:
+        return dict(spec.params)
+    return ptype.params_model.model_validate(spec.params).model_dump()
 
 
 def check_host_plugins(
@@ -386,6 +450,9 @@ def compile_bindings(specs: list[PluginSpec]) -> list[PluginBinding]:
 
     只编**已经过校验**的声明——装配器先调 `check_host_plugins`，
     过了才编。没过的已经报红了，不会走到这里。
+
+    **参数存的是「规范化后的」那一份**（补了默认值、转换了类型），
+    不是声明里的原文——插件拿到的必须跟声明说的一致。
     """
     out: list[PluginBinding] = []
     for spec in specs:
@@ -396,7 +463,7 @@ def compile_bindings(specs: list[PluginSpec]) -> list[PluginBinding]:
             PluginBinding(
                 id=spec.id,
                 extension_point=spec.extension_point,
-                params=spec.params,
+                params=validated_params(spec),
                 implementation_key=ptype.implementation_key,
             )
         )

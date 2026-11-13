@@ -76,15 +76,20 @@ def _context(
     return_contract: str = "decision",
     kind: str = "decision",
     max_per_host: int = 1,
+    required_fields: tuple = (),
+    decision_values: tuple = (),
 ) -> PluginContext:
     """登记一套东西，冻结成装配快照"""
     plugin_registry.register_extension_point(
         ExtensionPoint(
             id=point_id,
+            host_kinds=("box",),
             kind=kind,
             max_bindings_per_host=max_per_host,
             view_keys=view_keys,
             return_contract=return_contract,
+            return_required_fields=required_fields,
+            decision_values=decision_values,
         )
     )
     plugin_registry.register_plugin_type(
@@ -225,7 +230,7 @@ class TestReturnContract:
                 extension_point="test.point",
                 source={"result": {}},
             )
-        assert "decision" in str(e.value)
+        assert "收到的是 str" in str(e.value)
 
     def test_a_none_hook_refuses_a_value(self, plugin_registry):
         def impl(view, params):
@@ -416,3 +421,108 @@ class TestRuntimeExtensionPoints:
         assert point.max_bindings_per_host == 1
         assert point.view_keys == ("result", "failed_rules")
         assert point.return_contract == "decision"
+
+
+# ============================================================
+# 三、返回值必须是「完整的决策」，参数不能被插件改
+# ============================================================
+
+
+class TestDecisionMustBeCompleteAndLegal:
+    """决策类钩子：词要在词表里，四项要齐
+
+    **为什么不能只查「有没有 decision 键」**：
+    插件返回 runtime 不认识的决策词时，以前会被当成
+    「一个正常的业务决定」放行——履约按错的词落状态，
+    而没人知道插件说了一句 runtime 不懂的话。
+    不认识的词 = 契约错误 = 履约中止，不猜。
+    """
+
+    _FIELDS = ("decision", "reason", "triggered_rule", "unusable_rules")
+
+    def test_an_unknown_decision_word_is_refused(self, plugin_registry):
+        def impl(view, params):
+            return {
+                "decision": "unknown_decision",
+                "reason": "…", "triggered_rule": "", "unusable_rules": [],
+            }
+
+        ctx = _context(
+            plugin_registry, impl=impl,
+            required_fields=self._FIELDS,
+            decision_values=("human_review", "auto_resolve"),
+        )
+        with pytest.raises(PluginFailure) as e:
+            call_plugins(
+                ctx, [_binding()],
+                extension_point="test.point",
+                source={"result": {}},
+            )
+        assert "不在合法词表里" in str(e.value)
+
+    def test_a_decision_missing_its_evidence_is_refused(self, plugin_registry):
+        """只回一个词 → 放行的话，理由和用不上的规则就丢了"""
+        def impl(view, params):
+            return {"decision": "human_review"}
+
+        ctx = _context(
+            plugin_registry, impl=impl,
+            required_fields=self._FIELDS,
+            decision_values=("human_review",),
+        )
+        with pytest.raises(PluginFailure) as e:
+            call_plugins(
+                ctx, [_binding()],
+                extension_point="test.point",
+                source={"result": {}},
+            )
+        assert "缺字段" in str(e.value)
+
+    def test_a_complete_legal_decision_passes(self, plugin_registry):
+        decision = {
+            "decision": "human_review",
+            "reason": "验收没过",
+            "triggered_rule": "count > 0",
+            "unusable_rules": [],
+        }
+
+        def impl(view, params):
+            return decision
+
+        ctx = _context(
+            plugin_registry, impl=impl,
+            required_fields=self._FIELDS,
+            decision_values=("human_review",),
+        )
+        out = call_plugins(
+            ctx, [_binding()],
+            extension_point="test.point",
+            source={"result": {}},
+        )
+        assert out == [decision]
+
+
+class TestPluginCannotRewriteItsOwnConfig:
+    """插件**不许改自己的配置**
+
+    视图是深拷贝，参数也必须是——
+    否则插件改的是**原始声明**，下一次履约拿到的配置就变了，
+    而且看不出是谁改的。
+    """
+
+    def test_mutating_the_params_does_not_change_the_declaration(self, plugin_registry):
+        seen: list = []
+
+        def impl(view, params):
+            params["nested"]["count"] = 999
+            seen.append(params["nested"]["count"])
+            return {"decision": "human_review"}
+
+        ctx = _context(plugin_registry, impl=impl)
+        binding = _binding(params={"nested": {"count": 1}})
+
+        call_plugins(ctx, [binding], extension_point="test.point", source={"result": {}})
+        call_plugins(ctx, [binding], extension_point="test.point", source={"result": {}})
+
+        assert binding.params["nested"]["count"] == 1, "原始声明被插件改了"
+        assert seen == [999, 999], "两次调用拿到的配置应该一样"

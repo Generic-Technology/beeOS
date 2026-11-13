@@ -40,7 +40,7 @@ from core.plugins import (
     PluginContext,
     register_extension_point,
 )
-from runtime.models import ALLOWED_TRANSITIONS, TaskRun, TaskRunStatus
+from runtime.models import ALL_DECISIONS, ALLOWED_TRANSITIONS, TaskRun, TaskRunStatus
 
 
 #: 升级决策钩子（盒级）
@@ -55,14 +55,30 @@ def register_runtime_extension_points() -> None:
 
     **这些钩子由 runtime 留，不由 core 定义**——
     core 要是认钩子的名字，就等于反向依赖 runtime 了。
+
+    **`host_kinds` 不能省**：钩子只在它声明的宿主上触发。
+    没有这一维，op 级的插件可以挂到盒级钩子上，
+    装配通过、运行时永远不被调用——
+    「声明了却没人执行」，装配期本该拦住的。
     """
     register_extension_point(
         ExtensionPoint(
             id=EXTENSION_ESCALATE,
+            host_kinds=("box",),
             kind="decision",
             max_bindings_per_host=1,
             view_keys=("result", "failed_rules"),
             return_contract="decision",
+            # **四项都要齐**：决策 + 理由 + 命中的规则 + 用不上的规则。
+            # 少一项读者就看不到发生了什么（尤其「用不上的规则」——
+            # 一条指向产出里没有的量的规则，永远不触发，
+            # 读者以为它在守着，其实它一次都没触发过）。
+            return_required_fields=(
+                "decision", "reason", "triggered_rule", "unusable_rules",
+            ),
+            # **决策词表的唯一真源在 runtime/models.py**——
+            # 这里只引用它，不另抄一份。
+            decision_values=ALL_DECISIONS,
             summary="产出验收失败、且例外要求升级时的决策点",
         )
     )
@@ -129,7 +145,19 @@ def build_view(point: ExtensionPoint, source: Mapping[str, Any]) -> dict[str, An
 
 
 def check_return(point: ExtensionPoint, value: Any) -> Any:
-    """校验插件返回的东西符合扩展点的返回契约"""
+    """校验插件返回的东西符合扩展点的返回契约
+
+    **决策类钩子要三样齐**：
+    1. 是一个 dict
+    2. **必须带的字段都在**（理由、命中的规则、用不上的规则——
+       少一项读者就看不到发生了什么）
+    3. `decision` 的取值在**合法词表**里
+
+    第 3 条为什么重要：插件返回了 runtime 不认识的决策词，
+    以前会被当成「一个正常的业务决定」放行——于是履约按错的词落状态，
+    而没人知道插件说了一句 runtime 不懂的话。
+    **不认识的词 = 契约错误 = 履约中止**，不是「猜一个」。
+    """
     if point.return_contract == "none":
         if value is not None:
             raise PluginContractError(
@@ -137,11 +165,22 @@ def check_return(point: ExtensionPoint, value: Any) -> Any:
             )
         return None
     if point.return_contract == "decision":
-        if not isinstance(value, dict) or "decision" not in value:
+        if not isinstance(value, dict):
             raise PluginContractError(
-                f"扩展点 {point.id!r} 要一个带 'decision' 键的 dict"
-                f"（理由、命中的规则、用不上的规则都在里面），"
-                f"收到的是 {value!r}"
+                f"扩展点 {point.id!r} 要一个 dict（决策 + 理由 + 命中的规则 + "
+                f"用不上的规则），收到的是 {type(value).__name__}"
+            )
+        missing = [f for f in point.return_required_fields if f not in value]
+        if missing:
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的返回值缺字段：{missing}"
+                f"（收到 {value!r}）——缺一项读者就看不到发生了什么"
+            )
+        allowed = point.decision_values
+        if allowed and value.get("decision") not in allowed:
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的决策词 {value.get('decision')!r} 不在合法词表里："
+                f"{list(allowed)}——runtime 不猜它是什么意思"
             )
         return value
     if point.return_contract == "patch":
@@ -180,7 +219,10 @@ def call_plugins(
         try:
             impl = context.implementation(binding.implementation_key)
             view = build_view(point, source)
-            value = impl(view, binding.params)
+            # **参数也逐次深拷贝**：视图是副本，参数也必须是——
+            # 否则插件改了自己的配置，改的是**原始声明**，
+            # 下一次履约拿到的配置就变了（而且看不出是谁改的）。
+            value = impl(view, copy.deepcopy(binding.params))
             results.append(check_return(point, value))
         except Exception as e:
             # 契约违反也是失败：这个能力没成，履约不能假装它成了

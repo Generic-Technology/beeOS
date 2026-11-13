@@ -927,7 +927,10 @@ def _register_ok(
     """
     plugins_mod.register_extension_point(
         plugins_mod.ExtensionPoint(
-            id="demo.point", kind=kind, max_bindings_per_host=max_per_host
+            id="demo.point",
+            host_kinds=("op", "box"),
+            kind=kind,
+            max_bindings_per_host=max_per_host,
         )
     )
     plugins_mod.register_plugin_type(
@@ -1049,7 +1052,7 @@ class TestPluginChecksReject:
 
         _register_ok(plugin_registry, points=("demo.point",))
         plugin_registry.register_extension_point(
-            plugin_registry.ExtensionPoint(id="other.point")
+            plugin_registry.ExtensionPoint(id="other.point", host_kinds=("op", "box"))
         )
         err = _broken(
             components=_components(
@@ -1149,3 +1152,115 @@ class TestPluginChecksReject:
 
         with pytest.raises(ValidationError):
             PluginSpec(id="x", extension_point="y", not_a_field=1)
+
+
+# ============================================================
+# 插件：装配期必须拦住「装得上但不会被调用 / 调不动」的那些
+# ============================================================
+#
+# 这一组是 2026-11-13 的 CR 修完补的：
+# 上一版「能挂上去」与「会被调用」是两回事——
+# 挂到不触发它的宿主上、参数没规范化、实现键是空的，
+# 都能装得出来，运行时才炸，或者**永远不炸**（更坏）。
+
+
+class TestPluginBindingsThatWouldNeverRun:
+    def test_binding_to_an_extension_point_that_does_not_fire_on_this_host(self, plugin_registry):
+        """**扩展点只在它声明的宿主上触发**
+
+        挂到不触发它的宿主上 = 永远不会被调用，
+        而读者以为它在守着——「声明了却没人执行」。
+        """
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry, hosts=("op", "box"))
+        # `demo.point` 这个扩展点只在 box 级宿主上触发
+        plugin_registry.EXTENSION_POINTS["demo.point"] = (
+            plugin_registry.ExtensionPoint(
+                id="demo.point", host_kinds=("box",), kind="action"
+            )
+        )
+        err = _broken(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            )
+        )
+        assert any("永远不会被调用" in p for p in err.problems), err.problems
+
+
+class TestPluginImplementationMustExist:
+    def test_an_empty_implementation_key_is_rejected(self, plugin_registry):
+        """空实现键 → 装配期拒
+
+        空串是假值，会被「实现存在」那条检查跳过——
+        装配通过、运行时才炸。
+        """
+        from core.plugins import PluginSpec
+
+        _register_ok(plugin_registry, impl_key="")
+        plugin_registry.PLUGIN_TYPES["demo_plugin"] = plugin_registry.PluginType(
+            id="demo_plugin",
+            allowed_hosts=("op", "box"),
+            extension_points=("demo.point",),
+            implementation_key="",
+        )
+        err = _broken(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            )
+        )
+        assert any("没有实现绑定" in p for p in err.problems), err.problems
+
+    def test_a_non_callable_implementation_cannot_be_registered(self, plugin_registry):
+        """不可调用的实现当场拒（登记进去才发现调不动，是运行时才炸）"""
+        with pytest.raises(ValueError, match="不可调用"):
+            plugin_registry.register_implementation("not_callable", "我是字符串")
+
+
+class TestPluginParamsAreNormalised:
+    def test_the_binding_carries_the_defaults(self, plugin_registry):
+        """参数模型有默认值 → **绑定里要有那个默认值**
+
+        直接用声明原文的话，插件拿到的是空的——
+        声明说是一回事，传给插件是另一回事。
+        """
+        from pydantic import BaseModel, Field
+
+        from core.plugins import PluginSpec
+
+        class DemoParams(BaseModel):
+            limit: int = Field(default=3)
+
+        _register_ok(plugin_registry, params_model=DemoParams)
+        box = _assemble(
+            components=_components(
+                plugins=[PluginSpec(id="demo_plugin", extension_point="demo.point")]
+            )
+        )
+        binding = box.beeline.operations[0].plugins[0]
+        assert binding.params == {"limit": 3}
+
+    def test_the_binding_carries_the_converted_value(self, plugin_registry):
+        """`"4"` 传进来 → 绑定里存的是 **4**（转换过的），不是字符串"""
+        from pydantic import BaseModel, Field
+
+        from core.plugins import PluginSpec
+
+        class DemoParams(BaseModel):
+            limit: int = Field(default=3)
+
+        _register_ok(plugin_registry, params_model=DemoParams)
+        box = _assemble(
+            components=_components(
+                plugins=[
+                    PluginSpec(
+                        id="demo_plugin",
+                        extension_point="demo.point",
+                        params={"limit": "4"},
+                    )
+                ]
+            )
+        )
+        binding = box.beeline.operations[0].plugins[0]
+        assert binding.params == {"limit": 4}
+        assert isinstance(binding.params["limit"], int)
