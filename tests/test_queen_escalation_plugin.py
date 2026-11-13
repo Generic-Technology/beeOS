@@ -185,3 +185,29 @@ class TestPluginMechanism:
             host_kind="op",
         )
         assert any("不允许挂在 op 级宿主上" in p for p in problems), problems
+
+
+# ============================================================
+# 4. 注册表之间不许漏
+# ============================================================
+
+
+class TestTheRegistriesAgree:
+    def test_every_registered_box_has_a_plugin_context(self):
+        """**在 `BOX_REGISTRY` 里的盒子，必须也在插件上下文注册表里**
+
+        漏一个的后果很安静：那只盒子的升级决策**静默退回默认口径**
+        （交给人），插件一次都没被调用——
+        而声明里明明挂着它。这就是「声明了却没人执行」。
+        """
+        from kanban.trigger import BOX_REGISTRY, PLUGIN_CONTEXT_REGISTRY
+
+        missing = sorted(set(BOX_REGISTRY) - set(PLUGIN_CONTEXT_REGISTRY))
+        assert missing == [], f"这些盒子没有插件上下文：{missing}"
+
+    def test_the_plugin_context_registry_has_no_extra_boxes(self):
+        """反向也一样：多出来的上下文说明有盒子被从注册表里删了、这边忘了"""
+        from kanban.trigger import BOX_REGISTRY, PLUGIN_CONTEXT_REGISTRY
+
+        extra = sorted(set(PLUGIN_CONTEXT_REGISTRY) - set(BOX_REGISTRY))
+        assert extra == [], f"这些上下文没有对应的盒子：{extra}"
