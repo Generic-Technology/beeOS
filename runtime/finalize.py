@@ -103,6 +103,14 @@ def run_box_verifications(
     静默跳过的话，读者以为它在守着，实际它一次都没跑过——
     那正是「声明了却没人执行」，比报错更坏。
     """
+    if task_run.status != TaskRunStatus.COMPLETED:
+        # **失败的履约没有「定案的产出」**——核验无从谈起。
+        # 链途中挂掉、或只跑了一半（partially_completed），产出都不是最终那一份，
+        # 拿它去核验 = 核验一份不存在的东西。
+        #
+        # **核验是「产出定案之后」的事**（钩子的定义就是定在那个时机的）。
+        return []
+
     bindings = [
         b for b in definition.plugins if b.extension_point == EXTENSION_VERIFY
     ]

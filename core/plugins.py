@@ -139,7 +139,8 @@ class ExtensionPoint:
     - `decision` —— 必须返回一个带 `decision` 键的 dict
     - `patch` —— 只能返回 `None` 或一份补丁（M5 才用）
     - `verdict` —— 核验类钩子：`None` = 通过，
-      或 `{"problems": [...]}` = 不通过（问题清单非空）
+      或 `{"problems": [...]}` = 不通过（**清单必须非空**——
+      空清单会被拒：插件「忘了填」不该让它静默放行，通过只能返回 `None`）
 
     `return_required_fields` 是**返回值必须齐的字段**——
     决策类钩子不只收一个词：理由、命中的规则、用不上的规则都在里面，

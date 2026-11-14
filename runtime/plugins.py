@@ -239,6 +239,16 @@ def check_return(point: ExtensionPoint, value: Any) -> Any:
                 f"扩展点 {point.id!r} 的 'problems' 必须是列表，"
                 f"收到的是 {type(problems).__name__}"
             )
+        if not problems:
+            # **空清单不许冒充「通过」**——
+            # 通过只有一种写法：返回 None。
+            # 插件要是「忘了填清单」，空清单就会让它**静默放行**：
+            # 读者看到的是「核验过了」，实际它一次都没核。
+            # 宁可红一次，也不要假装绿。
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的核验结论不许带空清单——"
+                f"**通过请返回 None**；不通过请至少列出一条问题"
+            )
         bad = [p for p in problems if not isinstance(p, str) or not p.strip()]
         if bad:
             raise PluginContractError(

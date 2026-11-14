@@ -404,3 +404,81 @@ class TestVerdictContractIsStrict:
         )
         with pytest.raises(PluginContractError):
             check_return(point, {"problems": [], "还有别的": 1})
+
+
+# ============================================================
+# 六、第二轮 CR 的两个洞（2026-11-15）
+# ============================================================
+
+
+class TestFailedRunDoesNotVerify:
+    """**失败的履约不跑核验**——核验是「产出定案之后」的事
+
+    链途中挂掉、或只跑了一半，产出都不是最终那一份，
+    拿它去核验 = 核验一份不存在的东西。
+    """
+
+    def test_a_failed_run_never_calls_the_verify_plugin(
+        self, monkeypatch, stub_llm
+    ):
+        from boxes.wms_design.runner import RUNNER
+        from kanban import trigger as trig
+
+        ctx = trig.PLUGIN_CONTEXT_REGISTRY[BOX_ID]
+        impls = dict(ctx.implementations)
+        calls: list[int] = []
+
+        def _counting(view, params):
+            calls.append(1)
+            return None
+
+        impls["wms_design.output_check"] = _counting
+        monkeypatch.setitem(
+            trig.PLUGIN_CONTEXT_REGISTRY,
+            BOX_ID,
+            type(ctx)(
+                types=dict(ctx.types),
+                extension_points=dict(ctx.extension_points),
+                implementations=impls,
+            ),
+        )
+
+        def _boom(input_data):
+            raise RuntimeError("第一跳故意失败")
+
+        monkeypatch.setitem(RUNNER._handlers, "requirement_parser", _boom)
+        out, record = _run()
+
+        assert record["status"] == "failed"
+        assert not calls, "失败的履约仍然执行了核验插件"
+
+    def test_the_shape_gate_also_skips_a_failed_run(self, monkeypatch, stub_llm):
+        """形状闸同样只判「定案的产出」"""
+        from boxes.wms_design.runner import RUNNER
+
+        def _boom(input_data):
+            raise RuntimeError("第一跳故意失败")
+
+        monkeypatch.setitem(RUNNER._handlers, "requirement_parser", _boom)
+        out, record = _run()
+        reason = record.get("error_reason") or ""
+        assert "产出不合产出契约" not in reason, reason
+
+
+class TestAnEmptyVerdictIsNotAPass:
+    """**空清单不许冒充「通过」**——通过只有一种写法：返回 None
+
+    插件要是「忘了填清单」，空清单会让它**静默放行**：
+    读者看到的是「核验过了」，实际它一次都没核。
+    """
+
+    def test_an_empty_problem_list_is_refused(self):
+        from runtime.plugins import PluginContractError, check_return
+        from core.plugins import ExtensionPoint
+
+        point = ExtensionPoint(
+            id="v", host_kinds=("box",), return_contract="verdict"
+        )
+        with pytest.raises(PluginContractError) as e:
+            check_return(point, {"problems": []})
+        assert "通过请返回 None" in str(e.value)
