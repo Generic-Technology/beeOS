@@ -276,6 +276,7 @@ python scripts/new_box.py --help
   - `acceptance.py` — Acceptance 评估器（4 状态转移）
   - `queen.py` — Queen 升级决策（已收编成盒级插件 `queen_escalation`）
   - `plugins.py` — 插件执行机制：扩展点钩子 + 受限视图调用 + 失败按阶段落状态
+  - `finalize.py` — 产出定案后的统一收口：形状闸 + 盒级核验（执行完、交出去之前必过）
   - `resume.py` — 「等外部」的履约怎么回来（转人工后由人接回去）
   - `images.py` — 图片格式归一（HEIC → JPEG，模型接口才收得下）
   - `store.py` — TaskRunStore（JSONL 持久化 + 查询）

@@ -100,14 +100,12 @@ from runtime.contract import validate_payload
 from runtime.handoff import HandoffError, assemble_handoff
 from runtime.models import DECISION_HUMAN_REVIEW, TaskRunStatus
 from core.plugins import PluginContext
+from runtime.finalize import finalize_output
 from runtime.plugins import (
     EXTENSION_ESCALATE,
-    EXTENSION_VERIFY,
     PluginFailure,
     abort_on_plugin_failure,
-    abort_on_verdict_failed,
     call_plugins,
-    verify_output,
 )
 from runtime.queen import default_escalation_decision
 from runtime.runner import HandlerRunner
@@ -240,33 +238,6 @@ PLUGIN_CONTEXT_REGISTRY: dict[str, PluginContext] = {
 # 盒子自己那份只声明了 5 条交接，真实链路有 8 条——差的 3 条藏在编排脚本里。
 # 照抄那份 = 协作边界声明号称是唯一事实源，而它其实不是。
 
-def _verify_box_output(
-    box_id: str,
-    definition: BeeBoxDefinition,
-    task_run: Any,
-) -> list[tuple[str, list[str]]]:
-    """跑这只盒子的**产出自检插件**，返回 [(插件 id, 问题清单)]
-
-    **没有插件就不跑**——盒子没挂核验插件，说明它不声明这类要求。
-    """
-    context = PLUGIN_CONTEXT_REGISTRY.get(box_id)
-    if context is None:
-        return []
-    out: list[tuple[str, list[str]]] = []
-    for binding in definition.plugins:
-        if binding.extension_point != EXTENSION_VERIFY:
-            continue
-        problems = verify_output(
-            context,
-            [binding],
-            extension_point=EXTENSION_VERIFY,
-            source={"result": task_run.result or {}},
-        )
-        if problems:
-            out.append((binding.id, problems))
-    return out
-
-
 def _decide_escalation_via_plugin(
     box_id: str,
     definition: BeeBoxDefinition,
@@ -283,11 +254,26 @@ def _decide_escalation_via_plugin(
 
     **插件失败 → 抛 `PluginFailure`**：宿主要据此中止履约（不降级）。
     """
+    bindings = [
+        b for b in definition.plugins if b.extension_point == EXTENSION_ESCALATE
+    ]
+    if not bindings:
+        # **盒子没声明升级决策插件** → 按默认口径处理（交给人）
+        return default_escalation_decision()
+
     context = PLUGIN_CONTEXT_REGISTRY.get(box_id)
     if context is None:
-        # **这只盒子没有装配快照**（比如手写 definition 的夹具盒）→
-        # 按默认口径处理。
-        return default_escalation_decision()
+        # **fail closed**：声明了升级决策插件，却找不到装配快照 →
+        # 声明的规则**根本没法求值**，静默走默认分支等于让读者
+        # 以为「盒子没写规则」，而真因是「上下文丢了」。
+        raise PluginFailure(
+            bindings[0].id,
+            EXTENSION_ESCALATE,
+            RuntimeError(
+                f"盒子声明了升级决策插件 {bindings[0].id!r}，"
+                f"但找不到它的插件上下文（装配快照）——规则没法求值"
+            ),
+        )
     decisions = call_plugins(
         context,
         definition.plugins,
@@ -1608,56 +1594,28 @@ def trigger_task(
         )
     task_run = BeelineExecutor(runner).execute(task_run, beeline, payload)
 
-    # ===== 产出的形状闸（通用，与投料闸对称）=====
+    # ===== 产出定案后的统一收口（形状闸 + 盒级核验）=====
     #
-    # **投料过闸、产出也过闸。**
-    # 以前产出从不过闸：缺一个必填字段 → 判据读不到 → 判「用不上」→
-    # 不进 failed 也不进 passed → **照样 ACCEPTED 交付**。
-    # 那是「声明了却拿不到」在产出层的形态：不吵，也不挡。
+    # **收口在 runtime**（`runtime/finalize.py`），编排层只负责调用——
+    # 判「产出本身合不合格」是 runtime 的事（产出是 runtime 跑出来的）。
+    # 放在编排层的话，换个入口跑履约，这两道闸就没了。
     #
-    # **不合契约 → 履约中止**，而且**不跑验收**——
-    # 验收读的正是产出里的字段，形状都不对了，判据的结论只会是误导
-    # （一串 n/a 看着像「这条判据用不上」，其实整个产出都不对）。
-    if task_run.status == TaskRunStatus.COMPLETED:
-        output_errors: list[str] = []
-        result_schema = definition.get_schema(definition.result.result_schema)
-        if task_run.result is None:
-            output_errors.append("产出是空的——链走完了却什么都没产出")
-        elif result_schema is not None:
-            output_errors = validate_payload(
-                task_run.result, result_schema, schemas=definition.schemas,
-            )
-        if output_errors:
-            task_run.event_log.append(
-                event="output_contract_violation",
-                detail={
-                    "schema": definition.result.result_schema,
-                    "errors": output_errors,
-                },
-            )
-            task_run.transition_to(
-                TaskRunStatus.FAILED,
-                reason=(
-                    f"产出不合产出契约 {definition.result.result_schema!r}："
-                    + "；".join(output_errors)
-                ),
-            )
-
-    # ===== 盒级核验钩子（业务插件）=====
-    #
-    # **产出定案之后、验收之前**跑这只盒子自己的核验插件。
-    # 放在验收前面：判据读不到字段会判「用不上」——不吵也不挡，
-    # 缺的东西要让**核验插件当场说**，而不是让判据悄悄 n/a 过去。
-    if task_run.status == TaskRunStatus.COMPLETED:
-        try:
-            verdicts = _verify_box_output(box_id, definition, task_run)
-        except PluginFailure as failure:
-            # **插件自己坏了**（不是「核验没通过」）：
-            # 履约中止，原因是机制问题——两件事读者要能分开看见。
-            abort_on_plugin_failure(task_run, failure)
-            verdicts = []
-        for plugin_id, problems in verdicts:
-            abort_on_verdict_failed(task_run, problems, plugin_id=plugin_id)
+    # **不合就中止，而且不跑验收**：
+    # 验收读的正是产出里的字段，形状或内容都不对时，
+    # 判据的结论只会是一串误导人的 n/a。
+    gate_problems = finalize_output(
+        task_run,
+        definition,
+        plugin_context=PLUGIN_CONTEXT_REGISTRY.get(box_id),
+    )
+    # **状态已经是终态就别再转一次**——
+    # 「插件自己炸了」那条路，收口里已经转过了（原因也写在那儿）。
+    # 再转一次就是 `failed → failed`，状态机会抛「illegal transition」。
+    if gate_problems and task_run.status == TaskRunStatus.COMPLETED:
+        task_run.transition_to(
+            TaskRunStatus.FAILED,
+            reason="产出没过收口：" + "；".join(gate_problems),
+        )
 
     # ===== 产出认领：业务对象标识**从产出里**取 =====
     #

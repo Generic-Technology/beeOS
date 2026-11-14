@@ -214,18 +214,36 @@ def check_return(point: ExtensionPoint, value: Any) -> Any:
             )
         return value
     if point.return_contract == "verdict":
-        # **核验结论**：None = 通过；{"problems": [...]} = 不通过。
+        # **核验结论**：None = 通过；{"problems": [str, ...]} = 不通过。
+        #
+        # **严格**：只认 `{"problems": [非空字符串, ...]}`——
+        # 元素必须是**能直接读懂的字符串**（不是对象、不是空串），
+        # 而且**不许有多余的键**（仓里「未知字段当场报错」那条纪律）。
+        # 宽松的校验等于让「读不懂的问题」混进来，
+        # 而读者看到的就只是「核验没过」——不知道为什么。
         if value is None:
             return None
         if not isinstance(value, dict) or "problems" not in value:
             raise PluginContractError(
                 f"扩展点 {point.id!r} 要 None（通过）或 "
-                f"{{'problems': [...]}}（不通过），收到的是 {value!r}"
+                f"{{'problems': [str, ...]}}（不通过），收到的是 {value!r}"
             )
-        if not isinstance(value["problems"], list):
+        extra = sorted(set(value) - {"problems"})
+        if extra:
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的核验结论只许有 'problems'，多了：{extra}"
+            )
+        problems = value["problems"]
+        if not isinstance(problems, list):
             raise PluginContractError(
                 f"扩展点 {point.id!r} 的 'problems' 必须是列表，"
-                f"收到的是 {type(value['problems']).__name__}"
+                f"收到的是 {type(problems).__name__}"
+            )
+        bad = [p for p in problems if not isinstance(p, str) or not p.strip()]
+        if bad:
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的 'problems' 每一条都必须是非空字符串——"
+                f"读不懂的问题等于没报：{bad!r}"
             )
         return value
     raise PluginContractError(f"扩展点 {point.id!r} 的返回契约 {point.return_contract!r} 不认识")
@@ -357,31 +375,3 @@ def verify_output(
             continue
         problems.extend(str(p) for p in (value.get("problems") or []))
     return problems
-
-
-def abort_on_verdict_failed(
-    task_run: TaskRun,
-    problems: Sequence[str],
-    *,
-    plugin_id: str = "",
-) -> None:
-    """核验没通过 → 履约中止（不降级），问题清单**落盘**
-
-    **为什么不是 `failed` 之外的状态**：产出不合这只盒子自己的规矩，
-    就是没交付。状态机里 `completed → failed` 是允许的 ✓。
-    """
-    reason = (
-        f"产出没通过 {plugin_id or '核验插件'} 的自检："
-        + "；".join(problems)
-    )
-    task_run.event_log.append(
-        event="verification_failed",
-        detail={
-            "plugin_id": plugin_id,
-            "problems": list(problems),
-        },
-    )
-    if task_run.status in ALLOWED_TRANSITIONS and (
-        TaskRunStatus.FAILED in ALLOWED_TRANSITIONS.get(task_run.status, set())
-    ):
-        task_run.transition_to(TaskRunStatus.FAILED, reason=reason)

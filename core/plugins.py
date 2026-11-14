@@ -46,6 +46,7 @@ core.plugins - 插件协议与注册机制
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Callable, Literal, Mapping, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -411,8 +412,14 @@ def check_host_plugins(
 class PluginContext:
     """装配时冻结的插件上下文——**运行时唯一认的东西**
 
-    三张表都是**复制**进来的快照，不是活表的引用：
-    运行时看到的必须跟装配时看到的一致。
+    三张表都是**只读映射**（`MappingProxyType`），不是普通 dict。
+
+    **为什么不能只是 `frozen=True`**：`frozen=True` 只冻结**字段赋值**，
+    冻结不了 dict 里的内容——`ctx.implementations[key] = x` 照样成功。
+    那「装配期验过的那份 = 运行时跑的那份」就成了一句空话：
+    装配之后换掉实现，运行时跑的就是**另一个**实现，而没人知道。
+
+    **只读映射 + 不可变内容 = 真的冻结**。
     """
 
     types: Mapping[str, PluginType]
@@ -434,16 +441,19 @@ class PluginContext:
 
 
 def freeze_plugin_context() -> PluginContext:
-    """把三张表复制一份快照
+    """把三张表复制一份**只读**快照
 
     **为什么冻结**：那张表还在被别处改动（别的盒子在 import 时登记自己的类型）。
     运行时若拿着活表，就可能看到装配之后才出现的东西——
     装配期验过的那份，就不是运行时跑的那份了。
+
+    **为什么用 `MappingProxyType` 而不是普通 dict**：普通 dict 还能被改
+    （`frozen=True` 拦不住）。只读映射才是真的冻结。
     """
     return PluginContext(
-        types=dict(PLUGIN_TYPES),
-        extension_points=dict(EXTENSION_POINTS),
-        implementations=dict(IMPLEMENTATIONS),
+        types=MappingProxyType(dict(PLUGIN_TYPES)),
+        extension_points=MappingProxyType(dict(EXTENSION_POINTS)),
+        implementations=MappingProxyType(dict(IMPLEMENTATIONS)),
     )
 
 
