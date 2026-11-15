@@ -229,3 +229,61 @@ class TestThePluginIsReallyCalled:
             store,
         )
         assert calls, "核验钩子一次都没被调用——它挂在那儿是摆设"
+
+
+# ============================================================
+# 三、第二轮 CR 补的两条（2026-11-15）
+# ============================================================
+
+
+class TestSelfReportMustBeVerifiable:
+    """**自报「过了」，就得真的验过**
+
+    一行单价都没有时，这条判据**根本没法验**——
+    说它「过了」就是**假装验过了**。
+    「假装验过」比「算错」更难查：读者看到的是「全过」。
+    """
+
+    def test_a_self_reported_pass_that_cannot_be_verified_is_caught(self):
+        result = {
+            "items": [{"qty": 1, "unit_price": None, "amount": 1}],
+            "line_arithmetic": True,
+        }
+        out = check_receipt_output(_view(result), _params())
+        assert out is not None, "自报「过了」但根本没法验——被放行了"
+        assert any("没法验" in p for p in out["problems"]), out
+
+    def test_no_rows_at_all_with_a_self_reported_pass_is_caught(self):
+        result = {"items": [], "line_arithmetic": True}
+        out = check_receipt_output(_view(result), _params())
+        assert out is not None, "一张没有行的票说「每行金额都对得上」——被放行了"
+
+
+class TestTheToleranceAppliesEverywhere:
+    """**容差要管到每一笔账**——不然参数就是在骗人
+
+    以前容差只喂给 Σ行金额与实付，行金额走的是写死的 0.01：
+    配 `tolerance=0.05` 而行金额差 0.04 时，行金额仍被拒——
+    「参数说 0.05、实际按 0.01 办」= 参数是摆设。
+    """
+
+    def test_the_tolerance_reaches_the_line_amount_check(self):
+        result = {
+            "items": [{"qty": 1, "unit_price": 10.0, "amount": 10.04}],
+            "line_arithmetic": True,
+        }
+        assert check_receipt_output(_view(result), _params(tolerance=0.05)) is None
+        assert check_receipt_output(_view(result), _params(tolerance=0.01)) is not None
+
+    def test_the_tolerance_reaches_the_subtotal_check(self):
+        result = dict(
+            GOOD_RESULT,
+            subtotal=18.54,
+        )
+        assert check_receipt_output(_view(result), _params(tolerance=0.05)) is None
+        assert check_receipt_output(_view(result), _params(tolerance=0.01)) is not None
+
+    def test_the_tolerance_reaches_the_total_check(self):
+        result = dict(GOOD_RESULT, total=18.54)
+        assert check_receipt_output(_view(result), _params(tolerance=0.05)) is None
+        assert check_receipt_output(_view(result), _params(tolerance=0.01)) is not None

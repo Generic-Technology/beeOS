@@ -100,8 +100,18 @@ def check_receipt_output(
     problems: list[str] = []
 
     if rules.check_lines and result.get("line_arithmetic") is True:
-        verdict, bad = lines_arithmetic(items)
-        if verdict is False:
+        verdict, bad = lines_arithmetic(items, tolerance=tol)
+        if verdict is None:
+            # **自报「过了」，实际是「用不上」**——
+            # 一行单价都没有时，这条判据**根本没验过**，
+            # 说它「过了」就是**假装验过了**。
+            # （「假装验过」比「算错」更难查：读者看到的是「全过」。）
+            problems.append(
+                "产出说「每行金额都对得上」，但用产出里的行重算，"
+                "**根本没法验**（没有单价 / 没有可核验的行）——"
+                "说「过了」就是假装验过了"
+            )
+        elif verdict is False:
             problems.append(
                 f"产出说「每行金额都对得上」，但用产出里的行重算，"
                 f"第 {bad} 行对不上"

@@ -63,7 +63,12 @@ def discount_multiplier(raw: Any) -> Optional[float]:
 
 
 def line_amount_ok(
-    qty: float, price: float, multiplier: Optional[float], amount: float
+    qty: float,
+    price: float,
+    multiplier: Optional[float],
+    amount: float,
+    *,
+    tolerance: float = TOLERANCE,
 ) -> bool:
     """行金额对不对得上（含行级折扣 + 抹零）
 
@@ -82,7 +87,7 @@ def line_amount_ok(
     它的盲区也照实说：金额被误读成比正确值小不到 1 元时会放过。
     """
     expected = qty * price * (1.0 if multiplier is None else multiplier)
-    if abs(expected - amount) <= TOLERANCE:
+    if abs(expected - amount) <= tolerance:
         return True
     # 抹零到元（向下取整）
     return math.floor(expected + 1e-9) == amount
@@ -138,7 +143,9 @@ def total_matches(
     return abs(sub + (num(tax) or 0.0) - deducted - tot) <= tolerance
 
 
-def lines_arithmetic(items: Any) -> tuple[Optional[bool], list[int]]:
+def lines_arithmetic(
+    items: Any, *, tolerance: float = TOLERANCE
+) -> tuple[Optional[bool], list[int]]:
     """每行 数量 × 原价 × 折扣 == 金额
 
     返回 `(三态结论, 坏行号)`：
@@ -176,7 +183,11 @@ def lines_arithmetic(items: Any) -> tuple[Optional[bool], list[int]]:
             and price is not None
             and amt is not None
             and line_amount_ok(
-                qty, price, discount_multiplier(it.get("discount_rate")), amt
+                qty,
+                price,
+                discount_multiplier(it.get("discount_rate")),
+                amt,
+                tolerance=tolerance,
             )
         )
         if not ok:
