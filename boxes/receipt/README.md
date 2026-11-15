@@ -42,6 +42,8 @@ read_receipt → verify_receipt → package_receipt
 - `schemas.py` — `schema_receipt_photo` / `schema_receipt_item` / `schema_receipt_parsed`
 - `definition.py` — BeeBoxDefinition 实例
 - `runner.py` — 3 个 op 的 handler
+- `arithmetic.py` — 票面的**业务算术**（折数换算 / 行金额 / Σ行金额 / 实付）——runner 与业务插件共用
+- `plugins.py` — **这只盒子自己的业务插件**（产出自检）：类型 / 参数模型 / 实现都在这里
 - `measure.py` — 指标采集
 - `beeline.py` — beeline_receipt_capture_v1
 

@@ -427,6 +427,21 @@ class PluginContext:
     extension_points: Mapping[str, ExtensionPoint]
     implementations: Mapping[str, PluginImpl]
 
+    def __post_init__(self) -> None:
+        """**不管怎么构造，都把三张表变成只读映射**
+
+        `frozen=True` 只冻结**字段赋值**——直接 `PluginContext(types={...})`
+        传进来的普通 dict 照样能改。
+        所以只读这件事得由**类型自己**保证，不靠调用方自觉。
+        """
+        object.__setattr__(self, "types", MappingProxyType(dict(self.types)))
+        object.__setattr__(
+            self, "extension_points", MappingProxyType(dict(self.extension_points))
+        )
+        object.__setattr__(
+            self, "implementations", MappingProxyType(dict(self.implementations))
+        )
+
     def implementation(self, key: str) -> PluginImpl:
         """按实现键取实现。取不到就报错——不许返回一个空壳。"""
         impl = self.implementations.get(key)

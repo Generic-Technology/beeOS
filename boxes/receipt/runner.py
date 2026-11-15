@@ -17,13 +17,24 @@ boxes.receipt.runner - 小票识别盒的 3 个 operation 实现
 from __future__ import annotations
 
 import json
-import math
 import re
 import shutil
 import subprocess
 from datetime import datetime
 from typing import Any
 
+# **票面的算术规则住在 `boxes/receipt/arithmetic.py`**——
+# runner 与这只盒子的业务插件共用同一份
+# （各写各的必然漂：一边改了公式，另一边还在按旧的核对，
+# 而读者看到的是「核验过了」）。
+from boxes.receipt.arithmetic import (
+    discount_multiplier as _discount_multiplier,
+    line_amount_ok as _line_amount_ok,
+    lines_arithmetic,
+    num as _num,
+    sum_matches,
+    total_matches,
+)
 from core.models import NOT_APPLICABLE, is_not_applicable
 from runtime import images
 from runtime.llm import complete_json
@@ -50,47 +61,6 @@ def _keep_state(value: Any) -> Any:
 # 折扣率是**读来的**，不是从金额倒推的。倒推的话
 # `amount / (qty*price)` 恒等于它自己，这条判据就废了——
 # 那才是真正的「永远绿的判据」。
-
-
-def _discount_multiplier(raw: Any) -> float:
-    """票面折数 → 支付比例。「5.83折」→ 0.583，「8折」→ 0.8
-
-    返回 None 表示「这一行没折扣」，调用方按全价验。
-
-    只认 0 < 折数 < 10。写 10（= 不打折）是模型在编——
-    「没有折扣」的诚实写法是 null，编一个 10 出来会让真正的
-    漏抄折扣看起来像正常的全价行。
-    """
-    zhe = _num(raw)
-    if zhe is None or not (0 < zhe < 10):
-        return None
-    return zhe / 10.0
-
-
-def _line_amount_ok(
-    qty: float, price: float, multiplier: float | None, amount: float
-) -> bool:
-    """行金额对不对得上（含行级折扣 + 抹零）
-
-    两种合法：
-
-    1. 算得开——`数量 × 原价 × 折扣` 直接等于行金额（容差 0.01，
-       留给浮点和两位小数）。
-
-    2. 抹零——小票常把行金额**抹零到元**。实测 MUJI：
-       498 × 5.83折 = 290.334，票面印的是 290.00。
-       这不是算错，是 POS 在这一行就取整了。
-
-    为什么把抹零写成判据的一部分而不是一句「容差放宽点」：
-    写成规则，误差就有上限（<1 元），金额读错 0.9 元这种真错
-    仍然会被拦；写成模糊容差，容差就成了没人敢动的橡皮。
-    它的盲区也照实说：金额被误读成比正确值小不到 1 元时会放过。
-    """
-    expected = qty * price * (1.0 if multiplier is None else multiplier)
-    if abs(expected - amount) <= 0.01:
-        return True
-    # 抹零到元（向下取整）
-    return math.floor(expected + 1e-9) == amount
 
 
 # LLM 只做这一件事：看图抄字。判据全部留给机械层。
@@ -195,24 +165,6 @@ _DATE_SEPARATORS = re.compile(r"[./年月日]")
 
 # 模型接口 + 浏览器两边都不认的格式，进盒子先转成 JPEG。
 # 常量在 runtime/images.py（NEEDS_CONVERSION）——学习盒也要用同一份。
-
-
-def _num(value: Any) -> float | None:
-    """把模型给的数字洗干净：¥/$/逗号/全角 → float，拿不准就 None
-
-    拿不准一律 None，不猜。宁可让算术校验失败，也不要把 12 读成 1.2。
-    """
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    if not isinstance(value, str):
-        return None
-    s = re.sub(r"[^\d.\-]", "", value)
-    if s in ("", "-", "."):
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
 
 
 def _normalize_date(value: Any) -> str:
@@ -540,76 +492,29 @@ def _simulate_verify_receipt(input_data: dict[str, Any]) -> dict[str, Any]:
     # 这是启发式，不是判据。已声明的盲区：一张**确实印了单价栏**、
     # 而模型在每一行都漏抄的票，会被误读成「票上没单价」而放行。
     # 跟「字认对没有」一样，机器判不了就明说，不假装能判。
-    line_bad = []
-    line_sum = 0.0
-    row_count = 0          # items 里一共有几行（不管这行长不像样）
-    struct_rows = 0        # 其中读成结构化对象的有几行
-    rows_with_price = 0    # 其中读到原价的有几行
-    for i, it in enumerate(items, start=1):
-        row_count += 1
-        if not isinstance(it, dict):
-            line_bad.append(i)
-            continue
-        struct_rows += 1
-        qty, price, amt = _num(it.get("qty")), _num(it.get("unit_price")), _num(it.get("amount"))
-        if price is not None:
-            rows_with_price += 1
-        amt_ok = (
-            qty is not None and price is not None and amt is not None
-            and _line_amount_ok(qty, price, _discount_multiplier(it.get("discount_rate")), amt)
-        )
-        if not amt_ok:
-            line_bad.append(i)
-        if amt is not None:
-            line_sum += amt
-
-    if row_count == 0:
-        # 压根没行可验。（这条单独看可以放行——field_completeness
-        # 会因为 items 为空而转红，整张票照样被拦。）
+    # 逐行 / 合计 / 实付三笔账：**规则住在 `boxes/receipt/arithmetic.py`**，
+    # 这里只调用它——这只盒子的业务插件也调同一份
+    # （各写各的必然漂：一边改了公式，另一边还在按旧的核对，
+    # 而读者看到的是「核验过了」）。
+    line_arithmetic, line_bad = lines_arithmetic(items)
+    if line_arithmetic is None:
+        # 三态：压根没行可验 / 有结构化的行但一行单价都没有
+        # （票上大概率没这一栏——规则与盲区见 arithmetic.py）
         line_arithmetic = NOT_APPLICABLE
-    elif struct_rows > 0 and rows_with_price == 0:
-        # 读出了结构化的行、但一行单价都没有 → 票上大概率没这一栏。
-        # **前提是 struct_rows > 0**：一堆读不成对象的行同样「没有单价」，
-        # 但那是模型抄砸了，不是票上没这栏。不加这个前提，
-        # 垃圾行会被当成「不适用」白放行——比算错还难查。
-        line_arithmetic = NOT_APPLICABLE
-    else:
-        line_arithmetic = not line_bad
 
     # Σ行金额 == 小计
-    sum_arithmetic = (
-        subtotal is not None and abs(line_sum - subtotal) <= 0.01
-    )
+    sum_arithmetic = sum_matches(items, subtotal)
 
     # 小计 + 税 − **另减的**优惠 = 实付
-    #
-    # 优惠这一项是零售 POS 小票的标配（支付宝优惠 / 满减 / 抹零），而 POS 小票
-    # **没有税**。以前公式只写「小计 + 税 = 实付」，票上那个优惠数就无处安放，
-    # 模型只能给 null，于是每张打过折的票都必然转红。
-    # 两种票据都在这套公式里：POS 小票 tax 缺省 0、discount 有值；
-    # 增值税发票 tax 有值、discount 缺省 0。
-    #
-    # **但不是每张票的优惠都是从合计里减掉的**（同一个病根的第五次）。
-    # 实测六贤记烘焙单：
-    #     奶皮鞭子   原价 8.80   实收单价 7.50   数量 2   小计 15.00
-    #     合计:39.70(2.60)   折让金额:2.60   付款 39.70
-    # 2.60 = 2 × (8.80 − 7.50) —— 折让是**奶皮鞭子那一行的差价**，
-    # 而 39.70 = 15.90 + 8.80 + 15.00 已经等于 Σ行金额，也就是说
-    # **折让含在合计里**。再减一次就成 37.10，跟实付对不上。
-    #
-    # 括号里那个数是票面印着的，读它就行，不用推。
-    # 减的应该是「另减的那部分」= discount − included_discount。
-    discount = _num(parsed.get("discount"))
-    included = _num(parsed.get("included_discount"))
-    # 折让不可能比「折让金额」还多：included > discount 一定是读错了
-    # （MUJI 的「实物总额(9%)」是税率不是金额，模型可能把它填进来）。
-    # 这种就当没含，照常减——宁可让票红，也不要拿一个错数把公式凑平。
-    if included is not None and (discount is None or included > discount):
-        included = None
-    deducted = (discount or 0.0) - (included or 0.0)
-    total_arithmetic = (
-        subtotal is not None and total is not None
-        and abs(subtotal + (tax or 0.0) - deducted - total) <= 0.01
+    #（POS 小票通常没有税只有优惠；优惠还可能**已经含在合计里**——
+    #  减不减它结果差 2.60，实测六贤记那张就是这么对上的。
+    #  完整规则与那个坑的来历见 `boxes/receipt/arithmetic.py`。）
+    total_arithmetic = total_matches(
+        subtotal,
+        tax,
+        parsed.get("discount"),
+        parsed.get("included_discount"),
+        total,
     )
 
     # 日期：**先机械归一再判真假**（`_normalize_date` 写了为什么）

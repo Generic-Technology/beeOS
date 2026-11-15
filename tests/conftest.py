@@ -208,6 +208,45 @@ def stub_llm_dispatch(prompt: str, **kw) -> dict:
     raise llm.LLMError("test: no stub for this prompt")
 
 
+def stub_receipt_reader(prompt: str, **kw) -> dict:
+    """票据盒读图那一腿的桩：返回一份**算得开**的票
+
+    **为什么票据盒要单独打桩**：它的 runner 是
+    `from runtime.llm import complete_json`（**直接绑定**）——
+    改 `runtime.llm.complete_json` 对它**没用**（名字早绑好了）。
+    所以桩要打在它自己身上（见下面的 `stub_llm` 夹具）。
+
+    这份票是**算得开**的（10.00 + 8.50 = 18.50 = 实付），
+    所以票据盒的自检插件会通过——它验的正是「自报的标志位与金额对不对得上」。
+    """
+    if "只修正这几处" in prompt:
+        # 第二遍（复核）：没什么要改的
+        return {"修正": [], "补字段": {}}
+    return {
+        "merchant_name": "测试商户",
+        "receipt_no": "T-001",
+        "receipt_date": "2026-11-15",
+        "receipt_time": "10:00",
+        "items": [
+            {
+                "name": "牛奶", "qty": 2, "unit_price": 5.0,
+                "amount": 10.0, "discount_rate": None,
+            },
+            {
+                "name": "面包", "qty": 1, "unit_price": 8.5,
+                "amount": 8.5, "discount_rate": None,
+            },
+        ],
+        "subtotal": 18.5,
+        "tax": None,
+        "discount": None,
+        "included_discount": None,
+        "total": 18.5,
+        "payment_method": "cash",
+        "low_confidence_fields": [],
+    }
+
+
 @pytest.fixture
 def stub_llm(monkeypatch):
     """装上分流桩（**显式**申请，不做 autouse）
@@ -220,6 +259,13 @@ def stub_llm(monkeypatch):
     from runtime import llm
 
     monkeypatch.setattr(llm, "complete_json", stub_llm_dispatch)
+    # **直接 import 的调用方要单独打**——
+    # 票据盒的 runner 是 `from runtime.llm import complete_json`，
+    # 名字在 import 时就绑好了，改模块属性对它没用。
+    # （这是「打桩漏了一类调用方」的教训：不是所有调用都走模块属性。）
+    monkeypatch.setattr(
+        "boxes.receipt.runner.complete_json", stub_receipt_reader
+    )
     return stub_llm_dispatch
 
 

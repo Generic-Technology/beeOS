@@ -31,8 +31,13 @@ from core.scaffold import assemble
 
 from boxes.receipt.beeline import COMPONENTS
 from boxes.receipt.definition import DECLARATION
+from boxes.receipt.plugins import register_receipt_output_check
 from boxes.receipt.runner import RUNNER, RECEIPT_HANDLERS
 from boxes.receipt.schemas import ALL_SCHEMAS
+
+# **业务插件的登记必须在装配之前**——
+# 装配器要认得这个插件类型（I5：类型已登记），否则盒子装不出来。
+register_receipt_output_check()
 
 
 # **装配在这一步发生。** 声明自相矛盾 → 这里抛 AssemblyError，

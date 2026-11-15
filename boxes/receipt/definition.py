@@ -133,6 +133,7 @@ from core.models import (
     QueenRules,
 )
 from core.plugins import PluginSpec
+from boxes.receipt.plugins import OUTPUT_CHECK_PLUGIN
 from core.scaffold import BoxDeclaration
 
 from boxes.receipt.schemas import ALL_SCHEMAS
@@ -271,6 +272,26 @@ DECLARATION = BoxDeclaration(
             id="queen_escalation",
             extension_point="box.escalate",
             params={"escalation_rules": ESCALATION_RULES},
+        ),
+        # ---- 这只盒子自己的业务插件（产出自检）----
+        #
+        # **类型、参数模型、实现都在 `boxes/receipt/plugins.py`**——
+        # core 只定协议，这里填值。
+        #
+        # 它守的是「产出自报的算术标志位，跟产出里的金额是不是同一份」：
+        # 判据读的是**盒子自己算的标志位**，盒子说「算过了」就过了，
+        # 没人回头核对它算的那份数跟带出去的那份数是不是同一份。
+        PluginSpec(
+            id=OUTPUT_CHECK_PLUGIN,
+            extension_point="box.verify",
+            params={
+                "check_lines": True,
+                "check_sum": True,
+                "check_total": True,
+                # 容差是**业务规矩**（留给浮点和两位小数），
+                # 不是技术细节——所以它住在参数里，盒子自己说了算。
+                "tolerance": 0.01,
+            },
         ),
     ],
 )
