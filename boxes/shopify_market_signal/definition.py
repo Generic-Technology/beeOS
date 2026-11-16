@@ -34,11 +34,16 @@ from core.models import (
 from core.plugins import PluginSpec
 from core.scaffold import BoxDeclaration
 
+#: **只有真出事才升级给人**
+#:
+#: 「什么都没取到」（还没配凭证 / 平台没理我们）**不升级**——
+#: 那不是「这次交付要不要放行」的决定，那是要去配凭证。
+#: 混成一件事的后果：每次试跑都在问人一个根本不用问的问题，
+#: 而真正的原因（凭证没配）被埋在产出里没人看
+#: （跟快照盒同一个口径）。
 ESCALATION_RULES = [
+    # **安全底线**：产出里还有个人信息 → 要人看
     {"trigger": "pii_remaining_count > 0", "action": "escalate_to_human"},
-    {"trigger": "pii_clean == false", "action": "escalate_to_human"},
-    {"trigger": "signal_status_complete == false", "action": "escalate_to_human"},
-    {"trigger": "source_present == false", "action": "escalate_to_human"},
 ]
 
 DECLARATION = BoxDeclaration(
@@ -88,10 +93,29 @@ DECLARATION = BoxDeclaration(
         AcceptanceRule(metric="source_present", op="eq", value=True),
     ],
     exceptions=[
+        # **安全底线**：产出里还有个人信息 → 要人看
         ExceptionRule(condition="pii_remaining_count > 0", action="escalate"),
-        ExceptionRule(condition="pii_clean == false", action="escalate"),
-        ExceptionRule(condition="signal_status_complete == false", action="escalate"),
-        ExceptionRule(condition="source_present == false", action="escalate"),
+        # **什么都没取到**（还没配凭证 / 平台没理我们）→
+        # **明确的不交付**（no_deliver），不是失败，也不是等人放行。
+        #
+        # 「去配凭证」不是「这次交付要不要放行」的决定——
+        # 混成一件事的后果：每轮都在看板上挂一条等人判定的账，
+        # 而真正的原因（凭证没配）写在 platform_status 里没人看。
+        #
+        # **触发顺序**：例外的匹配按声明顺序，
+        # 所以「有残留个人信息」那条必须排在前面（它更要紧）。
+        ExceptionRule(
+            condition="pii_remaining_count == 0 and pii_clean == false",
+            action="no_deliver",
+        ),
+        ExceptionRule(
+            condition="pii_remaining_count == 0 and signal_status_complete == false",
+            action="no_deliver",
+        ),
+        ExceptionRule(
+            condition="pii_remaining_count == 0 and source_present == false",
+            action="no_deliver",
+        ),
     ],
 
     # ---- 作业路线（Procedure）----
