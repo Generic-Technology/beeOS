@@ -226,7 +226,6 @@ def test_the_snapshot_still_gets_the_store_side_facts_without_market_signals(
 # 四、关键词是词，不是整句假设
 # ============================================================
 
-
 class _FakeStore:
     def __init__(self, records: list[dict[str, Any]]) -> None:
         self._records = records
@@ -269,3 +268,54 @@ def test_the_newest_diagnosis_wins():
     ]
     words = script._keywords_from_last_diagnosis(_FakeStore(records))
     assert words == ["new_channel"], words
+
+
+# ============================================================
+# 五、去哪些平台：自己判断，不让使用者每次挑
+# ============================================================
+
+
+def test_without_credentials_no_platform_is_visited(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("GSC_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("GSC_SITE_URL", raising=False)
+    monkeypatch.setattr(script, "GSC_CSV_DEFAULT", Path("/nonexistent/gsc.csv"))
+    platforms, csv_path = script._market_platforms("")
+    assert platforms == []
+    assert csv_path == ""
+
+
+def test_an_exported_csv_is_picked_up_without_authorization(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """**GSC 的 CSV 路径是免授权的那条路**——导出表丢进来就能跑"""
+    monkeypatch.delenv("GSC_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("GSC_SITE_URL", raising=False)
+    csv = tmp_path / "gsc.csv"
+    csv.write_text("Top queries,Clicks,Impressions\n", encoding="utf-8")
+    monkeypatch.setattr(script, "GSC_CSV_DEFAULT", csv)
+
+    platforms, csv_path = script._market_platforms("")
+    assert platforms == ["gsc"]
+    assert csv_path == str(csv)
+
+
+def test_a_configured_token_turns_on_gsc_too(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("GSC_ACCESS_TOKEN", "tok")
+    monkeypatch.setenv("GSC_SITE_URL", "sc-domain:giftsjourneyshop.com")
+    monkeypatch.setattr(script, "GSC_CSV_DEFAULT", Path("/nonexistent/gsc.csv"))
+    platforms, _ = script._market_platforms("")
+    assert platforms == ["gsc"]
+
+
+def test_an_explicit_choice_wins(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(script, "GSC_CSV_DEFAULT", Path("/nonexistent/gsc.csv"))
+    platforms, _ = script._market_platforms("reddit,etsy")
+    assert platforms == ["reddit", "etsy"]
+
+
+def test_the_market_call_carries_the_platforms_and_the_csv_path(env, monkeypatch):
+    trigger = _FakeTrigger()
+    _run_round(monkeypatch, trigger, ["--platforms", "gsc", "--gsc-csv", "/tmp/x.csv"])
+    payload = trigger.call_for("shopify_market_signal_box")["payload"]
+    assert payload.get("platforms") == ["gsc"]
+    assert payload.get("gsc_csv_path") == "/tmp/x.csv"

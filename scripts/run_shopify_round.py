@@ -58,6 +58,7 @@ import json
 import os
 import sys
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -108,6 +109,40 @@ DEFAULT_KEYWORDS = [
     "custom pet portrait gift",
     "personalized gift for him",
 ]
+
+#: **GSC 导出的 CSV 放这儿**——放好了这一轮就自动去读它（不用授权）
+GSC_CSV_DEFAULT = Path.home() / ".config" / "beeos" / "gsc_queries.csv"
+
+
+def _market_platforms(explicit: str, csv_override: str = "") -> tuple[list[str], str]:
+    """这一轮去哪些平台找站外需求（+ GSC 的 CSV 路径）
+
+    **默认自己判断，不让使用者每次挑**：
+
+    1. 给了 `--platforms` 就按它来；
+    2. 否则，默认路径上有 GSC 导出 CSV → 走 CSV（**不用授权**，
+       从 Search Console 导出「查询」表丢进那个文件就行）；
+    3. 否则，配了 `GSC_ACCESS_TOKEN` + `GSC_SITE_URL` → 走 API；
+    4. 都没有 → **不去任何地方**（这一轮就只剩店里的数，
+       诊断会把站外需求记成未知项）。
+
+    **凭证只从环境变量读**，不进投料、不进产出、不进日志。
+    """
+    csv_path = csv_override.strip() or (
+        str(GSC_CSV_DEFAULT) if GSC_CSV_DEFAULT.exists() else ""
+    )
+    if explicit.strip():
+        platforms = [p.strip() for p in explicit.split(",") if p.strip()]
+    else:
+        platforms = []
+        has_csv = bool(csv_path)
+        has_api = bool(
+            os.environ.get("GSC_ACCESS_TOKEN", "").strip()
+            and os.environ.get("GSC_SITE_URL", "").strip()
+        )
+        if has_csv or has_api:
+            platforms.append("gsc")
+    return platforms, csv_path
 
 
 def _keywords_from_last_diagnosis(store: TaskRunStore) -> list[str]:
@@ -200,6 +235,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="这一轮打哪种仗（决定下一轮改哪个落地页）："
                              "conversion_lift=有成交的商品页优先（默认）；"
                              "ai_referral=有 AI 引荐流量但零成交的页优先")
+    parser.add_argument("--platforms", default="",
+                        help="这一轮去哪些站外平台找需求（gsc/reddit/etsy/pinterest，"
+                             "逗号分隔）。不给就自己判断：有 GSC 导出 CSV "
+                             "或配了 GSC 凭证就走 gsc，否则不去任何地方")
+    parser.add_argument("--gsc-csv", default="",
+                        help="GSC 导出的 CSV 路径（默认 %s）" % GSC_CSV_DEFAULT)
     parser.add_argument("--apply", action="store_true",
                         help="让实验盒真的落笔（还需要 %s=1）" % ALLOW_WRITES_ENV)
     parser.add_argument("--store", default="logs/task_runs.jsonl",
@@ -237,12 +278,15 @@ def main(argv: list[str] | None = None) -> int:
     keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
     if not keywords:
         keywords = _keywords_from_last_diagnosis(store) or DEFAULT_KEYWORDS
+    platforms, gsc_csv = _market_platforms(args.platforms, args.gsc_csv)
     market = trigger_task(
         "shopify_market_signal_box", "capture_market_signals",
         {
             "round_id": round_id,
             "keywords": keywords,
-            "platforms": [],          # 空 = 不去任何地方（默认；给了就显式填）
+            # **去哪些平台**：自己判断（有 GSC 的 CSV 或凭证就走 GSC）
+            "platforms": platforms,
+            "gsc_csv_path": gsc_csv,
             "window_days": args.days,
         },
         store,
