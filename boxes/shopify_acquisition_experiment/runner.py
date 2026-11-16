@@ -215,7 +215,7 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     try:
-        result = writer.update_product(baseline["id"], draft)
+        result = writer.update_product(baseline["id"], _merge_with_baseline(draft, baseline_fields))
     except WriteNotAllowed as exc:
         # **写闸关着**——只出方案，不落笔。applied=False → 判据判红。
         return not_applied(
@@ -249,6 +249,37 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "reject_reason": "; ".join(user_errors),
         "write_scope": "write_products",
     }
+
+
+def _merge_with_baseline(draft: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
+    """**只改你要改的，别把没打算改的抹了**
+
+    两条踩过的坑：
+
+    1. **seo 是整体替换语义**：只写 `seo.description`，Shopify 会把
+       `seo.title` 变成空（实测：写了一次 seo，标题的 SEO 就没了）。
+       → 写 seo 的一个字段，另一个必须带着（基线里的原值）。
+    2. **标签是合并不是替换**：基线里有 Shopify 的分类标签
+       （`For Baby + Kids` 之类）——被模型换掉，商品可能就从分类里消失了。
+       → 旧标签保留，新标签追加。
+    """
+    out = dict(draft or {})
+
+    if "seo.title" in out and "seo.description" not in out:
+        out["seo.description"] = (baseline or {}).get("seo.description") or ""
+    if "seo.description" in out and "seo.title" not in out:
+        out["seo.title"] = (baseline or {}).get("seo.title") or ""
+
+    base_tags = [str(t).strip() for t in ((baseline or {}).get("tags") or []) if str(t).strip()]
+    new_tags = [str(t).strip() for t in (out.get("tags") or []) if str(t).strip()]
+    if new_tags:
+        merged = list(base_tags)
+        for tag in new_tags:
+            if tag not in merged:
+                merged.append(tag)
+        out["tags"] = merged
+
+    return out
 
 
 def _validate_draft(raw: Any) -> tuple[dict[str, Any], list[str]]:
@@ -372,6 +403,8 @@ def experiment_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "stopping_condition_present": True,
         "applied": applied,
         "apply_requested": apply_requested,
+        # **草稿要进产出**——不然事后没人说得清我们到底写了什么
+        "draft": input_data.get("draft") or {},
         "baseline_fields": input_data.get("baseline_fields") or {},
         "applied_fields": input_data.get("applied_fields") or {},
         "write_scope": input_data.get("write_scope") or "",

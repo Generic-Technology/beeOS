@@ -317,6 +317,7 @@ python scripts/new_box.py --help
   - `probe_shopifyql.py` — ShopifyQL 只读取数探测（哪些指标真取得到）
   - `run_shopify_round.py` — 跑一轮店铺经营闭环（快照 → 诊断 → 实验 → 档案）
   - `shopify_oauth_token.py` — 换一张 Shopify Admin API token（OAuth 授权码流程）
+  - `rollback_shopify_experiment.py` — 把某个商品页改回改之前的样子（用改前基线回滚）
 
 - **`tests/`** — 守卫（千条量级，以守卫为主）
   - 通用契约：`test_definition.py` / `test_beeline.py` / `test_runtime.py` /

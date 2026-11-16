@@ -252,6 +252,21 @@ def main(argv: list[str] | None = None) -> int:
           f"落笔：{exp_result.get('applied')}")
     for change in exp_result.get("changes") or []:
         print(f"  · {change}")
+
+    # **写前 → 写后**：写营业中的页面，必须让人一眼看到改了什么
+    baseline = exp_result.get("baseline_fields") or {}
+    applied = exp_result.get("applied_fields") or {}
+    if applied:
+        print("  —— 写前 → 写后 ——")
+        for key in ("title", "descriptionHtml", "seo.title", "seo.description", "tags"):
+            before, after = baseline.get(key), applied.get(key)
+            if before == after:
+                continue
+            b = str(before)
+            a = str(after)
+            print(f"    {key}:")
+            print(f"      旧：{b[:140]}{'…' if len(b) > 140 else ''}")
+            print(f"      新：{a[:140]}{'…' if len(a) > 140 else ''}")
     if not exp_result.get("applied"):
         draft = exp_result.get("draft") or {}
         if draft:

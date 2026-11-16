@@ -640,3 +640,73 @@ class TestTheTargetPageSurvivesTheChain:
         assert result.get("landing_page") == "fair-isle-stocking", (
             "产出的落地页是空的——这份方案看不出要写到哪里"
         )
+
+
+class TestTheWriteDoesNotDamageWhatItDidNotMeanToTouch:
+    """**只改你要改的，别把没打算改的抹了**
+
+    两条都是实测踩出来的：
+    - 写了一次 seo.description，**SEO 标题变空了**（Shopify 的 seo 是整体替换语义）；
+    - 标签被整体替换，**分类标签（For Baby + Kids 之类）没了**——
+      分类标签是用来把商品挂到分类页上的，删了商品可能就从分类里消失。
+    """
+
+    def test_seo_is_written_whole(self):
+        from boxes.shopify_acquisition_experiment.runner import _merge_with_baseline
+
+        baseline = {"seo.title": "旧 SEO 标题", "seo.description": "旧 SEO 描述"}
+        merged = _merge_with_baseline({"seo.description": "新描述"}, baseline)
+        assert merged["seo.title"] == "旧 SEO 标题", (
+            "只写 seo.description 会把 seo.title 抹成空——必须一起写"
+        )
+        assert merged["seo.description"] == "新描述"
+
+    def test_tags_are_merged_not_replaced(self):
+        from boxes.shopify_acquisition_experiment.runner import _merge_with_baseline
+
+        baseline = {"tags": ["Christmas", "For Baby + Kids", "Personalization"]}
+        merged = _merge_with_baseline({"tags": ["christmas gift", "fair isle stocking"]},
+                                      baseline)
+        assert "For Baby + Kids" in merged["tags"], (
+            "分类标签被换掉了——商品可能从分类页里消失"
+        )
+        assert "christmas gift" in merged["tags"], "新标签没进去"
+
+    def test_the_landed_result_keeps_the_draft(self, monkeypatch):
+        """**产出里必须看得见自己写了什么**——草稿要一路带到结果"""
+        from boxes.shopify_acquisition_experiment import runner as exp_runner
+
+        class _W:
+            def read_product(self, handle):
+                return {"id": "gid://shopify/Product/1", "title": "旧标题",
+                        "handle": handle, "descriptionHtml": "<p>旧</p>",
+                        "seo": {"title": "旧 SEO", "description": "旧描述"},
+                        "tags": ["Christmas"]}
+
+            def update_product(self, _id, changes):
+                self.changes = changes
+                return {"applied_fields": {"title": changes.get("title")},
+                        "user_errors": []}
+
+        writer = _W()
+        monkeypatch.setattr(exp_runner.ShopifyWriter, "from_env",
+                            staticmethod(lambda **kw: writer))
+        monkeypatch.setattr(exp_runner, "complete_json",
+                            lambda prompt, **kw: {
+                                "title": "新标题", "descriptionHtml": "<p>新</p>",
+                                "seoTitle": "新 SEO", "seoDescription": "新描述",
+                                "tags": ["新标签"]})
+
+        diagnosis = _diagnosis()
+        diagnosis["target_landing_page"] = "fair-isle-stocking"
+        plan = exp_runner.experiment_intake_handler({
+            "round_id": "mkwagn-5d@2026-W46", "apply": True, "diagnosis_ref": diagnosis,
+        })
+        observation = exp_runner.experiment_work_handler(plan)
+        result = exp_runner.experiment_packager_handler(observation)
+
+        assert result.get("draft"), "产出里没有草稿——事后没人说得清写了什么"
+        assert result["draft"]["title"] == "新标题"
+        assert "For Baby + Kids" not in result["draft"]["tags"], (
+            "草稿里的标签是模型起草的，合并发生在写入载荷上"
+        )
