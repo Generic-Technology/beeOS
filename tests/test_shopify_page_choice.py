@@ -198,3 +198,58 @@ def test_the_filler_words_are_dropped():
     """**虚词不算「像」**——「with」出现在两边不算命中"""
     assert "with" not in diag._tokens("a lamp with speaker")
     assert "for" not in diag._tokens("gift for her")
+
+
+# ============================================================
+# 观察期：改过的页要留时间看效果
+# ============================================================
+
+
+def test_a_recently_changed_page_is_not_picked_again():
+    """**改完立刻再改一次，等于没让效果显出来**
+
+    规则是确定性的，数据没变就还会选中同一页——
+    所以「最近改过」必须参与排序。
+    """
+    snapshot = _snapshot(strategy="demand_match")
+    handle, note = diag.choose_landing_page(
+        snapshot,
+        exclude_handles=[
+            "custom-photo-3d-lamp-with-bluetooth-music-player-"
+            "personalized-3d-light-wedding-anniversary-birthday-gifts",
+        ],
+    )
+    assert "3d-lamp-with-bluetooth" not in handle, note
+
+
+def test_the_observation_window_is_a_preference_not_a_veto():
+    """**全排除了就什么都不做**——那还不如改一个刚改过的页"""
+    snapshot = _snapshot(strategy="demand_match")
+    every_page = [
+        "custom-fair-isle-christmas-stocking",
+        "personalized-santa-sack-embroidered-name",
+        "custom-photo-3d-lamp-with-bluetooth-music-player-"
+        "personalized-3d-light-wedding-anniversary-birthday-gifts",
+        "custom-3d-moon-lamp-personalized-gift-with-your-pet-photo-"
+        "desk-light-3-colors-with-stand-rechargeable-for-pet-lovers",
+    ]
+    handle, note = diag.choose_landing_page(snapshot, exclude_handles=every_page)
+    assert handle, "全都排除时也得选一个——否则这一轮什么都不做"
+    assert note
+
+
+def test_conversion_lift_also_prefers_an_unchanged_page():
+    """**三条策略都要守观察期**"""
+    snapshot = _snapshot(strategy="conversion_lift")
+    handle, _ = diag.choose_landing_page(
+        snapshot, exclude_handles=["custom-fair-isle-christmas-stocking"],
+    )
+    assert handle != "custom-fair-isle-christmas-stocking"
+
+
+def test_ai_referral_also_prefers_an_unchanged_page():
+    snapshot = _snapshot(strategy="ai_referral")
+    handle, note = diag.choose_landing_page(
+        snapshot, exclude_handles=["personalized-santa-sack-embroidered-name"],
+    )
+    assert handle != "personalized-santa-sack-embroidered-name", note

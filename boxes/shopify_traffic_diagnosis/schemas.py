@@ -43,6 +43,10 @@ DIAGNOSIS_INPUT_SCHEMA = SchemaDef(
     fields=[
         FieldDef(name="snapshot_ref", type="ref:schema_shopify_snapshot_output",
                  required=True, description="上游快照产出（交接通道按本盒声明的形状校验过）"),
+        FieldDef(name="exclude_landing_pages", type="array", required=False,
+                 items=FieldDef(name="handle", type="string", required=True),
+                 description="**最近改过的页**（handle）——它们要留观察期，"
+                             "这一轮优先改别的（不是硬排除：全排除了就什么都不做了）"),
     ],
 )
 
@@ -55,6 +59,9 @@ DIAGNOSIS_PLAN_SCHEMA = SchemaDef(
                  items=FieldDef(name="stage", type="string", required=True),
                  description="要逐段核对的四段"),
         FieldDef(name="snapshot_ref", type="ref:schema_shopify_snapshot_output", required=True),
+        FieldDef(name="exclude_landing_pages", type="array", required=False,
+                 items=FieldDef(name="handle", type="string", required=True),
+                 description="最近改过的页——**每一跳都要声明，不然会被投影掉**"),
     ],
 )
 

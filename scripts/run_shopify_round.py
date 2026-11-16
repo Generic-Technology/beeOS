@@ -177,6 +177,36 @@ def _keywords_from_last_diagnosis(store: TaskRunStore) -> list[str]:
     return out[:4]
 
 
+def _recently_changed_pages(store: TaskRunStore, days: int = 14) -> list[str]:
+    """**最近改过的页**（handle）——它们要留观察期
+
+    改完立刻再改同一页，等于没让效果显出来，实验就白做了。
+    所以这一轮优先改**没改过**的页。
+
+    事实来自履约历史（实验盒真的落过笔的那些轮次），
+    **不是**来自「我们打算改哪一页」——后者是计划，前者是事实。
+    """
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    out: list[str] = []
+    try:
+        records = store.list_recent(limit=200)
+    except Exception:
+        return out
+    for record in records:                     # list_recent 已经倒序（新的在前）
+        if record.get("box_id") != "shopify_acquisition_experiment_box":
+            continue
+        artifact = record.get("artifact") or {}
+        if not artifact.get("applied"):
+            continue                            # 干跑的方案没动过页面
+        created = str(record.get("created_at") or "")[:10]
+        if created and created < cutoff:
+            continue                            # 太久了，早过了观察期
+        handle = str(artifact.get("landing_page") or artifact.get("target_handle") or "")
+        if handle and handle not in out:
+            out.append(handle)
+    return out
+
+
 def _artifact(run: dict[str, Any]) -> dict[str, Any]:
     """这次履约的产出
 
@@ -403,6 +433,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--measure", action="store_true",
                         help="**复测**：只量「最近一次落笔改过的那一页」"
                              "改动前 vs 改动后，不改任何东西")
+    parser.add_argument("--observe-days", type=int, default=14,
+                        help="**改过的页留几天观察期**（默认 14）——"
+                             "留观察期内优先改别的页")
     parser.add_argument("--apply", action="store_true",
                         help="让实验盒真的落笔（还需要 %s=1）" % ALLOW_WRITES_ENV)
     parser.add_argument("--store", default="logs/task_runs.jsonl",
@@ -504,8 +537,17 @@ def main(argv: list[str] | None = None) -> int:
     snap_result = _require_result("快照盒", snapshot)
 
     # ---- 2) 诊断（模型判定）----
+    #
+    # **最近改过的页要留观察期**——改完立刻再改一次，
+    # 等于没让效果显出来，实验就白做了。
+    # 事实来自履约历史（真的落过笔的那些轮次），不是来自计划。
+    recently_changed = _recently_changed_pages(store, days=args.observe_days)
+    if recently_changed:
+        print(f"[round] 最近改过（留观察期）：{len(recently_changed)} 页"
+              f" → {recently_changed[0][:60]}", file=sys.stderr)
     diagnosis = trigger_task(
-        DIAGNOSIS, "diagnose_traffic", {}, store,
+        DIAGNOSIS, "diagnose_traffic",
+        {"exclude_landing_pages": recently_changed}, store,
         handoff=handoff_payload(SCOPE_ID, DIAGNOSIS, {SNAPSHOT: snapshot["task_run_id"]}),
         chain_ref=round_id, chain_kind="operating_round",
     )

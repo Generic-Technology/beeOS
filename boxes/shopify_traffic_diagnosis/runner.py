@@ -225,8 +225,8 @@ def _demand_matched_page(
     **门槛**：至少命中 2 个词才算「像」——
     命中 1 个多半是巧合（很多 handle 都有 personalized）。
 
-    **排序**：先看零成交（需求在那儿却没接住），再看命中数，
-    最后看 session 数。
+    **排序**：先看**没改过的**（改过的要留观察期），
+    再看零成交（需求在那儿却没接住），再看命中数，最后看 session 数。
 
     返回 `(handle, 命中词数, 买家的那个词)`。
     """
@@ -244,7 +244,7 @@ def _demand_matched_page(
         return None
 
     best: tuple[str, int, str] | None = None
-    best_key: tuple[int, int, int] = (0, 0, 0)
+    best_key: tuple[int, int, int, int] = (0, 0, 0, 0)
     for row in candidates:
         handle_tokens = _tokens(row["handle"])
         if not handle_tokens:
@@ -253,9 +253,11 @@ def _demand_matched_page(
             overlap = _tokens(query) & handle_tokens
             if len(overlap) < 2:
                 continue
+            # **没改过的优先**（改过的要留观察期）
             # **零成交优先**：有成交的页面说明它接住了需求
+            fresh = 0 if row.get("recently_changed") else 1
             zero_sales = 1 if row["sales"] == 0 else 0
-            key = (zero_sales, len(overlap), row["sessions"])
+            key = (fresh, zero_sales, len(overlap), row["sessions"])
             if key > best_key:
                 best_key = key
                 best = (row["handle"], len(overlap), query)
@@ -294,7 +296,10 @@ def _demand_keywords(snapshot: dict[str, Any], handle: str) -> dict[str, Any]:
     return {"query": query, "keywords": sorted(overlap)}
 
 
-def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
+def choose_landing_page(
+    snapshot: dict[str, Any],
+    exclude_handles: list[str] | None = None,
+) -> tuple[str, str]:
     """**下一轮该改哪个落地页——规则说了算，不交给模型**
 
     **三种策略**（这一轮打哪种仗由投料声明，见 `TARGET_STRATEGIES`）：
@@ -316,9 +321,15 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
     **为什么策略要显式**：换了假设，规则不会自己跟着变。
     藏在代码里的规则会继续按上一个假设选页。
 
+    **`exclude_handles`（最近改过的页）**：它们要留观察期——
+    改完立刻再改一次，等于没让效果显出来，实验就白做了。
+    **是「排后」不是「排除」**：全排除了这一轮就什么都不做，
+    那还不如改一个刚改过的页。
+
     返回 `(handle, 说明)`。
     """
     strategy = str(snapshot.get("strategy") or "conversion_lift")
+    excluded = {str(h) for h in (exclude_handles or []) if str(h)}
     rows = []
     # **`landing_funnel` 优先**：它有**全部**落地页，
     # 而 `top_landing_pages` 只有流量前 25 名——
@@ -337,14 +348,24 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
             "handle": handle,
             "sales": int(row.get("sessions_that_completed_checkout") or 0),
             "sessions": int(row.get("sessions") or 0),
+            # **最近改过的页排后**（不是排除——全排除了这一轮就什么都不做）
+            "recently_changed": handle in excluded,
         })
     if not rows:
         return "", "快照里没有能改的商品页（首页与集合页不在写权限内）"
 
     by_handle = {r["handle"] for r in rows}
 
+    # **观察期压过策略偏好**：先在**没改过的页**里选。
+    # 理由：改过的页要留时间看效果；
+    # 而且规则是确定性的，数据没变就还会选中同一页——
+    # 不让观察期生效，这个循环就永远卡在一页上。
+    # 全都改过 → 退回全部（宁可改一个刚改过的页，也不要什么都不做）。
+    fresh = [r for r in rows if not r["recently_changed"]]
+    pool_all = fresh or rows
+
     if strategy == "demand_match":
-        picked = _demand_matched_page(snapshot, rows)
+        picked = _demand_matched_page(snapshot, pool_all)
         if picked:
             handle, score, query = picked
             return handle, (
@@ -353,7 +374,6 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
                 f"但它零成交）"
             )
         strategy = "conversion_lift"  # 没有匹配上的页 → 退回
-
     if strategy == "ai_referral":
         # **有 AI 引荐流量但零成交**的商品页
         ai_leaks: dict[str, int] = {}
@@ -368,6 +388,9 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
             if int(pool.get("sessions_that_completed_checkout") or 0) > 0:
                 continue
             ai_leaks[handle] = ai_leaks.get(handle, 0) + int(pool.get("sessions") or 0)
+        # **只在这个策略自己的候选里挑**（有 AI 引荐流量、零成交），
+        # 且**只挑没改过的**；都没有 → 退回 conversion_lift（在没改过的页里）
+        ai_leaks = {h: s for h, s in ai_leaks.items() if h not in excluded}
         if ai_leaks:
             handle = max(ai_leaks, key=lambda h: ai_leaks[h])
             return handle, (
@@ -376,8 +399,8 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
             )
         strategy = "conversion_lift"  # 没有这类页面 → 退回
 
-    with_sales = [r for r in rows if r["sales"] > 0]
-    pool = with_sales or rows
+    with_sales = [r for r in pool_all if r["sales"] > 0]
+    pool = with_sales or pool_all
     best = max(pool, key=lambda r: (r["sales"], r["sessions"]))
     handle, sales, sessions = best["handle"], best["sales"], best["sessions"]
 
@@ -410,6 +433,11 @@ def diagnosis_intake_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "round_id": round_id,
         "stages_to_check": list(BOTTLENECK_STAGES),
         "snapshot_ref": snapshot,
+        # **最近改过的页**（编排层从履约历史里数出来的）——
+        # 它们要留观察期，这一轮优先改别的。
+        "exclude_landing_pages": [
+            str(h) for h in (input_data.get("exclude_landing_pages") or []) if str(h)
+        ],
     }
 
 
@@ -451,7 +479,10 @@ def diagnosis_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         if not problems:
             # **落地页按规则定，不按模型说的定**——
             # 流量大 ≠ 值得改；规则选「有成交的商品页」，可复现、有背书。
-            handle, note = choose_landing_page(snapshot)
+            handle, note = choose_landing_page(
+                snapshot,
+                exclude_handles=list(input_data.get("exclude_landing_pages") or []),
+            )
             model_pick = conclusion.get("target_landing_page") or ""
             if handle and model_pick and model_pick != handle:
                 conclusion["unknowns"] = list(conclusion.get("unknowns") or []) + [
