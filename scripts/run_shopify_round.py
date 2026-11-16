@@ -223,6 +223,163 @@ def _line(name: str, run: dict[str, Any]) -> str:
     return "  " + " | ".join(str(b) for b in bits)
 
 
+def _latest_applied_experiment(store: TaskRunStore) -> dict[str, Any] | None:
+    """**最近一次真的落笔**——复测要盯的就是它改的那一页
+
+    只认 `applied=True` 的实验盒：干跑的方案没动页面，
+    盯它没有意义。
+    """
+    try:
+        records = store.list_recent(limit=60)
+    except Exception:
+        return None
+    for record in records:          # list_recent 已经倒序
+        if record.get("box_id") != "shopify_acquisition_experiment_box":
+            continue
+        artifact = record.get("artifact") or {}
+        if artifact.get("applied"):
+            return {"record": record, "artifact": artifact}
+    return None
+
+
+def _funnel_row(snapshot: dict[str, Any], handle: str) -> dict[str, Any] | None:
+    """快照里某一页的漏斗（按 handle 找，不靠路径前缀猜）
+
+    **老快照只有 `top_landing_pages`**（加 `landing_funnel` 之前跑的）
+    ——那里面只有 session 数和成交数，中间两段没有。
+    找不到就回退过去，但**不能假装那两段是 0**：
+    「没量到」不是 0。
+    """
+    for row in snapshot.get("landing_funnel") or []:
+        path = str(row.get("landing_page_path") or "")
+        if path.split("/products/", 1)[-1].strip("/") == handle:
+            return row
+    for row in snapshot.get("top_landing_pages") or []:
+        path = str(row.get("landing_page_path") or "")
+        if path.split("/products/", 1)[-1].strip("/") == handle:
+            return {
+                "landing_page_path": path,
+                "sessions": int(row.get("sessions") or 0),
+                "sessions_that_completed_checkout": int(
+                    row.get("sessions_that_completed_checkout") or 0
+                ),
+                "_partial": True,   # 加购/结账两段没量到
+            }
+    return None
+
+
+def _measure(args: argparse.Namespace, store: TaskRunStore, domain: str) -> int:
+    """**复测：改过的那一页，改动前 vs 改动后**
+
+    改了不算数——**改完还得量一次**。
+    这一步就是快照盒声明的那个触发条件
+    「一轮实验结束后取复测」。
+
+    - 基线：那一轮快照里那一页的漏斗（改动前的窗口）
+    - 现在：改动之后到昨天为止的窗口，重新取一次快照
+    - 窗口长度不一样时，**两个数都摆出来 + 各自的窗口**，
+      不替读者下结论（「涨了」不等于「改出来的」）
+    """
+    latest = _latest_applied_experiment(store)
+    if latest is None:
+        print("[measure] 找不到真的落过笔的实验——没改过东西就没得复测",
+              file=sys.stderr)
+        return 2
+    artifact = latest["artifact"]
+    handle = str(artifact.get("landing_page") or artifact.get("target_handle") or "")
+    round_id = str(artifact.get("round_id") or "")
+    if not handle:
+        print("[measure] 那次实验没记下改的是哪一页", file=sys.stderr)
+        return 2
+
+    # 基线 = 那一轮的快照产出
+    baseline_snapshot: dict[str, Any] = {}
+    for record in store.list_recent(limit=60):
+        if record.get("box_id") != "shopify_snapshot_box":
+            continue
+        art = record.get("artifact") or {}
+        if str(art.get("round_id") or "") == round_id:
+            baseline_snapshot = art
+            break
+    baseline = _funnel_row(baseline_snapshot, handle) if baseline_snapshot else None
+
+    # 改动之后 → 昨天（当天的数会一直涨，不算）
+    wrote_on = str(artifact.get("observed_at") or "")[:10]
+    post_start = wrote_on or date.today().isoformat()
+    post_end = (date.today() - timedelta(days=1)).isoformat()
+    days = _days_between(post_start, post_end)
+
+    print(f"[measure] 复测目标：{handle}", file=sys.stderr)
+    print(f"         改动那一轮：{round_id}"
+          f"｜落笔日：{wrote_on or '（没记）'}", file=sys.stderr)
+
+    if days <= 0:
+        print(f"[measure] 改动之后还没有**完整的一天**"
+              f"（{post_start}..{post_end}）——现在量不到效果。",
+              file=sys.stderr)
+        print(f"         明天之后再来量：改动当天之后的 session 才有意义。",
+              file=sys.stderr)
+        _print_measure_row("改动前（那一轮的窗口）", baseline_snapshot, handle, baseline)
+        return 0
+
+    post = trigger_task(
+        SNAPSHOT, "capture_store_snapshot",
+        {
+            "round_id": f"{round_id}+复测",
+            "store_domain": domain,
+            "window_start": post_start,
+            "window_end": post_end,
+            "strategy": str(artifact.get("strategy") or ""),
+        },
+        store,
+        chain_ref=round_id, chain_kind="operating_round",
+    )
+    post_snapshot = _artifact(post)
+    if post.get("status") != "completed" or post.get("acceptance_status") != "accepted":
+        print(f"[measure] 复测快照没跑成（{post.get('status')}/"
+              f"{post.get('acceptance_status')}）", file=sys.stderr)
+        return 1
+
+    print(f"         复测窗口：{post_start}..{post_end}（{days} 天）", file=sys.stderr)
+    _print_measure_row(
+        f"改动前（{baseline_snapshot.get('window_start')}.."
+        f"{baseline_snapshot.get('window_end')}）",
+        baseline_snapshot, handle, baseline,
+    )
+    _print_measure_row(f"改动后（{post_start}..{post_end}）",
+                       post_snapshot, handle, _funnel_row(post_snapshot, handle))
+    return 0
+
+
+def _days_between(start: str, end: str) -> int:
+    try:
+        return (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+    except ValueError:
+        return 0
+
+
+def _print_measure_row(
+    label: str,
+    snapshot: dict[str, Any],
+    handle: str,
+    row: dict[str, Any] | None,
+) -> None:
+    if row is None:
+        print(f"    {label}: 这一页没量到（快照里没有它）", file=sys.stderr)
+        return
+    sessions = int(row.get("sessions") or 0)
+    cart = row.get("sessions_with_cart_additions")
+    checkout = row.get("sessions_that_reached_checkout")
+    sold = int(row.get("sessions_that_completed_checkout") or 0)
+    rate = (sold / sessions * 100) if sessions else 0.0
+    middle = (
+        f"加购 {'没量到' if cart is None else cart}"
+        f"｜到结账 {'没量到' if checkout is None else checkout}"
+    )
+    print(f"    {label}: session {sessions}｜{middle}"
+          f"｜完成结账 {sold}｜转化 {rate:.1f}%", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="跑一轮店铺经营闭环")
     parser.add_argument("--days", type=int, default=28, help="回看多少天（默认 28）")
@@ -241,6 +398,9 @@ def main(argv: list[str] | None = None) -> int:
                              "或配了 GSC 凭证就走 gsc，否则不去任何地方")
     parser.add_argument("--gsc-csv", default="",
                         help="GSC 导出的 CSV 路径（默认 %s）" % GSC_CSV_DEFAULT)
+    parser.add_argument("--measure", action="store_true",
+                        help="**复测**：只量「最近一次落笔改过的那一页」"
+                             "改动前 vs 改动后，不改任何东西")
     parser.add_argument("--apply", action="store_true",
                         help="让实验盒真的落笔（还需要 %s=1）" % ALLOW_WRITES_ENV)
     parser.add_argument("--store", default="logs/task_runs.jsonl",
@@ -271,6 +431,10 @@ def main(argv: list[str] | None = None) -> int:
     start, end = _window(args.days)
     round_id = args.round_id or _round_id(domain, end)
     store = TaskRunStore(args.store)
+
+    # ---- 复测：只量不改 ----
+    if args.measure:
+        return _measure(args, store, domain)
 
     print(f"[round] 轮次={round_id} 窗口={start}..{end}", file=sys.stderr)
 

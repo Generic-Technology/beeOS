@@ -319,3 +319,51 @@ def test_the_market_call_carries_the_platforms_and_the_csv_path(env, monkeypatch
     payload = trigger.call_for("shopify_market_signal_box")["payload"]
     assert payload.get("platforms") == ["gsc"]
     assert payload.get("gsc_csv_path") == "/tmp/x.csv"
+
+
+# ============================================================
+# 六、复测：改过的那一页，改动前 vs 改动后
+# ============================================================
+
+
+def test_a_page_is_found_in_the_full_funnel_first():
+    """**先找完整漏斗**——只有它有加购/结账两段"""
+    snapshot = {
+        "landing_funnel": [{
+            "landing_page_path": "/products/pet-plush-clone",
+            "sessions": 11,
+            "sessions_with_cart_additions": 3,
+            "sessions_that_reached_checkout": 1,
+            "sessions_that_completed_checkout": 0,
+        }],
+        "top_landing_pages": [{
+            "landing_page_path": "/products/pet-plush-clone",
+            "sessions": 11,
+            "sessions_that_completed_checkout": 0,
+        }],
+    }
+    row = script._funnel_row(snapshot, "pet-plush-clone")
+    assert row is not None
+    assert row.get("sessions_with_cart_additions") == 3
+
+
+def test_an_older_snapshot_falls_back_and_says_what_is_missing():
+    """**老快照只有前 N 名的简版**——回退过去，但不许把那两段假装成 0"""
+    snapshot = {
+        "top_landing_pages": [{
+            "landing_page_path": "/products/pet-plush-clone",
+            "sessions": 11,
+            "sessions_that_completed_checkout": 0,
+        }],
+    }
+    row = script._funnel_row(snapshot, "pet-plush-clone")
+    assert row is not None
+    assert row.get("_partial") is True
+    assert "sessions_with_cart_additions" not in row
+
+
+def test_measuring_without_a_write_says_so(env, monkeypatch, tmp_path):
+    """**没改过东西就没得复测**——说清楚，别让人以为量了个空"""
+    monkeypatch.setattr(script, "trigger_task", _FakeTrigger())
+    code = script.main(["--measure", "--store", str(tmp_path / "runs.jsonl")])
+    assert code == 2

@@ -48,6 +48,11 @@ TOP_LANDING_PAGES = 25
 TOP_SOURCES = 25
 TOP_SEARCH_TERMS = 25
 
+#: **完整漏斗保留多少个落地页**——
+#: 比 TOP_LANDING_PAGES 多，因为复测要按页比，
+#: 而「改过的那一页」未必在流量前 N 名里。
+LANDING_FUNNEL_PAGES = 100
+
 #: 来源 / 搜索词这两条查询取不到时**不算中止**（辅助维度）
 OPTIONAL_QUERIES = ("sources", "terms")
 
@@ -415,12 +420,29 @@ def snapshot_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     qualified = 0
     landing_sum = 0
     top_landing: list[dict[str, Any]] = []
+    # **每个落地页的完整漏斗**（不只是前 N 名）——
+    # 复测要按页比，而「改过的那一页」未必在前 N 名里。
+    landing_funnel: list[dict[str, Any]] = []
     for row in landing_rows:
         path = str(row.get("landing_page_path") or "")
         sessions = _int(row.get("sessions"))
         landing_sum += sessions
         if not path.startswith(excluded_prefixes):
             qualified += sessions
+        if len(landing_funnel) < LANDING_FUNNEL_PAGES:
+            landing_funnel.append({
+                "landing_page_path": path,
+                "sessions": sessions,
+                "sessions_with_cart_additions": _int(
+                    row.get("sessions_with_cart_additions")
+                ),
+                "sessions_that_reached_checkout": _int(
+                    row.get("sessions_that_reached_checkout")
+                ),
+                "sessions_that_completed_checkout": _int(
+                    row.get("sessions_that_completed_checkout")
+                ),
+            })
         if len(top_landing) < TOP_LANDING_PAGES:
             top_landing.append({
                 "landing_page_path": path,
@@ -541,6 +563,7 @@ def snapshot_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "source_present": bool(source),
         "session_count_consistent": consistent,
         "top_landing_pages": top_landing,
+        "landing_funnel": landing_funnel,
         "market_signals": [
             {
                 "platform": str(m.get("platform") or ""),
@@ -641,6 +664,7 @@ def _empty_snapshot(input_data: dict[str, Any]) -> dict[str, Any]:
         "metric_status_complete": False,
         "source_present": False,
         "top_landing_pages": [],
+        "landing_funnel": [],
         "market_signals": [
             {
                 "platform": str(m.get("platform") or ""),

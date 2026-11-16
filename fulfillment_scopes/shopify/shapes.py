@@ -178,6 +178,16 @@ SNAPSHOT_OUTPUT_SCHEMA = SchemaDef(
                 FieldDef(name="sessions_that_completed_checkout", type="integer", required=False),
             ],
         ), description="流量前 N 的落地页——首轮实验的落地页候选从这里挑"),
+        FieldDef(name="landing_funnel", type="array", required=True, items=FieldDef(
+            name="landing_funnel_row", type="object", required=True, properties=[
+                FieldDef(name="landing_page_path", type="string", required=True),
+                FieldDef(name="sessions", type="integer", required=True),
+                FieldDef(name="sessions_with_cart_additions", type="integer", required=True),
+                FieldDef(name="sessions_that_reached_checkout", type="integer", required=True),
+                FieldDef(name="sessions_that_completed_checkout", type="integer", required=True),
+            ],
+        ), description="**每个落地页的完整漏斗**（不止前 N 名）——"
+                       "复测要按页比，改过的那一页未必在前 N 名里"),
         FieldDef(name="top_sources", type="array", required=True, items=FieldDef(
             name="source_row", type="object", required=True, properties=[
                 FieldDef(name="referrer_source", type="string", required=True),

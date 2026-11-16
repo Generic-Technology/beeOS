@@ -852,6 +852,7 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
             "site_search_terms": [],
             "search_funnel": {},
             "top_landing_pages": [],
+            "landing_funnel": [],
             "top_sources": [],
             "top_search_terms": [],
         },
