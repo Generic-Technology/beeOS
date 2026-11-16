@@ -89,7 +89,55 @@ sleep 3
 systemctl is-active "$SERVICE"
 REMOTE_SCRIPT
 
+# ===== 履约历史：本地与服务器各跑各的，**两边会分叉** =====
+#
+# 实测：服务器 156 条、本地 149 条，但各有 100 多条是对方没有的
+# （不是包含关系）→ 不能直接覆盖，会丢历史。
+#
+# 不同步的代价：**看板照常渲染，只是那几只盒子显示「RUNS 0」**——
+# 读者会以为「这些盒子从没跑过」，而它们真的跑过。
+echo "→ 合并履约历史"
+REMOTE_RUNS="/tmp/beeos-remote-runs.jsonl"
+scp -q -o BatchMode=yes "$HOST:$REMOTE_DIR/logs/task_runs.jsonl" "$REMOTE_RUNS"
+python3 scripts/_merge_run_history.py \
+  --local logs/task_runs.jsonl --remote "$REMOTE_RUNS" --out /tmp/beeos-merged-runs.jsonl
+scp -q -o BatchMode=yes /tmp/beeos-merged-runs.jsonl "$HOST:/tmp/beeos-merged-runs.jsonl"
+ssh -o BatchMode=yes "$HOST" "set -e; \
+  cp $REMOTE_DIR/logs/task_runs.jsonl /tmp/beeos-runs-before-merge.jsonl; \
+  cp /tmp/beeos-merged-runs.jsonl $REMOTE_DIR/logs/task_runs.jsonl; \
+  chown deploy:deploy $REMOTE_DIR/logs/task_runs.jsonl; \
+  systemctl restart $SERVICE"
+
 echo "✓ 已部署 $COMMIT"
 echo
 echo "线上自检："
+# **自检要问对问题**：不是「服务活着吗」，是「**线上是不是缺了东西**」。
+# 页面照常渲染时，缺的那块只是「没画出来」——没有任何报错。
 ssh -o BatchMode=yes "$HOST" "curl -s -o /dev/null -w '  看板 http=%{http_code}\n' http://127.0.0.1:8765/api/data; printf '  服务器记的 commit: '; cat ${REMOTE_DIR}.deployed-commit" 2>/dev/null || true
+
+# **范围列表对一遍**：本地有的协作边界，线上必须都有
+LOCAL_SCOPES="$(python3 -c "
+import sys; sys.path.insert(0, '.')
+from fulfillment_scopes import FULFILLMENT_SCOPE_REGISTRY
+print(' '.join(sorted(FULFILLMENT_SCOPE_REGISTRY.keys())))
+")"
+REMOTE_SCOPES="$(ssh -o BatchMode=yes "$HOST" "curl -s http://127.0.0.1:8765/api/data | python3 -c \"
+import json,sys
+d = json.load(sys.stdin)
+print(' '.join(sorted((d.get('fulfillment_scopes') or {}).keys())))
+\"" 2>/dev/null || echo "")"
+echo "  本地协作边界: $LOCAL_SCOPES"
+echo "  线上协作边界: $REMOTE_SCOPES"
+MISSING=""
+for scope in $LOCAL_SCOPES; do
+  case " $REMOTE_SCOPES " in
+    *" $scope "*) ;;
+    *) MISSING="$MISSING $scope" ;;
+  esac
+done
+if [ -n "$MISSING" ]; then
+  echo "✗ 线上少了协作边界:$MISSING"
+  echo "  页面照常渲染，只是少了一块——别当成功。"
+  exit 1
+fi
+echo "  ✓ 范围一致"

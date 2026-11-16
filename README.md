@@ -310,10 +310,11 @@ python scripts/new_box.py --help
   - `README.md` — 工作台说明（它和看板的区别 / 三态 / 现在没有什么）
 
 - **`scripts/`** — 部署与校验
-  - `deploy.sh` — 部署上线（同步 → 重启服务 → 线上自检）
+  - `deploy.sh` — 部署上线（同步 → 合并履约历史 → 重启服务 → 线上自检）
   - `run_chain.py` — 端到端串跑多只盒子
   - `new_box.py` — 造一只合规的新盒子（接新协作边界只写业务，不写样板）
   - `_sync_release.py` — 把**提交树**同步到服务器（不带工作区在途改动）
+  - `_merge_run_history.py` — 合并本地与服务器的履约历史（两边会分叉，不能覆盖）
   - `verify_mermaid.py` — 文档里的 mermaid 块渲染校验
   - `standardization_audit.py` — 标准化审计
   - `probe_shopifyql.py` — ShopifyQL 只读取数探测（哪些指标真取得到）
