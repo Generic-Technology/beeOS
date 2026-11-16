@@ -57,6 +57,10 @@ SCOPE = FulfillmentScopeDeclaration(
     display_name="giftsjourneyrebirth 店铺经营",
 
     boxes=[
+        # **链首**：市场信号（站外需求）→ 店里的事实 → 诊断 → 实验 → 档案。
+        # 为什么不在诊断上挂第二个上游：诊断挂两个上游，环图就画不出来
+        # （beeOS 的环要求相邻有交接边）。
+        "shopify_market_signal_box",
         "shopify_snapshot_box",
         "shopify_traffic_diagnosis_box",
         "shopify_acquisition_experiment_box",
@@ -65,6 +69,9 @@ SCOPE = FulfillmentScopeDeclaration(
 
     edges=[
         # ---- 交接边：产出真的流进下游的投料口，每条都带通道 ----
+        # 链首：站外的公开需求 → 店里的事实
+        Edge(from_box="shopify_market_signal_box", to_box="shopify_snapshot_box",
+             kind=EdgeKind.handoff, via="market_signal_ref"),
         Edge(from_box="shopify_snapshot_box", to_box="shopify_traffic_diagnosis_box",
              kind=EdgeKind.handoff, via="snapshot_ref"),
         Edge(from_box="shopify_traffic_diagnosis_box", to_box="shopify_acquisition_experiment_box",
@@ -82,7 +89,10 @@ SCOPE = FulfillmentScopeDeclaration(
         #
         # **源必须是实验盒**：档案盒有出边就不再是唯一汇点，
         # 整条链会画不出来。
-        Edge(from_box="shopify_acquisition_experiment_box", to_box="shopify_snapshot_box",
+        # 闭环：**末位 → 首位**——这一轮的结论开下一轮，
+        # 下一轮从链首重新开始（重新看市场、重新取数）。
+        Edge(from_box="shopify_acquisition_experiment_box",
+             to_box="shopify_market_signal_box",
              kind=EdgeKind.feedback, no_channel=True),
     ],
 

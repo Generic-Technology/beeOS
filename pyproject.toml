@@ -49,6 +49,7 @@ packages = [
     "boxes.wms_requirement",
     "boxes.wms_system",
     "boxes.wms_testing",
+    "boxes.shopify_market_signal",
     "boxes.shopify_snapshot",
     "boxes.shopify_traffic_diagnosis",
     "boxes.shopify_acquisition_experiment",

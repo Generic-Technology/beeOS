@@ -78,6 +78,45 @@ RESULT_METRICS = FieldDef(
 
 
 # ============================================================
+# 零、市场信号产出（链首那只盒子的产出形状）
+# ============================================================
+
+MARKET_SIGNAL_OUTPUT_SCHEMA = SchemaDef(
+    id="schema_market_signal_output",
+    description="这一轮站外的公开需求（带出处、无个人信息）",
+    fields=[
+        FieldDef(name="round_id", type="string", required=True),
+        FieldDef(name="observed_at", type="string", required=True),
+        FieldDef(name="signals", type="array", required=True, items=FieldDef(
+            name="market_signal", type="object", required=True, properties=[
+                FieldDef(name="platform", type="string", required=True),
+                FieldDef(name="topic", type="string", required=True),
+                FieldDef(name="occurrences", type="integer", required=False),
+                FieldDef(name="source_url", type="string", required=False),
+                FieldDef(name="captured_at", type="string", required=False),
+                FieldDef(name="snippet", type="string", required=False),
+            ],
+        )),
+        FieldDef(name="platform_status", type="array", required=True, items=FieldDef(
+            name="platform_status", type="object", required=True, properties=[
+                FieldDef(name="platform", type="string", required=True),
+                FieldDef(name="status", type="string", required=True),
+                FieldDef(name="detail", type="string", required=False),
+                FieldDef(name="signal_count", type="integer", required=False),
+            ],
+        )),
+        FieldDef(name="pii_removed_count", type="integer", required=True),
+        FieldDef(name="pii_remaining_count", type="integer", required=True,
+                 description="**产出里还剩几个个人信息片段——必须为 0**"),
+        FieldDef(name="pii_clean", type="boolean", required=True,
+                 description="有信号 **且** 没有个人信息——一条都没取到时它也是 false"),
+        FieldDef(name="signal_status_complete", type="boolean", required=True),
+        FieldDef(name="source_present", type="boolean", required=True),
+    ],
+)
+
+
+# ============================================================
 # 一、快照产出
 # ============================================================
 
@@ -93,6 +132,8 @@ SNAPSHOT_OUTPUT_SCHEMA = SchemaDef(
         FieldDef(name="store_domain", type="string", required=True),
         FieldDef(name="source", type="string", required=False,
                  description="这次的数据来自哪（schema + API 版本 + 查询语句）"),
+        FieldDef(name="strategy", type="string", required=False,
+                 description="这一轮打哪种仗（conversion_lift / ai_referral）"),
         FieldDef(name="api_version", type="string", required=True),
 
         FieldDef(name="total_sessions", type="integer", required=False,
@@ -148,6 +189,56 @@ SNAPSHOT_OUTPUT_SCHEMA = SchemaDef(
                 FieldDef(name="sessions_that_completed_checkout", type="integer", required=False),
             ],
         ), description="来源分布（含 AI 引荐渠道）"),
+        FieldDef(name="traffic_pools", type="array", required=True, items=FieldDef(
+            name="pool", type="object", required=True, properties=[
+                FieldDef(name="referrer_source", type="string", required=False),
+                FieldDef(name="agentic_referring_channel", type="string", required=False),
+                FieldDef(name="landing_page_path", type="string", required=False),
+                FieldDef(name="sessions", type="integer", required=True),
+                FieldDef(name="sessions_that_completed_checkout", type="integer", required=True),
+            ],
+        ), description="来源 × AI 渠道 × 落地页 的交叉——**哪个流量池在漏水**"),
+        FieldDef(name="daily_trend", type="array", required=True, items=FieldDef(
+            name="day_row", type="object", required=True, properties=[
+                FieldDef(name="day", type="string", required=False),
+                FieldDef(name="sessions", type="integer", required=True),
+                FieldDef(name="sessions_that_completed_checkout", type="integer", required=True),
+            ],
+        ), description="日级序列——**改完第三天就能看方向**，不用等满一个月"),
+        FieldDef(name="market_signals", type="array", required=True, items=FieldDef(
+            name="market_signal", type="object", required=True, properties=[
+                FieldDef(name="platform", type="string", required=True),
+                FieldDef(name="topic", type="string", required=True),
+                FieldDef(name="occurrences", type="integer", required=False),
+                FieldDef(name="source_url", type="string", required=False),
+                FieldDef(name="captured_at", type="string", required=False),
+            ],
+        ), description="**站外的公开需求**（上一跳市场信号盒带来）——"
+                       "这一轮的事实 = 店里的数据 + 外面在找什么"),
+        FieldDef(name="site_search_terms", type="array", required=True, items=FieldDef(
+            name="site_search", type="object", required=True, properties=[
+                FieldDef(name="query", type="string", required=True,
+                         description="买家在站内搜的词"),
+                FieldDef(name="searches", type="integer", required=True,
+                         description="搜了几次"),
+            ],
+        ), description=(
+            "**买家在站内搜什么**——真实买家的需求信号，"
+            "比任何爬来的线索都强"
+        )),
+        FieldDef(name="search_funnel", type="object", required=False, properties=[
+            FieldDef(name="sessions_with_searches", type="integer", required=False,
+                     description="有搜索的 session 数"),
+            FieldDef(name="search_sessions_with_clicks", type="integer", required=False,
+                     description="搜了并点了搜索结果的 session 数"),
+            FieldDef(name="search_sessions_with_cart_additions", type="integer", required=False),
+            FieldDef(name="search_sessions_that_completed_checkout", type="integer", required=False,
+                     description="搜了并买了的 session 数"),
+            FieldDef(name="search_click_rate", type="number", required=False),
+            FieldDef(name="search_added_to_cart_rate", type="number", required=False),
+            FieldDef(name="search_conversion_rate", type="number", required=False,
+                     description="搜了之后成交的比例——**站内搜索漏斗的最后一环**"),
+        ], description="站内搜索漏斗：搜了 → 点了结果 → 加购 → 成交"),
         FieldDef(name="top_search_terms", type="array", required=True, items=FieldDef(
             name="term_row", type="object", required=True, properties=[
                 FieldDef(name="term", type="string", required=True),
@@ -185,6 +276,20 @@ DIAGNOSIS_OUTPUT_SCHEMA = SchemaDef(
         FieldDef(name="unknowns", type="array", required=False,
                  items=FieldDef(name="item", type="string", required=True),
                  description="这次判不出来的地方——**必须写出来**，不能装作全知"),
+        FieldDef(name="leaking_pools", type="array", required=False, items=FieldDef(
+            name="pool", type="object", required=True, properties=[
+                FieldDef(name="referrer_source", type="string", required=False),
+                FieldDef(name="agentic_referring_channel", type="string", required=False),
+                FieldDef(name="landing_page_path", type="string", required=False),
+                FieldDef(name="sessions", type="integer", required=True),
+            ],
+        ), description=(
+            "**有流量但没成交的池子**（规则算的，不是模型说的）——"
+            "「哪个池子在漏水」是算得出来的，就不要交给模型"
+        )),
+        FieldDef(name="strategy", type="string", required=False,
+                 description="这一轮打哪种仗（conversion_lift / ai_referral）——"
+                             "目标页是按它挑的"),
         FieldDef(name="snapshot_ref_present", type="boolean", required=True,
                  description="接住了上游快照——这是**前提**，不是结论"),
         FieldDef(name="hypothesis_present", type="boolean", required=True,
@@ -264,6 +369,7 @@ EXPERIMENT_OUTPUT_SCHEMA = SchemaDef(
 )
 
 __all__ = [
+    "MARKET_SIGNAL_OUTPUT_SCHEMA",
     "METRIC_ITEM",
     "WRITABLE_FIELD_PROPERTIES",
     "SNAPSHOT_OUTPUT_SCHEMA",

@@ -58,6 +58,18 @@ from boxes.learning_growth.measure import COMPUTERS as LEARNING_GROWTH_COMPUTERS
 from boxes.learning_growth.runner import RUNNER as LEARNING_GROWTH_RUNNER
 from boxes.learning_growth import get_definition as get_learning_growth_definition
 from boxes.learning_math import get_beeline as get_learning_math_beeline
+from boxes.shopify_market_signal import (
+    get_beeline as get_shopify_market_signal_beeline,
+)
+from boxes.shopify_market_signal import (
+    get_definition as get_shopify_market_signal_definition,
+)
+from boxes.shopify_market_signal.runner import (
+    RUNNER as SHOPIFY_MARKET_SIGNAL_RUNNER,
+)
+from boxes.shopify_market_signal import (
+    ASSEMBLED as SHOPIFY_MARKET_SIGNAL_ASSEMBLED,
+)
 from boxes.shopify_snapshot import get_beeline as get_shopify_snapshot_beeline
 from boxes.shopify_snapshot import get_definition as get_shopify_snapshot_definition
 from boxes.shopify_snapshot.runner import RUNNER as SHOPIFY_SNAPSHOT_RUNNER
@@ -199,6 +211,10 @@ BOX_REGISTRY: dict[
         get_learning_english_definition,
         {"beeline_learning_english_v2": get_learning_english_beeline},
     ),
+    "shopify_market_signal_box": (
+        get_shopify_market_signal_definition,
+        {"beeline_shopify_market_signal_v1": get_shopify_market_signal_beeline},
+    ),
     "shopify_snapshot_box": (
         get_shopify_snapshot_definition,
         {"beeline_shopify_snapshot_v1": get_shopify_snapshot_beeline},
@@ -236,6 +252,7 @@ METRIC_COMPUTERS: dict[str, dict[str, core_metrics.Computer]] = {
     # **这四只盒子不声明指标**（skeleton + 指标是承诺不是事实），
     # 所以它们的采集器表是空的——但**必须在这里占一个位置**：
     # 「注册了盒子却不给采集器」和「没注册」在看板上是两件事。
+    "shopify_market_signal_box": {},
     "shopify_snapshot_box": {},
     "shopify_traffic_diagnosis_box": {},
     "shopify_acquisition_experiment_box": {},
@@ -259,6 +276,7 @@ RUNNER_REGISTRY: dict[str, HandlerRunner] = {
     "learning_math_box": LEARNING_MATH_RUNNER,
     "learning_chinese_box": LEARNING_CHINESE_RUNNER,
     "learning_english_box": LEARNING_ENGLISH_RUNNER,
+    "shopify_market_signal_box": SHOPIFY_MARKET_SIGNAL_RUNNER,
     "shopify_snapshot_box": SHOPIFY_SNAPSHOT_RUNNER,
     "shopify_traffic_diagnosis_box": SHOPIFY_TRAFFIC_DIAGNOSIS_RUNNER,
     "shopify_acquisition_experiment_box": SHOPIFY_ACQUISITION_EXPERIMENT_RUNNER,
@@ -284,6 +302,7 @@ PLUGIN_CONTEXT_REGISTRY: dict[str, PluginContext] = {
     "learning_math_box": LEARNING_MATH_ASSEMBLED.plugin_context,
     "learning_chinese_box": LEARNING_CHINESE_ASSEMBLED.plugin_context,
     "learning_english_box": LEARNING_ENGLISH_ASSEMBLED.plugin_context,
+    "shopify_market_signal_box": SHOPIFY_MARKET_SIGNAL_ASSEMBLED.plugin_context,
     "shopify_snapshot_box": SHOPIFY_SNAPSHOT_ASSEMBLED.plugin_context,
     "shopify_traffic_diagnosis_box": SHOPIFY_TRAFFIC_DIAGNOSIS_ASSEMBLED.plugin_context,
     "shopify_acquisition_experiment_box": SHOPIFY_ACQUISITION_EXPERIMENT_ASSEMBLED.plugin_context,
@@ -798,6 +817,15 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
     #
     # 示例投料**必须投得出去**：契约校验会按本盒声明的形状查，
     # 里面那份快照/诊断也得满足下游盒声明的形状。
+    ("shopify_market_signal_box", "capture_market_signals"): {
+        "round_id": "demo@2026-W47",
+        "keywords": ["personalized christmas stocking", "pet memorial gift"],
+        # **平台列表故意给空**：示例投料**不去任何地方**——
+        # 否则单测会跟着开发者机器上的凭证跑，套件就变成看环境脸色了。
+        # 真跑的时候把平台填上（或删掉这一行 → 默认全部）。
+        "platforms": [],
+        "window_days": 28,
+    },
     ("shopify_snapshot_box", "capture_store_snapshot"): {
         "round_id": "giftsjourneyrebirth@2026-W47",
         "store_domain": "giftsjourneyrebirth.myshopify.com",
@@ -818,6 +846,11 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
             "data_present": False,
             "metric_status_complete": False,
             "source_present": False,
+            "traffic_pools": [],
+            "daily_trend": [],
+            "market_signals": [],
+            "site_search_terms": [],
+            "search_funnel": {},
             "top_landing_pages": [],
             "top_sources": [],
             "top_search_terms": [],

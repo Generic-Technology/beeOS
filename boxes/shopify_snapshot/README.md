@@ -78,7 +78,7 @@ Shopify 的失败**都可能是 HTTP 200**：语法错在 `parseErrors`，
 | 文件 | 装什么 |
 | --- | --- |
 | `__init__.py` | 入口（`get_definition` / `get_beeline`） |
-| `schemas.py` | 4 个 schema |
+| `schemas.py` | 5 个 schema |
 | `definition.py` | `DECLARATION` |
 | `beeline.py` | `COMPONENTS`——3 跳 |
 | `runner.py` | 3 跳的实现 |

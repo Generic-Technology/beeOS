@@ -97,7 +97,7 @@ mastery: 0.9
 | WMS 软件履约 | 需求捕获、仓储设计、代码生成、场景验证、运维核对、效果分析与系统档案 | [需求盒](boxes/wms_requirement/README.md)、[闭环实测记录](docs/wms-closure-plan.md) |
 | 小票识别 | 从图片生成结构化小票，并检查金额等业务约束 | [小票盒](boxes/receipt/README.md) |
 | 学习记录 | 数学（拍一张作业照 → 错题清单 + 针对性训练方案）、语文、英语的学习记录与成长档案，保留记录出处 | [数学](boxes/learning_math/README.md)、[语文](boxes/learning_chinese/README.md)、[英语](boxes/learning_english/README.md)、[成长档案](boxes/learning_growth/README.md) |
-| 店铺经营 | giftsjourneyrebirth 店铺的获客闭环：只读取数 → 模型断点诊断 → 获客实验（直接改落地页）→ 经营档案 | [快照](boxes/shopify_snapshot/README.md)、[诊断](boxes/shopify_traffic_diagnosis/README.md)、[实验](boxes/shopify_acquisition_experiment/README.md)、[档案](boxes/shopify_archive/README.md) |
+| 店铺经营 | giftsjourneyrebirth 店铺的获客闭环：站外需求信号 → 只读取数 → 模型断点诊断 → 获客实验（直接改落地页）→ 经营档案 | [快照](boxes/shopify_snapshot/README.md)、[诊断](boxes/shopify_traffic_diagnosis/README.md)、[实验](boxes/shopify_acquisition_experiment/README.md)、[档案](boxes/shopify_archive/README.md) |
 
 WMS 协作边界已定义并串联如下履约链，各阶段产物同时汇入系统档案盒：
 
@@ -245,6 +245,7 @@ python scripts/new_box.py --help
   - `shopify/shapes.py` — 该边界的三份产出形状（**唯一一份事实**，生产者和消费者共用）
   - `shopify/vocabulary.py` — 该边界的共享词汇（三态、轮次号、合格访问规则、归因方式）
   - `shopify/auth.py` — 凭证解析（长期 token 优先；没有就现换一张，24 小时到期不用人管）
+  - `shopify/market_signal.py` — 市场信号盒的共享词汇（平台、凭证名、抓取上限）
 
 - **`boxes/`** — 业务履约盒子（产品层）。**全部已注册**（清单见下表）
   - 每只盒子：`__init__.py` / `schemas.py` / `definition.py` / `runner.py`
@@ -270,6 +271,7 @@ python scripts/new_box.py --help
   | [`learning_chinese/`](boxes/learning_chinese/README.md) | `learning_chinese_box` | Learning | 3 | 2 | live |
   | [`learning_english/`](boxes/learning_english/README.md) | `learning_english_box` | Learning | 3 | 2 | live |
   | [`learning_growth/`](boxes/learning_growth/README.md) | `learning_growth_box` | Learning | 4 | 2 | live |
+  | [`shopify_market_signal/`](boxes/shopify_market_signal/README.md) | `shopify_market_signal_box` | shopify_store | 3 | 4 | skeleton |
   | [`shopify_snapshot/`](boxes/shopify_snapshot/README.md) | `shopify_snapshot_box` | shopify_store | 7 | 2 | live |
   | [`shopify_traffic_diagnosis/`](boxes/shopify_traffic_diagnosis/README.md) | `shopify_traffic_diagnosis_box` | shopify_store | 3 | 3 | live |
   | [`shopify_acquisition_experiment/`](boxes/shopify_acquisition_experiment/README.md) | `shopify_acquisition_experiment_box` | shopify_store | 4 | 5 | skeleton |

@@ -122,6 +122,67 @@ def _statement_sources(start: str, end: str) -> str:
     )
 
 
+def _statement_pools(start: str, end: str) -> str:
+    """来源 × AI 渠道 × 落地页 的交叉
+
+    **「哪个流量池在漏水」是算得出来的**：有 session、没成交的池子
+    就是漏水的池子。分开看来源和落地页看不出这个——
+    「direct 108 个 session」和「这个页面 13 个 session」两张表，
+    交叉起来才知道「这个页的 direct 流量转化 30%，search 流量转化 0%」。
+    """
+    return (
+        "FROM sessions\n"
+        "  SHOW sessions, sessions_that_completed_checkout\n"
+        "  WHERE human_or_bot_session = 'human'\n"
+        "  GROUP BY referrer_source, agentic_referring_channel, landing_page_path\n"
+        f"  SINCE {_day(start)} UNTIL {_day(end)}\n"
+        "  ORDER BY sessions DESC"
+    )
+
+
+def _statement_daily(start: str, end: str) -> str:
+    """日级序列——改完第三天就能看方向，不用等满一个月"""
+    return (
+        "FROM sessions\n"
+        "  SHOW sessions, sessions_that_completed_checkout\n"
+        "  WHERE human_or_bot_session = 'human'\n"
+        "  TIMESERIES day\n"
+        f"  SINCE {_day(start)} UNTIL {_day(end)}\n"
+        "  ORDER BY day ASC"
+    )
+
+
+def _statement_site_searches(start: str, end: str) -> str:
+    """**买家在站内搜什么**
+
+    这是真实买家的需求信号——比任何爬来的线索都强，
+    而且不用爬、不用碰个人信息、零合规风险。
+    """
+    return (
+        "FROM searches\n"
+        "  SHOW searches, search_query\n"
+        "  GROUP BY search_query\n"
+        f"  SINCE {_day(start)} UNTIL {_day(end)}\n"
+        "  ORDER BY searches DESC"
+    )
+
+
+def _statement_search_funnel(start: str, end: str) -> str:
+    """站内搜索漏斗：搜了 → 点了结果 → 加购 → 成交
+
+    「搜了 39 次，一单没成」和「搜了 39 次，4 单成交」是两个完全不同的问题——
+    前者是站内搜索坏了（要找的人找不到），后者是搜索没问题。
+    """
+    return (
+        "FROM search_conversions\n"
+        "  SHOW sessions_with_searches, search_sessions_with_clicks,\n"
+        "    search_sessions_with_cart_additions,\n"
+        "    search_sessions_that_completed_checkout,\n"
+        "    search_click_rate, search_added_to_cart_rate, search_conversion_rate\n"
+        f"  SINCE {_day(start)} UNTIL {_day(end)}"
+    )
+
+
 def _statement_terms(start: str, end: str) -> str:
     return (
         "FROM sessions\n"
@@ -168,6 +229,8 @@ def snapshot_intake_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "store_domain": store_domain,
         "window_start": window_start,
         "window_end": window_end,
+        "strategy": str(input_data.get("strategy") or ""),
+        "market_signal_ref": input_data.get("market_signal_ref"),
         "qualified_session_rule": QUALIFIED_SESSION_RULE,
         "excluded_entry_paths": list(EXCLUDED_ENTRY_PATH_PREFIXES),
     }
@@ -192,6 +255,7 @@ def snapshot_query_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     def failed(reason: str) -> dict[str, Any]:
         return {
             "round_id": input_data["round_id"],
+            "strategy": str(input_data.get("strategy") or ""),
             "source": "",
             "api_version": "",
             "retrieved_at": _now(),
@@ -202,6 +266,10 @@ def snapshot_query_handler(input_data: dict[str, Any]) -> dict[str, Any]:
             "pages_fetched": 0,
             "source_rows": [],
             "term_rows": [],
+            "pool_rows": [],
+            "daily_rows": [],
+            "site_search_rows": [],
+            "search_funnel_row": {},
             "unverified": [reason],
             "fetch_ok": False,
         }
@@ -229,9 +297,17 @@ def snapshot_query_handler(input_data: dict[str, Any]) -> dict[str, Any]:
 
     sources: Optional[ShopifyQLResult] = None
     terms: Optional[ShopifyQLResult] = None
+    pools: Optional[ShopifyQLResult] = None
+    daily: Optional[ShopifyQLResult] = None
+    site_searches: Optional[ShopifyQLResult] = None
+    search_funnel: Optional[ShopifyQLResult] = None
     for name, statement in (
         ("sources", _statement_sources(start, end)),
         ("terms", _statement_terms(start, end)),
+        ("pools", _statement_pools(start, end)),
+        ("daily", _statement_daily(start, end)),
+        ("site_searches", _statement_site_searches(start, end)),
+        ("search_funnel", _statement_search_funnel(start, end)),
     ):
         try:
             result = client.query(statement)
@@ -244,8 +320,16 @@ def snapshot_query_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         warnings.extend(result.warnings)
         if name == "sources":
             sources = result
-        else:
+        elif name == "terms":
             terms = result
+        elif name == "pools":
+            pools = result
+        elif name == "site_searches":
+            site_searches = result
+        elif name == "search_funnel":
+            search_funnel = result
+        else:
+            daily = result
 
     total_row = dict(totals.rows[0]) if totals.rows else {}
     landing_rows = [dict(r) for r in landing.rows]
@@ -255,6 +339,8 @@ def snapshot_query_handler(input_data: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "round_id": input_data["round_id"],
+        "strategy": str(input_data.get("strategy") or ""),
+        "market_signal_ref": input_data.get("market_signal_ref"),
         "source": totals.source,
         "api_version": totals.api_version,
         "retrieved_at": totals.retrieved_at or _now(),
@@ -282,6 +368,10 @@ def snapshot_query_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "pages_fetched": totals.pages_fetched,
         "source_rows": source_rows,
         "term_rows": term_rows,
+        "pool_rows": [dict(r) for r in pools.rows] if pools else [],
+        "daily_rows": [dict(r) for r in daily.rows] if daily else [],
+        "site_search_rows": [dict(r) for r in site_searches.rows] if site_searches else [],
+        "search_funnel_row": dict(search_funnel.rows[0]) if (search_funnel and search_funnel.rows) else {},
         "unverified": unverified,
         "fetch_ok": True,
     }
@@ -318,6 +408,7 @@ def snapshot_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         return _empty_snapshot(input_data)
 
     totals = input_data["totals"]
+    funnel = input_data.get("search_funnel_row") or {}
     landing_rows = input_data["landing_rows"]
 
     excluded_prefixes = tuple(EXCLUDED_ENTRY_PATH_PREFIXES)
@@ -430,6 +521,7 @@ def snapshot_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "window_end": input_data.get("window_end", ""),
         "store_domain": input_data.get("store_domain", ""),
         "source": source,
+        "strategy": str(input_data.get("strategy") or ""),
         "api_version": str(input_data.get("api_version") or ""),
         "total_sessions": total_sessions,
         "qualified_sessions": qualified,
@@ -449,6 +541,61 @@ def snapshot_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "source_present": bool(source),
         "session_count_consistent": consistent,
         "top_landing_pages": top_landing,
+        "market_signals": [
+            {
+                "platform": str(m.get("platform") or ""),
+                "topic": str(m.get("topic") or ""),
+                "occurrences": m.get("occurrences"),
+                "source_url": str(m.get("source_url") or ""),
+                "captured_at": str(m.get("captured_at") or ""),
+            }
+            for m in list(
+                ((input_data.get("market_signal_ref") or {}).get("signals") or [])
+            )[:40]
+        ],
+        "site_search_terms": [
+            {
+                "query": str(r.get("search_query") or ""),
+                "searches": _int(r.get("searches")),
+            }
+            for r in list(input_data.get("site_search_rows") or [])[:40]
+            if str(r.get("search_query") or "").strip()
+        ],
+        "search_funnel": {
+            "sessions_with_searches": _int(funnel.get("sessions_with_searches")),
+            "search_sessions_with_clicks": _int(funnel.get("search_sessions_with_clicks")),
+            "search_sessions_with_cart_additions": _int(
+                funnel.get("search_sessions_with_cart_additions")
+            ),
+            "search_sessions_that_completed_checkout": _int(
+                funnel.get("search_sessions_that_completed_checkout")
+            ),
+            "search_click_rate": _float(funnel.get("search_click_rate")),
+            "search_added_to_cart_rate": _float(funnel.get("search_added_to_cart_rate")),
+            "search_conversion_rate": _float(funnel.get("search_conversion_rate")),
+        } if funnel else {},
+        "traffic_pools": [
+            {
+                "referrer_source": str(r.get("referrer_source") or ""),
+                "agentic_referring_channel": str(r.get("agentic_referring_channel") or ""),
+                "landing_page_path": str(r.get("landing_page_path") or ""),
+                "sessions": _int(r.get("sessions")),
+                "sessions_that_completed_checkout": _int(
+                    r.get("sessions_that_completed_checkout")
+                ),
+            }
+            for r in list(input_data.get("pool_rows") or [])[:200]
+        ],
+        "daily_trend": [
+            {
+                "day": str(r.get("day") or ""),
+                "sessions": _int(r.get("sessions")),
+                "sessions_that_completed_checkout": _int(
+                    r.get("sessions_that_completed_checkout")
+                ),
+            }
+            for r in list(input_data.get("daily_rows") or [])[:120]
+        ],
         "top_sources": [
             {
                 "referrer_source": str(r.get("referrer_source") or ""),
@@ -480,6 +627,7 @@ def _empty_snapshot(input_data: dict[str, Any]) -> dict[str, Any]:
     reason = "; ".join(input_data.get("unverified") or []) or "这次什么都没取到"
     return {
         "round_id": input_data["round_id"],
+        "strategy": str(input_data.get("strategy") or ""),
         "observed_at": input_data.get("retrieved_at") or _now(),
         "window_start": input_data.get("window_start", ""),
         "window_end": input_data.get("window_end", ""),
@@ -493,6 +641,61 @@ def _empty_snapshot(input_data: dict[str, Any]) -> dict[str, Any]:
         "metric_status_complete": False,
         "source_present": False,
         "top_landing_pages": [],
+        "market_signals": [
+            {
+                "platform": str(m.get("platform") or ""),
+                "topic": str(m.get("topic") or ""),
+                "occurrences": m.get("occurrences"),
+                "source_url": str(m.get("source_url") or ""),
+                "captured_at": str(m.get("captured_at") or ""),
+            }
+            for m in list(
+                ((input_data.get("market_signal_ref") or {}).get("signals") or [])
+            )[:40]
+        ],
+        "site_search_terms": [
+            {
+                "query": str(r.get("search_query") or ""),
+                "searches": _int(r.get("searches")),
+            }
+            for r in list(input_data.get("site_search_rows") or [])[:40]
+            if str(r.get("search_query") or "").strip()
+        ],
+        "search_funnel": {
+            "sessions_with_searches": _int(funnel.get("sessions_with_searches")),
+            "search_sessions_with_clicks": _int(funnel.get("search_sessions_with_clicks")),
+            "search_sessions_with_cart_additions": _int(
+                funnel.get("search_sessions_with_cart_additions")
+            ),
+            "search_sessions_that_completed_checkout": _int(
+                funnel.get("search_sessions_that_completed_checkout")
+            ),
+            "search_click_rate": _float(funnel.get("search_click_rate")),
+            "search_added_to_cart_rate": _float(funnel.get("search_added_to_cart_rate")),
+            "search_conversion_rate": _float(funnel.get("search_conversion_rate")),
+        } if funnel else {},
+        "traffic_pools": [
+            {
+                "referrer_source": str(r.get("referrer_source") or ""),
+                "agentic_referring_channel": str(r.get("agentic_referring_channel") or ""),
+                "landing_page_path": str(r.get("landing_page_path") or ""),
+                "sessions": _int(r.get("sessions")),
+                "sessions_that_completed_checkout": _int(
+                    r.get("sessions_that_completed_checkout")
+                ),
+            }
+            for r in list(input_data.get("pool_rows") or [])[:200]
+        ],
+        "daily_trend": [
+            {
+                "day": str(r.get("day") or ""),
+                "sessions": _int(r.get("sessions")),
+                "sessions_that_completed_checkout": _int(
+                    r.get("sessions_that_completed_checkout")
+                ),
+            }
+            for r in list(input_data.get("daily_rows") or [])[:120]
+        ],
         "top_sources": [],
         "top_search_terms": [],
     }

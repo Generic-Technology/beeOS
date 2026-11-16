@@ -41,6 +41,7 @@ SCOPE_ID = "shopify_store"
 SNAPSHOT = "shopify_snapshot_box"
 DIAGNOSIS = "shopify_traffic_diagnosis_box"
 EXPERIMENT = "shopify_acquisition_experiment_box"
+MARKET_SIGNAL = "shopify_market_signal_box"
 ARCHIVE = "shopify_archive_box"
 
 
@@ -125,11 +126,13 @@ class TestTheScopeIsWellFormed:
         )
 
     def test_the_feedback_edge_starts_at_the_experiment_box(self):
-        """闭环从**实验盒**回到快照盒
+        """闭环从**实验盒**回到**链首**
 
         两条约束：
         - 源必须是链的末位（末位 → 首位，首尾相接）；
         - 目标是入口（回到中段就分不出「下一轮从哪儿起」）。
+
+        链首现在是市场信号盒 → 闭环回到它 → 下一轮重新看市场、重新取数。
         """
         feedback = [e for e in _declaration().edges if e.kind == EdgeKind.feedback]
         assert len(feedback) == 1, f"闭环边应该正好一条：{feedback}"
@@ -137,8 +140,8 @@ class TestTheScopeIsWellFormed:
         assert edge.from_box == EXPERIMENT, (
             f"闭环的源是 {edge.from_box}——末位（实验盒）才有资格开下一轮"
         )
-        assert edge.to_box == SNAPSHOT, (
-            f"闭环的目标是 {edge.to_box}——闭环要回到入口（快照盒）"
+        assert edge.to_box == MARKET_SIGNAL, (
+            f"闭环的目标是 {edge.to_box}——闭环要回到**链首**"
         )
         assert edge.no_channel is True, "闭环边不是数据交接，不该有通道"
 

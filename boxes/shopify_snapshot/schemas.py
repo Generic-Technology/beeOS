@@ -37,7 +37,10 @@ from __future__ import annotations
 
 from core.models import FieldDef, SchemaDef
 
-from fulfillment_scopes.shopify.shapes import SNAPSHOT_OUTPUT_SCHEMA
+from fulfillment_scopes.shopify.shapes import (
+    MARKET_SIGNAL_OUTPUT_SCHEMA,
+    SNAPSHOT_OUTPUT_SCHEMA,
+)
 from fulfillment_scopes.shopify.vocabulary import (
     EXCLUDED_ENTRY_PATH_PREFIXES,
     METRIC_STATUS,
@@ -56,6 +59,12 @@ SNAPSHOT_INPUT_SCHEMA = SchemaDef(
                  description="统计窗口起（ISO，**整日**，不含当天未走完的部分）"),
         FieldDef(name="window_end", type="string", required=True,
                  description="统计窗口止（ISO，整日）"),
+        FieldDef(name="market_signal_ref", type="ref:schema_market_signal_output",
+                 required=False,
+                 description="上一跳的市场信号（站外需求）——**没有它，这一轮就只剩店里的数**"),
+        FieldDef(name="strategy", type="enum", required=False,
+                 values=["conversion_lift", "ai_referral"],
+                 description="这一轮打哪种仗——**决定下一轮改哪个落地页**"),
     ],
 )
 
@@ -67,6 +76,12 @@ SNAPSHOT_PLAN_SCHEMA = SchemaDef(
         FieldDef(name="store_domain", type="string", required=True),
         FieldDef(name="window_start", type="string", required=True),
         FieldDef(name="window_end", type="string", required=True),
+        # **要声明出来**——运行时按 schema 投影 payload，没声明的字段会被丢掉
+        FieldDef(name="strategy", type="string", required=False,
+                 description="这一轮打哪种仗"),
+        FieldDef(name="market_signal_ref", type="ref:schema_market_signal_output",
+                 required=False,
+                 description="上一跳的市场信号——**每一跳都要声明，不然会被投影掉**"),
         FieldDef(name="qualified_session_rule", type="string", required=True,
                  description="合格访问的规则文本——写进产出，读者不用回头猜口径"),
         FieldDef(name="excluded_entry_paths", type="array", required=True,
@@ -80,6 +95,9 @@ SNAPSHOT_RAW_SCHEMA = SchemaDef(
     description="观测：这一跳真的取回了什么",
     fields=[
         FieldDef(name="round_id", type="string", required=True),
+        FieldDef(name="strategy", type="string", required=False),
+        FieldDef(name="market_signal_ref", type="ref:schema_market_signal_output",
+                 required=False),
         FieldDef(name="source", type="string", required=True,
                  description="出处：ShopifyQL sessions schema + API 版本 + 查询语句"),
         FieldDef(name="api_version", type="string", required=True),
@@ -116,6 +134,37 @@ SNAPSHOT_RAW_SCHEMA = SchemaDef(
             ],
         ), description="按 session_viewed_product 分组的结果——"
                         "**第四段断点（no_product_view）的依据**"),
+        FieldDef(name="pool_rows", type="array", required=True, items=FieldDef(
+            name="pool_row", type="object", required=True, properties=[
+                FieldDef(name="referrer_source", type="string", required=False),
+                FieldDef(name="agentic_referring_channel", type="string", required=False),
+                FieldDef(name="landing_page_path", type="string", required=False),
+                FieldDef(name="sessions", type="integer", required=True),
+                FieldDef(name="sessions_that_completed_checkout", type="integer", required=True),
+            ],
+        )),
+        FieldDef(name="daily_rows", type="array", required=True, items=FieldDef(
+            name="day_row", type="object", required=True, properties=[
+                FieldDef(name="day", type="string", required=False),
+                FieldDef(name="sessions", type="integer", required=True),
+                FieldDef(name="sessions_that_completed_checkout", type="integer", required=True),
+            ],
+        )),
+        FieldDef(name="site_search_rows", type="array", required=True, items=FieldDef(
+            name="site_search_row", type="object", required=True, properties=[
+                FieldDef(name="search_query", type="string", required=False),
+                FieldDef(name="searches", type="integer", required=True),
+            ],
+        )),
+        FieldDef(name="search_funnel_row", type="object", required=False, properties=[
+            FieldDef(name="sessions_with_searches", type="integer", required=False),
+            FieldDef(name="search_sessions_with_clicks", type="integer", required=False),
+            FieldDef(name="search_sessions_with_cart_additions", type="integer", required=False),
+            FieldDef(name="search_sessions_that_completed_checkout", type="integer", required=False),
+            FieldDef(name="search_click_rate", type="number", required=False),
+            FieldDef(name="search_added_to_cart_rate", type="number", required=False),
+            FieldDef(name="search_conversion_rate", type="number", required=False),
+        ]),
         FieldDef(name="warnings", type="array", required=True,
                  items=FieldDef(name="warning", type="string", required=True),
                  description="Shopify 的非致命警告（如 parseWarnings）——要留痕，不当错误"),
@@ -127,6 +176,8 @@ SNAPSHOT_RAW_SCHEMA = SchemaDef(
 )
 
 ALL_SCHEMAS = [
+    # **声明链首那只盒子的产出形状**——交接通道按「下游声明的形状」校验（D3b）
+    MARKET_SIGNAL_OUTPUT_SCHEMA,
     SNAPSHOT_INPUT_SCHEMA,
     SNAPSHOT_PLAN_SCHEMA,
     SNAPSHOT_RAW_SCHEMA,
@@ -135,6 +186,7 @@ ALL_SCHEMAS = [
 
 __all__ = [
     "ALL_SCHEMAS",
+    "MARKET_SIGNAL_OUTPUT_SCHEMA",
     "SNAPSHOT_INPUT_SCHEMA",
     "SNAPSHOT_PLAN_SCHEMA",
     "SNAPSHOT_RAW_SCHEMA",

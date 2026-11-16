@@ -137,6 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="跑一轮店铺经营闭环")
     parser.add_argument("--days", type=int, default=28, help="回看多少天（默认 28）")
     parser.add_argument("--round-id", default="", help="这一轮的号（默认按窗口推）")
+    parser.add_argument("--strategy", default="conversion_lift",
+                        choices=["conversion_lift", "ai_referral"],
+                        help="这一轮打哪种仗（决定下一轮改哪个落地页）："
+                             "conversion_lift=有成交的商品页优先（默认）；"
+                             "ai_referral=有 AI 引荐流量但零成交的页优先")
     parser.add_argument("--apply", action="store_true",
                         help="让实验盒真的落笔（还需要 %s=1）" % ALLOW_WRITES_ENV)
     parser.add_argument("--store", default="logs/task_runs.jsonl",

@@ -109,6 +109,15 @@ def _facts_for_prompt(snapshot: dict[str, Any]) -> str:
         "top_landing_pages": snapshot.get("top_landing_pages") or [],
         "top_sources": snapshot.get("top_sources") or [],
         "top_search_terms": snapshot.get("top_search_terms") or [],
+        # **流量池**：来源 × AI 渠道 × 落地页，各自带 session 与成交
+        "traffic_pools": snapshot.get("traffic_pools") or [],
+        # **日级序列**：改完之后看方向用的
+        "daily_trend": snapshot.get("daily_trend") or [],
+        # **买家在站内搜什么** + 搜索漏斗——真实买家的需求信号
+        "site_search_terms": snapshot.get("site_search_terms") or [],
+        "search_funnel": snapshot.get("search_funnel") or {},
+        # **站外的公开需求**（上一跳市场信号盒带来）
+        "market_signals": snapshot.get("market_signals") or [],
         "unverified": snapshot.get("unverified") or [],
     }
     return json.dumps(facts, ensure_ascii=False, indent=2)
@@ -136,19 +145,52 @@ def _landing_handles(snapshot: dict[str, Any]) -> set[str]:
     return handles
 
 
+def leaking_pools(snapshot: dict[str, Any], limit: int = 20) -> list[dict[str, Any]]:
+    """**有流量但没成交的池子**——规则算的，不问模型
+
+    「哪个池子在漏水」是**算得出来的**：有 session、成交为 0 的池子就是。
+    算得出来的事不要交给模型（它可能编、也可能漏）。
+
+    返回按 session 降序的池子列表。
+    """
+    out = []
+    for pool in snapshot.get("traffic_pools") or []:
+        sessions = int(pool.get("sessions") or 0)
+        sales = int(pool.get("sessions_that_completed_checkout") or 0)
+        if sessions <= 0 or sales > 0:
+            continue
+        out.append({
+            "referrer_source": str(pool.get("referrer_source") or ""),
+            "agentic_referring_channel": str(pool.get("agentic_referring_channel") or ""),
+            "landing_page_path": str(pool.get("landing_page_path") or ""),
+            "sessions": sessions,
+        })
+    out.sort(key=lambda r: r["sessions"], reverse=True)
+    return out[:limit]
+
+
 def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
     """**下一轮该改哪个落地页——规则说了算，不交给模型**
 
-    规则：**在能改的商品页里**（首页和集合页我们改不了），
-    ① 有成交的优先 ② 成交相同时 session 多的优先。
+    **两条策略**（这一轮打哪种仗由投料声明，见 `TARGET_STRATEGIES`）：
+
+    - `conversion_lift`（默认）：**有成交的商品页**优先。
+      那些页面已经在成交了，改承接的边际收益最大，也最不容易白改。
+    - `ai_referral`：**有 AI 引荐流量但零成交**的商品页优先——
+      用来验证「AI 引荐来的流量能不能变成成交」：
+      那些页面已经在被 AI 引荐了，只是没接住。
 
     **为什么不交给模型**：实测它挑了「11 sessions / 0 成交」那个页面，
     而「11 sessions / 1 成交」的圣诞袜页才是销冠——
     **流量大 ≠ 值得改**。有成交的页面说明意图已经在那儿了，
     承接一改，转化提升的边际收益更大。
 
+    **为什么策略要显式**：换了假设，规则不会自己跟着变。
+    藏在代码里的规则会继续按上一个假设选页。
+
     返回 `(handle, 说明)`。
     """
+    strategy = str(snapshot.get("strategy") or "conversion_lift")
     rows = []
     for row in snapshot.get("top_landing_pages") or []:
         path = str(row.get("landing_page_path") or "")
@@ -157,22 +199,45 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
         handle = path.split("/products/", 1)[1].strip("/")
         if not handle:
             continue
-        rows.append((
-            handle,
-            int(row.get("sessions_that_completed_checkout") or 0),
-            int(row.get("sessions") or 0),
-        ))
+        rows.append({
+            "handle": handle,
+            "sales": int(row.get("sessions_that_completed_checkout") or 0),
+            "sessions": int(row.get("sessions") or 0),
+        })
     if not rows:
         return "", "快照里没有能改的商品页（首页与集合页不在写权限内）"
 
-    # 有成交的优先；都没成交就取流量最大的
-    with_sales = [r for r in rows if r[1] > 0]
+    by_handle = {r["handle"] for r in rows}
+
+    if strategy == "ai_referral":
+        # **有 AI 引荐流量但零成交**的商品页
+        ai_leaks: dict[str, int] = {}
+        for pool in snapshot.get("traffic_pools") or []:
+            channel = str(pool.get("agentic_referring_channel") or "")
+            path = str(pool.get("landing_page_path") or "")
+            if not channel or "/products/" not in path:
+                continue
+            handle = path.split("/products/", 1)[1].strip("/")
+            if handle not in by_handle:
+                continue
+            if int(pool.get("sessions_that_completed_checkout") or 0) > 0:
+                continue
+            ai_leaks[handle] = ai_leaks.get(handle, 0) + int(pool.get("sessions") or 0)
+        if ai_leaks:
+            handle = max(ai_leaks, key=lambda h: ai_leaks[h])
+            return handle, (
+                f"按策略 ai_referral 选：{handle}"
+                f"（AI 引荐 {ai_leaks[handle]} 个 session、零成交）"
+            )
+        strategy = "conversion_lift"  # 没有这类页面 → 退回
+
+    with_sales = [r for r in rows if r["sales"] > 0]
     pool = with_sales or rows
-    best = max(pool, key=lambda r: (r[1], r[2]))
-    handle, sales, sessions = best
+    best = max(pool, key=lambda r: (r["sales"], r["sessions"]))
+    handle, sales, sessions = best["handle"], best["sales"], best["sessions"]
 
     if with_sales:
-        note = f"按规则选：{handle}（成交 {sales}、sessions {sessions}）"
+        note = f"按策略 {strategy} 选：{handle}（成交 {sales}、sessions {sessions}）"
     else:
         note = f"没有任何商品页有成交，按流量选：{handle}（sessions {sessions}）"
     return handle, note
@@ -253,6 +318,10 @@ def diagnosis_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
                 "round_id": input_data["round_id"],
                 "snapshot_ref": snapshot,
                 "conclusion": conclusion,
+                # **漏水的池子在 op2 算**（这里才有快照），
+                # 往下带——op3 手里只有观察结果。
+                "leaking_pools": leaking_pools(snapshot),
+                "strategy": str(snapshot.get("strategy") or ""),
                 "reject_reason": "",
             }
         if attempt == 0:
@@ -360,6 +429,7 @@ def diagnosis_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         reason = str(input_data.get("reject_reason") or "这一轮没有结论")
         return {
             "round_id": round_id,
+            "strategy": str(input_data.get("strategy") or ""),
             "observed_at": _now(),
             "unknowns": [reason],
             "snapshot_ref_present": True,
@@ -378,6 +448,9 @@ def diagnosis_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "prioritized_channel": conclusion["prioritized_channel"],
         "target_landing_page": conclusion["target_landing_page"],
         "unknowns": conclusion["unknowns"],
+        # **规则算的漏水池子**——和模型的判断分开摆，各说各的来路
+        "leaking_pools": input_data.get("leaking_pools") or [],
+        "strategy": str(input_data.get("strategy") or ""),
         "snapshot_ref_present": True,
         "hypothesis_present": True,
         "evidence_validated": True,
