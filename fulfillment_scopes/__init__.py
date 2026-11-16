@@ -26,12 +26,14 @@ from core.fulfillment_scope import handoff_channels
 from core.models import FulfillmentScopeDeclaration, EdgeKind
 
 from fulfillment_scopes.learning.scope import SCOPE as LEARNING_SCOPE
+from fulfillment_scopes.shopify.scope import SCOPE as SHOPIFY_STORE_SCOPE
 from fulfillment_scopes.wms.scope import SCOPE as WMS_SCOPE
 
 #: 协作边界 id → 协作边界声明
 FULFILLMENT_SCOPE_REGISTRY: dict[str, FulfillmentScopeDeclaration] = {
     WMS_SCOPE.id: WMS_SCOPE,
     LEARNING_SCOPE.id: LEARNING_SCOPE,
+    SHOPIFY_STORE_SCOPE.id: SHOPIFY_STORE_SCOPE,
 }
 
 #: 显式声明「不参与任何协作边界」的盒子。

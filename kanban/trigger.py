@@ -58,6 +58,38 @@ from boxes.learning_growth.measure import COMPUTERS as LEARNING_GROWTH_COMPUTERS
 from boxes.learning_growth.runner import RUNNER as LEARNING_GROWTH_RUNNER
 from boxes.learning_growth import get_definition as get_learning_growth_definition
 from boxes.learning_math import get_beeline as get_learning_math_beeline
+from boxes.shopify_snapshot import get_beeline as get_shopify_snapshot_beeline
+from boxes.shopify_snapshot import get_definition as get_shopify_snapshot_definition
+from boxes.shopify_snapshot.runner import RUNNER as SHOPIFY_SNAPSHOT_RUNNER
+from boxes.shopify_snapshot import ASSEMBLED as SHOPIFY_SNAPSHOT_ASSEMBLED
+from boxes.shopify_traffic_diagnosis import (
+    get_beeline as get_shopify_traffic_diagnosis_beeline,
+)
+from boxes.shopify_traffic_diagnosis import (
+    get_definition as get_shopify_traffic_diagnosis_definition,
+)
+from boxes.shopify_traffic_diagnosis.runner import (
+    RUNNER as SHOPIFY_TRAFFIC_DIAGNOSIS_RUNNER,
+)
+from boxes.shopify_traffic_diagnosis import (
+    ASSEMBLED as SHOPIFY_TRAFFIC_DIAGNOSIS_ASSEMBLED,
+)
+from boxes.shopify_acquisition_experiment import (
+    get_beeline as get_shopify_acquisition_experiment_beeline,
+)
+from boxes.shopify_acquisition_experiment import (
+    get_definition as get_shopify_acquisition_experiment_definition,
+)
+from boxes.shopify_acquisition_experiment.runner import (
+    RUNNER as SHOPIFY_ACQUISITION_EXPERIMENT_RUNNER,
+)
+from boxes.shopify_acquisition_experiment import (
+    ASSEMBLED as SHOPIFY_ACQUISITION_EXPERIMENT_ASSEMBLED,
+)
+from boxes.shopify_archive import get_beeline as get_shopify_archive_beeline
+from boxes.shopify_archive import get_definition as get_shopify_archive_definition
+from boxes.shopify_archive.runner import RUNNER as SHOPIFY_ARCHIVE_RUNNER
+from boxes.shopify_archive import ASSEMBLED as SHOPIFY_ARCHIVE_ASSEMBLED
 from boxes.learning_math.measure import COMPUTERS as LEARNING_MATH_COMPUTERS
 from boxes.learning_math.runner import RUNNER as LEARNING_MATH_RUNNER
 from boxes.learning_math import get_definition as get_learning_math_definition
@@ -167,6 +199,22 @@ BOX_REGISTRY: dict[
         get_learning_english_definition,
         {"beeline_learning_english_v2": get_learning_english_beeline},
     ),
+    "shopify_snapshot_box": (
+        get_shopify_snapshot_definition,
+        {"beeline_shopify_snapshot_v1": get_shopify_snapshot_beeline},
+    ),
+    "shopify_traffic_diagnosis_box": (
+        get_shopify_traffic_diagnosis_definition,
+        {"beeline_shopify_traffic_diagnosis_v1": get_shopify_traffic_diagnosis_beeline},
+    ),
+    "shopify_acquisition_experiment_box": (
+        get_shopify_acquisition_experiment_definition,
+        {"beeline_shopify_acquisition_experiment_v1": get_shopify_acquisition_experiment_beeline},
+    ),
+    "shopify_archive_box": (
+        get_shopify_archive_definition,
+        {"beeline_shopify_archive_v1": get_shopify_archive_beeline},
+    ),
 }
 
 # box_id → 指标采集算法表。跟 BOX_REGISTRY 一一对应：
@@ -185,6 +233,13 @@ METRIC_COMPUTERS: dict[str, dict[str, core_metrics.Computer]] = {
     "learning_math_box": LEARNING_MATH_COMPUTERS,
     "learning_chinese_box": LEARNING_CHINESE_COMPUTERS,
     "learning_english_box": LEARNING_ENGLISH_COMPUTERS,
+    # **这四只盒子不声明指标**（skeleton + 指标是承诺不是事实），
+    # 所以它们的采集器表是空的——但**必须在这里占一个位置**：
+    # 「注册了盒子却不给采集器」和「没注册」在看板上是两件事。
+    "shopify_snapshot_box": {},
+    "shopify_traffic_diagnosis_box": {},
+    "shopify_acquisition_experiment_box": {},
+    "shopify_archive_box": {},
 }
 
 # box_id → 该盒自带的 op 实现。
@@ -204,6 +259,10 @@ RUNNER_REGISTRY: dict[str, HandlerRunner] = {
     "learning_math_box": LEARNING_MATH_RUNNER,
     "learning_chinese_box": LEARNING_CHINESE_RUNNER,
     "learning_english_box": LEARNING_ENGLISH_RUNNER,
+    "shopify_snapshot_box": SHOPIFY_SNAPSHOT_RUNNER,
+    "shopify_traffic_diagnosis_box": SHOPIFY_TRAFFIC_DIAGNOSIS_RUNNER,
+    "shopify_acquisition_experiment_box": SHOPIFY_ACQUISITION_EXPERIMENT_RUNNER,
+    "shopify_archive_box": SHOPIFY_ARCHIVE_RUNNER,
 }
 
 #: box_id → 该盒装配时**冻结**的插件上下文（类型表 / 扩展点表 / 实现表的快照）
@@ -225,6 +284,10 @@ PLUGIN_CONTEXT_REGISTRY: dict[str, PluginContext] = {
     "learning_math_box": LEARNING_MATH_ASSEMBLED.plugin_context,
     "learning_chinese_box": LEARNING_CHINESE_ASSEMBLED.plugin_context,
     "learning_english_box": LEARNING_ENGLISH_ASSEMBLED.plugin_context,
+    "shopify_snapshot_box": SHOPIFY_SNAPSHOT_ASSEMBLED.plugin_context,
+    "shopify_traffic_diagnosis_box": SHOPIFY_TRAFFIC_DIAGNOSIS_ASSEMBLED.plugin_context,
+    "shopify_acquisition_experiment_box": SHOPIFY_ACQUISITION_EXPERIMENT_ASSEMBLED.plugin_context,
+    "shopify_archive_box": SHOPIFY_ARCHIVE_ASSEMBLED.plugin_context,
 }
 
 # ~~Box 元信息（展示位）~~
@@ -730,6 +793,44 @@ _EXAMPLE_PAYLOADS: dict[tuple[str, str], dict[str, Any]] = {
         "source_kind": "observed",
         "dictation_score": 18,
         "dictation_total": 20,
+    },
+    # ---- 店铺经营协作边界 ----
+    #
+    # 示例投料**必须投得出去**：契约校验会按本盒声明的形状查，
+    # 里面那份快照/诊断也得满足下游盒声明的形状。
+    ("shopify_snapshot_box", "capture_store_snapshot"): {
+        "round_id": "giftsjourneyrebirth@2026-W47",
+        "store_domain": "giftsjourneyrebirth.myshopify.com",
+        "window_start": "2026-10-18",
+        "window_end": "2026-11-14",
+    },
+    ("shopify_traffic_diagnosis_box", "diagnose_traffic"): {
+        "snapshot_ref": {
+            "round_id": "giftsjourneyrebirth@2026-W47",
+            "observed_at": "2026-11-14T12:00:00+00:00",
+            "window_start": "2026-10-18",
+            "window_end": "2026-11-14",
+            "store_domain": "giftsjourneyrebirth.myshopify.com",
+            "api_version": "2026-01",
+            "qualified_session_rule": "真人 session 且首个落地页不在排除清单里",
+            "excluded_entry_paths": ["/account/"],
+            "metrics": [],
+            "data_present": False,
+            "metric_status_complete": False,
+            "source_present": False,
+            "top_landing_pages": [],
+            "top_sources": [],
+            "top_search_terms": [],
+        },
+    },
+    ("shopify_acquisition_experiment_box", "run_acquisition_experiment"): {
+        "diagnosis_ref": {
+            "round_id": "giftsjourneyrebirth@2026-W47",
+            "observed_at": "2026-11-14T12:00:00+00:00",
+            "snapshot_ref_present": True,
+            "hypothesis_present": False,
+            "evidence_validated": False,
+        },
     },
     ("wms_design_box", "handle_design_request"): {
         # **需求集整个装在 ref: 字段里**——设计盒的投料走接力通道，

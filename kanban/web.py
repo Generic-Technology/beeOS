@@ -2355,6 +2355,8 @@ const VS_PALETTE = {{
   'Expense Reimbursement': {{ core: '13,148,136', edge: '15,118,110' }},
   // 学习线走玫红：跟上面四条都不撞，一屏上分得开是它的老问题
   'Learning': {{ core: '219,39,119', edge: '190,24,93' }},
+  // 店铺经营线走石板蓝：跟紫、青、琥珀、玫红都不撞
+  'Shopify Store': {{ core: '71,85,105', edge: '51,65,85' }},
 }};
 
 function vsPalette(box) {{

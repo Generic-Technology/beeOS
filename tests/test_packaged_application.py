@@ -64,4 +64,4 @@ print(json.dumps(sorted(assemblies)))
         cwd=tmp_path, capture_output=True, text=True, timeout=30,
     )
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
-    assert json.loads(smoke.stdout) == ["Learning", "WMS"]
+    assert json.loads(smoke.stdout) == ["Learning", "WMS", "shopify_store"]
