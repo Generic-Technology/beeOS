@@ -319,6 +319,7 @@ python scripts/new_box.py --help
   - `standardization_audit.py` — 标准化审计
   - `probe_shopifyql.py` — ShopifyQL 只读取数探测（哪些指标真取得到）
   - `run_shopify_round.py` — 跑一轮店铺经营闭环（快照 → 诊断 → 实验 → 档案）
+  - `connect_platform.py` — 接一个站外平台（凭证 → 用盒子的那条路验证 → 落盘到仓库外）
   - `shopify_oauth_token.py` — 换一张 Shopify Admin API token（OAuth 授权码流程）
   - `rollback_shopify_experiment.py` — 把某个商品页改回改之前的样子（用改前基线回滚）
 

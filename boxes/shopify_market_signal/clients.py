@@ -248,8 +248,16 @@ class RedditClient:
 
     `client_credentials` 授权：**不需要用户账号密码** → 只要注册一个 app
     拿到 client_id / client_secret 就行。
+    （Reddit 官方：script 类应用 = confidential client，正好用这个授权方式；
+    请求要打到 `oauth.reddit.com`，不是 www。）
 
     我们只看**公开子版**的公开搜索结果，产出只到「需求主题 + 出处」这一层。
+
+    ## User-Agent 必须按 Reddit 的格式写
+
+    Reddit 官方要求：`<platform>:<app ID>:<version> (by /u/<用户名>)`，
+    并明确说「默认的 User-Agent（如 Python/urllib）会被**大幅限制**」。
+    → 这里默认按格式拼一个，联系方式用 `REDDIT_USER_AGENT` 覆盖。
     """
 
     TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
@@ -257,19 +265,27 @@ class RedditClient:
 
     DEFAULT_SUBS = ["gifts", "petloss", "Christmas", "PersonalizedGifts"]
 
+    #: 按 Reddit 要求的格式拼的默认 User-Agent
+    DEFAULT_USER_AGENT = "linux:beeos-market-signal:v0.1 (by /u/giftsjourneyrebirth)"
+
     def __init__(
         self,
         client_id: str = "",
         client_secret: str = "",
         subs: Optional[list[str]] = None,
-        user_agent: str = "beeOS-market-signal/0.1",
+        user_agent: str = "",
         opener: Optional[Callable[[urllib.request.Request, float], Any]] = None,
         now: Callable[[], str] = _now_iso,
     ) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
         self.subs = subs or list(self.DEFAULT_SUBS)
-        self.user_agent = user_agent
+        # **环境变量优先**——联系方式（Reddit 用户名）各人不同
+        self.user_agent = (
+            user_agent
+            or os.environ.get("REDDIT_USER_AGENT", "").strip()
+            or self.DEFAULT_USER_AGENT
+        )
         self.opener = opener
         self.now = now
 

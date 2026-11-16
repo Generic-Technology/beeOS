@@ -234,40 +234,24 @@ class _FakeStore:
         return self._records[:limit]
 
 
-def test_a_long_sentence_is_not_used_as_a_search_keyword():
-    """**搜的是需求词，不是假设句**
+def test_the_market_search_words_are_the_store_category_words():
+    """**站外搜索用店里的品类词**
 
-    拿一句人话去 GSC / Reddit 里搜，搜出来的是零。
+    诊断产出里有两类词，都**不是**买家会打的字：
+    渠道词（`direct` / `自然搜索`）、假设句（一整句人话）。
+    拿它们去 GSC / Reddit 里搜，搜出来的是零。
     """
-    records = [{
-        "box_id": "shopify_traffic_diagnosis_box",
-        "artifact": {
-            "target_scenario": "访客从首页进入店铺，但未继续进入商品详情页了解定制选项。",
-            "prioritized_channel": "direct",
-        },
-    }]
-    words = script._keywords_from_last_diagnosis(_FakeStore(records))
-    assert "direct" in words
-    assert all(len(w) <= 40 for w in words), words
+    words = script._market_keywords("")
+    assert words == script.DEFAULT_KEYWORDS, words
+    assert all(" " in w or w.isalpha() for w in words), words
+    assert "direct" not in words
+    assert not any(len(w) > 40 for w in words), words
 
 
-def test_the_newest_diagnosis_wins():
-    """**最新的那一轮才是「上一轮」**
-
-    `list_recent` 已经倒序（新的在前）——再往前翻就拿到更老的那轮了。
-    """
-    records = [
-        {   # 新
-            "box_id": "shopify_traffic_diagnosis_box",
-            "artifact": {"prioritized_channel": "new_channel"},
-        },
-        {   # 旧
-            "box_id": "shopify_traffic_diagnosis_box",
-            "artifact": {"prioritized_channel": "old_channel"},
-        },
-    ]
-    words = script._keywords_from_last_diagnosis(_FakeStore(records))
-    assert words == ["new_channel"], words
+def test_explicit_words_win_over_the_defaults():
+    """想搜什么就显式给什么"""
+    words = script._market_keywords("personalized stocking, custom mug")
+    assert words == ["personalized stocking", "custom mug"]
 
 
 # ============================================================

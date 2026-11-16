@@ -146,35 +146,24 @@ def _market_platforms(explicit: str, csv_override: str = "") -> tuple[list[str],
     return platforms, csv_path
 
 
-def _keywords_from_last_diagnosis(store: TaskRunStore) -> list[str]:
-    """**从上一轮诊断里拿要找什么**——上一轮说的断点，就是这一轮要找的信号
+def _market_keywords(explicit: str) -> list[str]:
+    """**站外搜索用什么词**——店里的品类词，不是诊断里的渠道词
 
-    `list_recent` 已经按时间**倒序**（新的在前），
-    所以从头扫、碰到第一条诊断就停——再往前翻就拿到更老的那轮了。
+    诊断产出里有两类词：
+    - **渠道词**（`direct` / `自然搜索`）——那是**我们从哪拿流量**，
+      拿去 Reddit 搜「direct」搜出来的是零；
+    - **假设句**（`target_scenario`，一句人话）——那是**我们对店里的判断**，
+      拿去搜也是零。
 
-    **只取「词」，不取整句**：`target_scenario` 是一句人话
-    （「访客从首页…未继续进入商品详情页…」），
-    拿它去 GSC / Reddit 里搜，搜出来的是零——
-    **搜的是需求词，不是假设句**。
-    所以短的（≤ 40 字，像 `direct` 这样的渠道词）才收，
-    长句一律丢掉，退回店里的品类词。
+    **站外搜索要的是「买家会打的那几个字」**——
+    所以默认用店里的品类词（`DEFAULT_KEYWORDS`），
+    想加别的就 `--keywords` 显式给。
+
+    （店内的需求信号走的是另一条路：站内搜索词，
+    那是**已经进了店**的买家打的字——见 `demand_match` 策略。）
     """
-    try:
-        records = store.list_recent(limit=60)
-    except Exception:
-        return []
-    out: list[str] = []
-    for record in records:
-        if record.get("box_id") != "shopify_traffic_diagnosis_box":
-            continue
-        artifact = record.get("artifact") or {}
-        for key in ("prioritized_channel", "target_scenario"):
-            value = str(artifact.get(key) or "").strip()
-            if value and len(value) <= 40 and value not in out:
-                out.append(value)
-        if out:
-            break
-    return out[:4]
+    words = [w.strip() for w in explicit.split(",") if w.strip()]
+    return words or list(DEFAULT_KEYWORDS)
 
 
 def _recently_changed_pages(store: TaskRunStore, days: int = 14) -> list[str]:
@@ -474,9 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[round] 轮次={round_id} 窗口={start}..{end}", file=sys.stderr)
 
     # ---- 0) 市场信号（链首）：站外的公开需求 ----
-    keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
-    if not keywords:
-        keywords = _keywords_from_last_diagnosis(store) or DEFAULT_KEYWORDS
+    keywords = _market_keywords(args.keywords)
     platforms, gsc_csv = _market_platforms(args.platforms, args.gsc_csv)
     market = trigger_task(
         "shopify_market_signal_box", "capture_market_signals",
