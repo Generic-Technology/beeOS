@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """scripts/run_shopify_round.py —— 跑一轮店铺经营闭环
 
-**一条命令跑完这一轮**：快照 → 诊断 → 获客实验 → 经营档案（三次投递）。
+**一条命令跑完这一轮**：市场信号 → 快照 → 诊断 → 获客实验 → 经营档案（三次投递）。
 
 ```
+shopify_market_signal_box
+        ↓  market_signal_ref
 shopify_snapshot_box
         ↓  snapshot_ref
 shopify_traffic_diagnosis_box
@@ -17,6 +19,13 @@ shopify_archive_box   （快照/诊断/实验各投一次 → 同一条经营记
 （`fulfillment_scopes/shopify/scope.py` 是唯一事实源）。
 脚本只负责「按声明发起交接」。
 
+## 站外需求拿不到，**链照跑**
+
+市场信号是**可选上下文**（还没配凭证 → 交不出来）。
+它没交付，这一轮就只带店里的数，诊断把站外需求记成未知项——
+**链不该因为「没配凭证」而断**，那是去配凭证的事，
+不是「这一轮做不成」。
+
 ## 默认是**只读 + 出方案**
 
 不加 `--apply` 时，实验盒**不写店里的页面**：它只起草内容，
@@ -29,6 +38,12 @@ python scripts/run_shopify_round.py --apply
 
 外加投料里的逐次意图（`--apply` 就是它）。
 **只配了写权限 token ≠ 允许写**——两件事必须分别显式开。
+
+## 这一轮打哪种仗
+
+`--strategy conversion_lift`（默认，有成交的商品页优先）
+或 `--strategy ai_referral`（有 AI 引荐但零成交的商品页优先）。
+**策略要投进快照**——诊断盒是从快照产出里读它的。
 
 ## 凭证只从环境变量读
 
@@ -86,6 +101,46 @@ def _round_id(store_domain: str, window_end: str) -> str:
     return f"{shop}@{year}-W{week:02d}"
 
 
+#: 默认关键词（店里的品类词）
+DEFAULT_KEYWORDS = [
+    "personalized christmas stocking",
+    "pet memorial gift",
+    "custom pet portrait gift",
+    "personalized gift for him",
+]
+
+
+def _keywords_from_last_diagnosis(store: TaskRunStore) -> list[str]:
+    """**从上一轮诊断里拿要找什么**——上一轮说的断点，就是这一轮要找的信号
+
+    `list_recent` 已经按时间**倒序**（新的在前），
+    所以从头扫、碰到第一条诊断就停——再往前翻就拿到更老的那轮了。
+
+    **只取「词」，不取整句**：`target_scenario` 是一句人话
+    （「访客从首页…未继续进入商品详情页…」），
+    拿它去 GSC / Reddit 里搜，搜出来的是零——
+    **搜的是需求词，不是假设句**。
+    所以短的（≤ 40 字，像 `direct` 这样的渠道词）才收，
+    长句一律丢掉，退回店里的品类词。
+    """
+    try:
+        records = store.list_recent(limit=60)
+    except Exception:
+        return []
+    out: list[str] = []
+    for record in records:
+        if record.get("box_id") != "shopify_traffic_diagnosis_box":
+            continue
+        artifact = record.get("artifact") or {}
+        for key in ("prioritized_channel", "target_scenario"):
+            value = str(artifact.get(key) or "").strip()
+            if value and len(value) <= 40 and value not in out:
+                out.append(value)
+        if out:
+            break
+    return out[:4]
+
+
 def _artifact(run: dict[str, Any]) -> dict[str, Any]:
     """这次履约的产出
 
@@ -137,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="跑一轮店铺经营闭环")
     parser.add_argument("--days", type=int, default=28, help="回看多少天（默认 28）")
     parser.add_argument("--round-id", default="", help="这一轮的号（默认按窗口推）")
+    parser.add_argument("--keywords", default="",
+                        help="这一轮要找什么需求（逗号分隔）。"
+                             "不给就从上一轮诊断的假设里拿")
     parser.add_argument("--strategy", default="conversion_lift",
                         choices=["conversion_lift", "ai_referral"],
                         help="这一轮打哪种仗（决定下一轮改哪个落地页）："
@@ -175,7 +233,47 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[round] 轮次={round_id} 窗口={start}..{end}", file=sys.stderr)
 
-    # ---- 1) 快照 ----
+    # ---- 0) 市场信号（链首）：站外的公开需求 ----
+    keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
+    if not keywords:
+        keywords = _keywords_from_last_diagnosis(store) or DEFAULT_KEYWORDS
+    market = trigger_task(
+        "shopify_market_signal_box", "capture_market_signals",
+        {
+            "round_id": round_id,
+            "keywords": keywords,
+            "platforms": [],          # 空 = 不去任何地方（默认；给了就显式填）
+            "window_days": args.days,
+        },
+        store,
+        chain_ref=round_id, chain_kind="operating_round",
+    )
+    print(f"[round] 市场信号: {market['status']}/{market['acceptance_status']}"
+          f" | 关键词={keywords}", file=sys.stderr)
+    market_result = _artifact(market)
+    for st in market_result.get("platform_status") or []:
+        print(f"         {st.get('platform')}: {st.get('status')}"
+              f" {st.get('detail')}", file=sys.stderr)
+    if market_result.get("signals"):
+        print(f"         取到 {len(market_result['signals'])} 条需求信号",
+              file=sys.stderr)
+
+    # ---- 1) 快照（接住市场信号）----
+    #
+    # **市场信号是「可选上下文」**：它没交付，链不该断。
+    # 断链的理由是「没取到信号」（还没配凭证），
+    # 那是要去配凭证的事，不是「这一轮做不成」。
+    # 但**接上去的东西必须是真的**——所以只有它真的交付了才交接。
+    market_handoff = {}
+    if market.get("status") == "completed" and market.get("acceptance_status") == "accepted":
+        market_handoff = handoff_payload(
+            SCOPE_ID, SNAPSHOT, {"shopify_market_signal_box": market["task_run_id"]}
+        )
+    else:
+        print("[round] 市场信号这次没交付（站外需求拿不到）"
+              "→ 快照只带店里的数，诊断会把站外需求记成未知项",
+              file=sys.stderr)
+
     snapshot = trigger_task(
         SNAPSHOT, "capture_store_snapshot",
         {
@@ -183,8 +281,14 @@ def main(argv: list[str] | None = None) -> int:
             "store_domain": domain,
             "window_start": start,
             "window_end": end,
+            # **策略要投进去**：诊断盒是从快照产出里读策略的，
+            # 不投 → 策略永远是空 → 规则一律退回 conversion_lift，
+            # 「这一轮打哪种仗」就成了命令行上的摆设。
+            "strategy": args.strategy,
         },
         store,
+        handoff=market_handoff,
+        chain_ref=round_id, chain_kind="operating_round",
     )
     print(_line("快照", snapshot), file=sys.stderr)
     snap_result = _require_result("快照盒", snapshot)
