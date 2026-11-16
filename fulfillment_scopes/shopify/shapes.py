@@ -298,8 +298,15 @@ DIAGNOSIS_OUTPUT_SCHEMA = SchemaDef(
             "「哪个池子在漏水」是算得出来的，就不要交给模型"
         )),
         FieldDef(name="strategy", type="string", required=False,
-                 description="这一轮打哪种仗（conversion_lift / ai_referral）——"
+                 description="这一轮打哪种仗（conversion_lift / ai_referral / demand_match）——"
                              "目标页是按它挑的"),
+        FieldDef(name="target_demand_query", type="string", required=False,
+                 description="**买家在站内搜的那个词**（demand_match 策略命中时才有）——"
+                             "真实买家打出来的字，下游要照着它写"),
+        FieldDef(name="target_keywords", type="array", required=False,
+                 items=FieldDef(name="keyword", type="string", required=True),
+                 description="这一轮要接住的买家用词——**从买家搜的词里来**，"
+                             "不是我们自己想出来的词"),
         FieldDef(name="snapshot_ref_present", type="boolean", required=True,
                  description="接住了上游快照——这是**前提**，不是结论"),
         FieldDef(name="hypothesis_present", type="boolean", required=True,

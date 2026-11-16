@@ -165,9 +165,22 @@ class ShopifyWriter:
             for e in (result.get("userErrors") or [])
         ]
         applied = dict(result.get("product") or {})
+        stored = _flatten(applied)
+        # **没报错 ≠ 写进去了**——
+        # 实测：seo.title 跟商品标题一模一样时，Shopify 把它**静默存成 null**，
+        # 不报 userErrors。所以「写成功」要看**存下来的值**，不是看有没有报错。
+        #
+        # **只判「写了非空、存成空」**——不判「值不一样」：
+        # Shopify 会给标签排序、给正文补 HTML 属性，
+        # 值不一样不代表没写进去；**存成空才是被吞掉的signature**。
+        not_stuck = [
+            key for key, value in allowed.items()
+            if value not in (None, "") and stored.get(key) in (None, "")
+        ]
         return {
-            "applied_fields": _flatten(applied),
+            "applied_fields": stored,
             "user_errors": errors,
+            "not_stuck": not_stuck,
         }
 
     # ---- HTTP ----

@@ -136,7 +136,13 @@ def _metric_names(snapshot: dict[str, Any]) -> set[str]:
 def _landing_handles(snapshot: dict[str, Any]) -> set[str]:
     """落地页候选的 handle（从 `/products/<handle>` 里取）"""
     handles: set[str] = set()
-    for row in snapshot.get("top_landing_pages") or []:
+    # **全部落地页**（`landing_funnel`），不只是前 25 名——
+    # 模型选中的那一页未必在流量前 25 里
+    # （「买家搜了却没搜到」的那一页，流量往往很小）。
+    page_rows = list(snapshot.get("landing_funnel") or []) or list(
+        snapshot.get("top_landing_pages") or []
+    )
+    for row in page_rows:
         path = str(row.get("landing_page_path") or "")
         if "/products/" in path:
             handle = path.split("/products/", 1)[1].strip("/")
@@ -169,16 +175,138 @@ def leaking_pools(snapshot: dict[str, Any], limit: int = 20) -> list[dict[str, A
     return out[:limit]
 
 
+#: **虚词**——不算「像」，也不该塞进标题
+#:
+#: 「personalized globe lamp **with** speaker」里的 with，
+#: 写进标题没人会搜；而它出现在 handle 里会让匹配分虚高。
+_STOPWORDS = frozenset({
+    "with", "and", "for", "the", "your", "from", "of", "in", "on", "to",
+    "my", "me", "by", "at", "is", "it", "this", "that", "or", "a", "an",
+    "be", "are", "was", "so", "if", "as", "no", "not", "do", "does",
+})
+
+
+def _tokens(text: str) -> set[str]:
+    """把一段文字切成可比的小写词
+
+    **只用字母数字分词**——中文/标点连在一起，
+    「globe lamp」和「globe-lamp」得算同一个词。
+    **虚词剔掉**——「with」出现在两边不算「像」。
+    """
+    raw = str(text or "").lower()
+    out: set[str] = set()
+    buf: list[str] = []
+    for ch in raw:
+        if ch.isalnum():
+            buf.append(ch)
+        else:
+            if len(buf) >= 2:
+                out.add("".join(buf))
+            buf = []
+    if len(buf) >= 2:
+        out.add("".join(buf))
+    return out - _STOPWORDS
+
+
+def _demand_matched_page(
+    snapshot: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> tuple[str, int, str] | None:
+    """**买家搜的词最像它、但它零成交**的那一页
+
+    **为什么用站内的搜索词**：那是**真实买家**打出来的字——
+    比任何爬来的线索都强，而且零合规风险。
+
+    **怎么算「像」**：买家搜的词 ∩ 这一页的 handle（标题的代理）
+    命中的词越多，说明这一页就是他搜的那个东西。
+    **只看字面，不猜语义**——「crystal ball」是不是「globe」，
+    规则不猜（猜错了就会改错页）。
+
+    **门槛**：至少命中 2 个词才算「像」——
+    命中 1 个多半是巧合（很多 handle 都有 personalized）。
+
+    **排序**：先看零成交（需求在那儿却没接住），再看命中数，
+    最后看 session 数。
+
+    返回 `(handle, 命中词数, 买家的那个词)`。
+    """
+    terms = [
+        str(t.get("query") or "").strip()
+        for t in (snapshot.get("site_search_terms") or [])
+        if str(t.get("query") or "").strip()
+    ]
+    if not terms:
+        return None
+
+    # 候选页：**有流量**的（没流量的页改了也没人看见）
+    candidates = [r for r in rows if r["sessions"] > 0]
+    if not candidates:
+        return None
+
+    best: tuple[str, int, str] | None = None
+    best_key: tuple[int, int, int] = (0, 0, 0)
+    for row in candidates:
+        handle_tokens = _tokens(row["handle"])
+        if not handle_tokens:
+            continue
+        for query in terms:
+            overlap = _tokens(query) & handle_tokens
+            if len(overlap) < 2:
+                continue
+            # **零成交优先**：有成交的页面说明它接住了需求
+            zero_sales = 1 if row["sales"] == 0 else 0
+            key = (zero_sales, len(overlap), row["sessions"])
+            if key > best_key:
+                best_key = key
+                best = (row["handle"], len(overlap), query)
+    return best
+
+
+def _demand_keywords(snapshot: dict[str, Any], handle: str) -> dict[str, Any]:
+    """**这一轮要接住的买家用词**
+
+    **从买家搜的词里来**——不是我们自己想出来的词。
+    命中目标页的那几个词，就是买家打字时用的词；
+    页面照着这些词写，站内搜索和 AI 引荐才接得上。
+
+    - `query`：买家打的那一句（原样）
+    - `keywords`：那句话里的词（去掉 1 个字母的碎片）
+
+    找不到就返回空——**没有需求词就说没有**，
+    不许拿店里的品类词来充数（那是另一回事）。
+    """
+    if not handle:
+        return {}
+    handle_tokens = _tokens(handle)
+    best: tuple[int, str, set[str]] | None = None
+    for term in snapshot.get("site_search_terms") or []:
+        query = str(term.get("query") or "").strip()
+        if not query:
+            continue
+        overlap = _tokens(query) & handle_tokens
+        if len(overlap) < 2:
+            continue
+        if best is None or len(overlap) > best[0]:
+            best = (len(overlap), query, overlap)
+    if best is None:
+        return {}
+    _score, query, overlap = best
+    return {"query": query, "keywords": sorted(overlap)}
+
+
 def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
     """**下一轮该改哪个落地页——规则说了算，不交给模型**
 
-    **两条策略**（这一轮打哪种仗由投料声明，见 `TARGET_STRATEGIES`）：
+    **三种策略**（这一轮打哪种仗由投料声明，见 `TARGET_STRATEGIES`）：
 
     - `conversion_lift`（默认）：**有成交的商品页**优先。
       那些页面已经在成交了，改承接的边际收益最大，也最不容易白改。
     - `ai_referral`：**有 AI 引荐流量但零成交**的商品页优先——
       用来验证「AI 引荐来的流量能不能变成成交」：
       那些页面已经在被 AI 引荐了，只是没接住。
+    - `demand_match`：**买家在站内搜的词最像它、但它零成交**的商品页优先。
+      站内的搜索词是**真实买家**打出来的：
+      搜了 → 点了 → 没买成 = 需求在那儿，页面没接住。
 
     **为什么不交给模型**：实测它挑了「11 sessions / 0 成交」那个页面，
     而「11 sessions / 1 成交」的圣诞袜页才是销冠——
@@ -192,7 +320,13 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
     """
     strategy = str(snapshot.get("strategy") or "conversion_lift")
     rows = []
-    for row in snapshot.get("top_landing_pages") or []:
+    # **`landing_funnel` 优先**：它有**全部**落地页，
+    # 而 `top_landing_pages` 只有流量前 25 名——
+    # 「买家搜了却没搜到」的那一页，流量往往很小，排不进前 25。
+    page_rows = list(snapshot.get("landing_funnel") or []) or list(
+        snapshot.get("top_landing_pages") or []
+    )
+    for row in page_rows:
         path = str(row.get("landing_page_path") or "")
         if "/products/" not in path:
             continue
@@ -208,6 +342,17 @@ def choose_landing_page(snapshot: dict[str, Any]) -> tuple[str, str]:
         return "", "快照里没有能改的商品页（首页与集合页不在写权限内）"
 
     by_handle = {r["handle"] for r in rows}
+
+    if strategy == "demand_match":
+        picked = _demand_matched_page(snapshot, rows)
+        if picked:
+            handle, score, query = picked
+            return handle, (
+                f"按策略 demand_match 选：{handle}"
+                f"（买家站内搜的「{query}」最像它，命中 {score} 个词，"
+                f"但它零成交）"
+            )
+        strategy = "conversion_lift"  # 没有匹配上的页 → 退回
 
     if strategy == "ai_referral":
         # **有 AI 引荐流量但零成交**的商品页
@@ -314,6 +459,9 @@ def diagnosis_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
                     f"模型挑的是 {model_pick}（它不知道哪个页面在成交）"
                 ]
             conclusion["target_landing_page"] = handle
+            # **这一轮要接住的买家用词**——从买家搜的词里来，
+            # 下游照着它写页面（不是我们自己想出来的词）。
+            demand = _demand_keywords(snapshot, handle)
             return {
                 "round_id": input_data["round_id"],
                 "snapshot_ref": snapshot,
@@ -322,6 +470,8 @@ def diagnosis_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
                 # 往下带——op3 手里只有观察结果。
                 "leaking_pools": leaking_pools(snapshot),
                 "strategy": str(snapshot.get("strategy") or ""),
+                "target_demand_query": demand.get("query") or "",
+                "target_keywords": demand.get("keywords") or [],
                 "reject_reason": "",
             }
         if attempt == 0:
@@ -451,6 +601,9 @@ def diagnosis_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         # **规则算的漏水池子**——和模型的判断分开摆，各说各的来路
         "leaking_pools": input_data.get("leaking_pools") or [],
         "strategy": str(input_data.get("strategy") or ""),
+        # **买家搜的那句话 + 这一轮要接住的词**（demand_match 时才有）
+        "target_demand_query": str(input_data.get("target_demand_query") or ""),
+        "target_keywords": list(input_data.get("target_keywords") or []),
         "snapshot_ref_present": True,
         "hypothesis_present": True,
         "evidence_validated": True,

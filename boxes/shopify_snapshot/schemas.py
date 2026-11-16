@@ -63,7 +63,7 @@ SNAPSHOT_INPUT_SCHEMA = SchemaDef(
                  required=False,
                  description="上一跳的市场信号（站外需求）——**没有它，这一轮就只剩店里的数**"),
         FieldDef(name="strategy", type="enum", required=False,
-                 values=["conversion_lift", "ai_referral"],
+                 values=["conversion_lift", "ai_referral", "demand_match"],
                  description="这一轮打哪种仗——**决定下一轮改哪个落地页**"),
     ],
 )

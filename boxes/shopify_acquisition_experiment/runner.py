@@ -34,6 +34,7 @@ op 链：
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -64,6 +65,8 @@ _DRAFT_PROMPT = """\
 主问题假设：{hypothesis}
 当前标题：{current_title}
 当前正文（前 800 字）：{current_description}
+买家在站内搜的词：{demand_query}
+这一轮要接住的词：{demand_keywords}
 
 【硬要求】
 0. **用商品页现在的语言写**——照着「当前标题 / 当前正文」是什么语言，
@@ -82,6 +85,21 @@ _DRAFT_PROMPT = """\
 4. 只用 JSON 回答：
 {{"title": "...", "descriptionHtml": "...", "seoTitle": "...",
   "seoDescription": "...", "tags": ["..."]}}
+
+【买家搜的词怎么用】
+5. 「这一轮要接住的词」是**真实买家在店里打出来的字**——
+   标题和正文要**自然地包含这些词**，
+   这样买家搜同样的词时才搜得到我们（站内搜索、搜索引擎、AI 引荐都靠这个）。
+6. **但不许为了塞词而写假话**：只有当那个词说的确实是这个商品时才能用。
+   买家搜「globe lamp」而我们卖的是「月亮灯」——
+   就写「lamp with speaker」「round base」这些**真的成立的**词，
+   **不要写 globe**。宁可少一个词，不许骗人。
+7. **不要把原来正文里的事实弄丢**：尺寸、制作时间、运费与时效、
+   FAQ 里的问答——**要改的是措辞和结构，不是把信息删了**。
+   「当前正文」里写了的事实，**照抄进去**（数字必须一模一样）。
+
+【上一版的问题】
+{feedback}
 """
 
 #: 写完之后产出里要记的字段
@@ -180,25 +198,58 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     }
 
     # ---- 2. 模型起草 ----
-    prompt = _DRAFT_PROMPT.format(
+    demand_keywords = list(diagnosis.get("target_keywords") or [])
+    prompt_base = dict(
         customer=diagnosis.get("target_customer") or "（诊断没给出客群）",
         scenario=diagnosis.get("target_scenario") or "（诊断没给场景）",
         channel=diagnosis.get("prioritized_channel") or "（诊断没给渠道）",
         bottleneck=diagnosis.get("bottleneck_stage") or "（诊断没给断点）",
         hypothesis=diagnosis.get("hypothesis") or "（诊断没给假设）",
         current_title=baseline_fields["title"] or "（空）",
-        current_description=(baseline_fields["descriptionHtml"] or "（空）")[:800],
+        # **给完整正文**——只给前 800 字的话，模型看不见 Details / FAQ，
+        # 写出来自然就把那些事实丢了（实测：尺寸、制作时间、运费全没了）。
+        current_description=(baseline_fields["descriptionHtml"] or "（空）")[:4000],
+        # **买家搜的那句话 + 这一轮要接住的词**——
+        # 从诊断盒传下来（那边是从真实搜索词里算的）。
+        demand_query=diagnosis.get("target_demand_query") or "（这轮没有对应的站内搜索词）",
+        demand_keywords=", ".join(demand_keywords) if demand_keywords
+        else "（这轮没有对应的站内搜索词——按商品页本身写，别硬塞词）",
     )
-    try:
-        raw = complete_json(prompt, thinking="disabled", max_tokens=4000, timeout=180)
-    except LLMError as exc:
-        return not_applied(f"模型起草失败：{exc}", baseline_fields=baseline_fields)
 
-    draft, problems = _validate_draft(raw)
+    # **起草两次**：第一次不合格就把问题写回提示词再问一次
+    # （诊断盒也是这个做法——提示词不是闸，但反馈是）。
+    draft: dict[str, Any] = {}
+    problems: list[str] = []
+    feedback = "（无——这是第一版）"
+    for _attempt in range(2):
+        prompt = _DRAFT_PROMPT.format(**prompt_base, feedback=feedback)
+        try:
+            raw = complete_json(prompt, thinking="disabled", max_tokens=4000, timeout=180)
+        except LLMError as exc:
+            return not_applied(f"模型起草失败：{exc}", baseline_fields=baseline_fields)
+
+        draft, problems = _validate_draft(raw)
+        if not problems:
+            # **事实不能丢**——丢了也算不合格
+            missing = _missing_facts(
+                baseline_fields["descriptionHtml"] or "",
+                str(draft.get("descriptionHtml") or ""),
+            )
+            if missing:
+                problems = ["把原正文里的事实弄丢了：" + ", ".join(missing)]
+        if not problems:
+            break
+        # **把问题写回提示词**——再说一次，别原地作废
+        feedback = (
+            "上一版有这些问题，请改好再给一版：\n- "
+            + "\n- ".join(problems)
+            + "\n数字必须原样保留；长度必须真的在上限内（别差一点）。"
+        )
     if problems:
         return not_applied(
             "模型起草不合格：" + "; ".join(problems),
             baseline_fields=baseline_fields,
+            draft=draft if draft else None,
         )
 
     # ---- 3. 写：两道闸都开才写 ----
@@ -231,22 +282,35 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     user_errors = result.get("user_errors") or []
+    # **没报错 ≠ 写进去了**——
+    # 实测：seo.title 跟商品标题一模一样时，Shopify 静默存成 null，
+    # userErrors 是空的。所以「写成功」要看**存下来的值**。
+    not_stuck = list(result.get("not_stuck") or [])
     applied_fields = {
         key: value
         for key, value in (result.get("applied_fields") or {}).items()
         if key in _APPLIED_FIELDS
     }
 
+    reasons = list(user_errors)
+    if not_stuck:
+        reasons.append(
+            "写了但没存进去：" + ", ".join(not_stuck)
+            + "（Shopify 没报错，但存下来的值不是我们写的那个）"
+        )
+
     return {
         "round_id": round_id,
         "target_handle": handle,
         "diagnosis_ref": diagnosis,
-        "applied": not user_errors,
+        # **交付 = 写进去了**（不是「没报错」）
+        "applied": not reasons,
         "baseline_fields": baseline_fields,
         "applied_fields": applied_fields,
         "draft": draft,
         "user_errors": user_errors,
-        "reject_reason": "; ".join(user_errors),
+        "not_stuck": not_stuck,
+        "reject_reason": "; ".join(reasons),
         "write_scope": "write_products",
     }
 
@@ -262,6 +326,10 @@ def _merge_with_baseline(draft: dict[str, Any], baseline: dict[str, Any]) -> dic
     2. **标签是合并不是替换**：基线里有 Shopify 的分类标签
        （`For Baby + Kids` 之类）——被模型换掉，商品可能就从分类里消失了。
        → 旧标签保留，新标签追加。
+    3. **seo.title 不能跟商品标题一模一样**：实测那样写，
+       Shopify 会把 seo.title **静默存成 null**（还不报 userErrors）。
+       → 跟标题一样时，改用基线里那个（它跟标题不一样），
+         基线也没有就整个 seo 都不写（宁可不改，别写成空的）。
     """
     out = dict(draft or {})
 
@@ -279,7 +347,47 @@ def _merge_with_baseline(draft: dict[str, Any], baseline: dict[str, Any]) -> dic
                 merged.append(tag)
         out["tags"] = merged
 
+    # **seo.title 跟 title 一模一样 → Shopify 会把它存成空**
+    title = str(out.get("title") or "").strip()
+    seo_title = str(out.get("seo.title") or "").strip()
+    if title and seo_title and seo_title == title:
+        fallback = str((baseline or {}).get("seo.title") or "").strip()
+        if fallback and fallback != title:
+            out["seo.title"] = fallback
+        else:
+            # **基线里也没有能用的** → 整个 seo 都不写
+            # （seo 是整体替换的：只写一半会把另一边也抹掉）
+            out.pop("seo.title", None)
+            out.pop("seo.description", None)
+
     return out
+
+
+def _fact_numbers(html: str) -> set[str]:
+    """**正文里的事实数字**——尺寸、天数、金额、件数
+
+    「别把没打算改的抹了」的另一面：
+    重写正文的时候，**原来的事实不能跟着消失**。
+    事实以数字的形式最硬（9.8 英寸、3–5 个工作日、$7.99）——
+    文字可以改，数字不能凭空消失。
+    """
+    out: set[str] = set()
+    for raw in re.findall(r"\d+(?:[.,]\d+)*(?:\s*[–—-]\s*\d+(?:[.,]\d+)*)?", str(html or "")):
+        text = raw.replace(",", "")
+        text = re.sub(r"\s*[–—]\s*", "-", text)
+        text = text.replace("—", "-").replace("–", "-")
+        if text:
+            out.add(text)
+    return out
+
+
+def _missing_facts(baseline_html: str, draft_html: str) -> list[str]:
+    """**草稿里丢了原正文哪些事实**（返回缺失的数字）"""
+    before = _fact_numbers(baseline_html)
+    after = _fact_numbers(draft_html)
+    missing = before - after
+    # 「1」这种太常见的数字不单独判（它可能是列表序号，不一定是事实）
+    return sorted(missing, key=lambda t: (len(t), t))
 
 
 def _validate_draft(raw: Any) -> tuple[dict[str, Any], list[str]]:

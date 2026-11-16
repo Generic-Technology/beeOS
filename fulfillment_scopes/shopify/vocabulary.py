@@ -127,8 +127,12 @@ BOTTLENECK_STAGES = [
 #: - `ai_referral`：**有 AI 引荐流量但零成交**的商品页优先。
 #:   用来验证「AI 引荐来的流量能不能变成成交」——
 #:   那些页面已经在被 AI 引荐了，只是没接住。
+#: - `demand_match`：**买家在站内搜的词最像它、但它零成交**的商品页优先。
+#:   用来接住「已经有人搜、却没搜到」的 demand——
+#:   站内的搜索词是**真实买家**打出来的，
+#:   搜了、点了、没买成 = 需求在那儿，页面没接住。
 #:
 #: 为什么把它显式化：策略变了，规则就得跟着变。
 #: 把它藏在代码里，换个假设时会继续按上一个假设选页——
 #: **规则不会因为假设变了而自己变**。
-TARGET_STRATEGIES = ["conversion_lift", "ai_referral"]
+TARGET_STRATEGIES = ["conversion_lift", "ai_referral", "demand_match"]

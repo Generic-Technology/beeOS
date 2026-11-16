@@ -328,6 +328,40 @@ _READ_OK = {
     }
 }
 
+_READ_OK_WITH_FACTS = {
+    "data": {
+        "products": {
+            "nodes": [{
+                "id": "gid://shopify/Product/123",
+                "title": "旧标题",
+                "handle": "personalized-santa-hat",
+                "descriptionHtml": (
+                    "<li>Size: about 9.8 in tall and 6.7 in wide.</li>"
+                    "<li>Production: 3–5 business days.</li>"
+                ),
+                "seo": {"title": "旧 SEO 标题", "description": "旧 SEO 描述"},
+                "tags": ["christmas"],
+            }]
+        }
+    }
+}
+
+_UPDATE_SEOTITLE_LOST = {
+    "data": {
+        "productUpdate": {
+            "product": {
+                "id": "gid://shopify/Product/123",
+                "title": "新标题",
+                "descriptionHtml": "<p>新正文</p>",
+                # **实测**：Shopify 把 seo.title 静默存成了 null
+                "seo": {"title": None, "description": "新 SEO 描述"},
+                "tags": ["christmas", "personalized"],
+            },
+            "userErrors": [],
+        }
+    }
+}
+
 _UPDATE_OK = {
     "data": {
         "productUpdate": {
@@ -710,3 +744,141 @@ class TestTheWriteDoesNotDamageWhatItDidNotMeanToTouch:
         assert "For Baby + Kids" not in result["draft"]["tags"], (
             "草稿里的标签是模型起草的，合并发生在写入载荷上"
         )
+
+
+class TestTheDraftMustNotLoseFacts:
+    """**重写正文 ≠ 把事实删了**
+
+    「别把没打算改的抹了」在正文上的形态：
+    改的是措辞和结构，**尺寸、制作时间、运费这些事实不能跟着消失**。
+    """
+
+    def test_the_facts_in_the_old_body_are_detected(self):
+        base = (
+            "<li>Size: about 9.8 in tall and 6.7 in wide.</li>"
+            "<li>Production: 3–5 business days.</li>"
+            "<li>Free shipping on orders of $70 or more ($7.99 under $70).</li>"
+        )
+        draft = "<p>A lamp with a Bluetooth speaker.</p>"
+        missing = exp_runner._missing_facts(base, draft)
+        assert "9.8" in missing
+        assert "6.7" in missing
+        assert "3-5" in missing
+        assert "70" in missing
+        assert "7.99" in missing
+
+    def test_a_draft_that_keeps_the_facts_passes(self):
+        base = "<li>Size: about 9.8 in tall and 6.7 in wide.</li>"
+        draft = "<li>Size: about 9.8 in tall and 6.7 in wide.</li>"
+        assert exp_runner._missing_facts(base, draft) == []
+
+    def test_the_dash_style_does_not_matter(self):
+        base = "<li>Production: 3–5 business days.</li>"
+        draft = "<li>Production: 3-5 business days.</li>"
+        assert exp_runner._missing_facts(base, draft) == []
+
+    def test_a_draft_that_loses_facts_is_refused(self, monkeypatch):
+        """**丢了事实的草稿不能写出去**——带反馈重写一次，还丢就拒"""
+        calls = {"n": 0}
+
+        def _fake(prompt, **kw):
+            calls["n"] += 1
+            return {
+                "title": "新标题",
+                "descriptionHtml": "<p>只有一句话，没有尺寸没有时效。</p>",
+                "seoTitle": "新 SEO",
+                "seoDescription": "新描述",
+                "tags": ["新标签"],
+            }
+
+        monkeypatch.setattr(exp_runner, "complete_json", _fake)
+        # **基线正文里带着事实**（尺寸 / 制作时间）——草稿把它们丢了
+        _patch_writer(monkeypatch, [_READ_OK_WITH_FACTS, _UPDATE_OK], allow=True)
+
+        part = exp_runner.experiment_work_handler({
+            "round_id": "giftsjourneyrebirth@2026-W47",
+            "target_handle": "personalized-santa-hat",
+            "apply": True,
+            "diagnosis_ref": _diagnosis(),
+        })
+
+        assert part.get("applied") is not True, "丢了事实还写出去"
+        assert calls["n"] == 2, "应该带反馈重写一次"
+
+
+class TestTheSeoTitleMustNotEqualTheProductTitle:
+    """**实测踩到的坑**：seo.title 跟商品标题一模一样时，
+    Shopify 会把它**静默存成 null**——还不报 userErrors。
+
+    写是「成功」的，页面的 SEO 标题却没了。
+    """
+
+    def test_the_same_seo_title_falls_back_to_the_baseline(self):
+        draft = {
+            "title": "Personalized 3D Photo Lamp with Bluetooth Speaker Gift",
+            "seo.title": "Personalized 3D Photo Lamp with Bluetooth Speaker Gift",
+            "seo.description": "新描述",
+            "descriptionHtml": "<p>正文</p>",
+            "tags": ["a"],
+        }
+        baseline = {
+            "title": "Custom Photo 3D Night Lamp with Optional Bluetooth Speaker",
+            "seo.title": "Personalized 3D Photo Lamp | Photo Night Lamp with Optional Speaker",
+            "seo.description": "旧描述",
+            "tags": ["christmas"],
+        }
+        merged = exp_runner._merge_with_baseline(draft, baseline)
+        assert merged["seo.title"] == baseline["seo.title"], merged
+
+    def test_with_no_usable_baseline_the_whole_seo_is_left_alone(self):
+        """**seo 是整体替换的**——宁可不写，也别只写一半把另一边抹了"""
+        draft = {
+            "title": "同一个标题",
+            "seo.title": "同一个标题",
+            "seo.description": "新描述",
+            "descriptionHtml": "<p>正文</p>",
+            "tags": ["a"],
+        }
+        baseline = {"title": "旧标题", "seo.title": "", "seo.description": "旧描述", "tags": []}
+        merged = exp_runner._merge_with_baseline(draft, baseline)
+        assert "seo.title" not in merged
+        assert "seo.description" not in merged
+
+    def test_a_different_seo_title_is_written_as_is(self):
+        draft = {
+            "title": "标题 A",
+            "seo.title": "标题 B",
+            "seo.description": "新描述",
+            "descriptionHtml": "<p>正文</p>",
+            "tags": ["a"],
+        }
+        baseline = {"title": "旧标题", "seo.title": "旧 SEO", "seo.description": "旧描述", "tags": []}
+        merged = exp_runner._merge_with_baseline(draft, baseline)
+        assert merged["seo.title"] == "标题 B"
+
+    def test_a_silent_non_write_is_not_a_delivery(self, monkeypatch):
+        """**没报错 ≠ 写进去了**——存下来的值不对，就不算交付"""
+        _patch_writer(monkeypatch, [_READ_OK, _UPDATE_OK], allow=True)
+        _patch_draft(monkeypatch)
+
+        part = exp_runner.experiment_work_handler({
+            "round_id": "giftsjourneyrebirth@2026-W47",
+            "target_handle": "personalized-santa-hat",
+            "apply": True,
+            "diagnosis_ref": _diagnosis(),
+        })
+        assert part.get("applied") is True, part.get("reject_reason")
+
+    def test_the_writer_reports_what_did_not_stick(self, monkeypatch):
+        """**写客户端要说清楚「哪个字段没存进去」**"""
+        _patch_writer(monkeypatch, [_READ_OK, _UPDATE_SEOTITLE_LOST], allow=True)
+        _patch_draft(monkeypatch)
+
+        part = exp_runner.experiment_work_handler({
+            "round_id": "giftsjourneyrebirth@2026-W47",
+            "target_handle": "personalized-santa-hat",
+            "apply": True,
+            "diagnosis_ref": _diagnosis(),
+        })
+        assert part.get("applied") is False, "没存进去也算交付？"
+        assert "没存进去" in str(part.get("reject_reason"))

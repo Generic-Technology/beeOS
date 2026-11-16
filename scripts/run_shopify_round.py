@@ -41,8 +41,9 @@ python scripts/run_shopify_round.py --apply
 
 ## 这一轮打哪种仗
 
-`--strategy conversion_lift`（默认，有成交的商品页优先）
-或 `--strategy ai_referral`（有 AI 引荐但零成交的商品页优先）。
+`--strategy conversion_lift`（默认，有成交的商品页优先）、
+`--strategy ai_referral`（有 AI 引荐但零成交的商品页优先）
+或 `--strategy demand_match`（买家在站内搜的词最像它、但它零成交的页优先）。
 **策略要投进快照**——诊断盒是从快照产出里读它的。
 
 ## 凭证只从环境变量读
@@ -388,10 +389,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="这一轮要找什么需求（逗号分隔）。"
                              "不给就从上一轮诊断的假设里拿")
     parser.add_argument("--strategy", default="conversion_lift",
-                        choices=["conversion_lift", "ai_referral"],
+                        choices=["conversion_lift", "ai_referral", "demand_match"],
                         help="这一轮打哪种仗（决定下一轮改哪个落地页）："
                              "conversion_lift=有成交的商品页优先（默认）；"
-                             "ai_referral=有 AI 引荐流量但零成交的页优先")
+                             "ai_referral=有 AI 引荐流量但零成交的页优先；"
+                             "demand_match=买家站内搜的词最像它、但它零成交的页优先")
     parser.add_argument("--platforms", default="",
                         help="这一轮去哪些站外平台找需求（gsc/reddit/etsy/pinterest，"
                              "逗号分隔）。不给就自己判断：有 GSC 导出 CSV "
