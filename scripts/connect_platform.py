@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 import secrets
 import shutil
@@ -106,6 +107,10 @@ def _verify(platform: str, creds: dict[str, str], gsc_csv: str = "") -> tuple[bo
             client = cl.GscClient(
                 access_token=creds.get("GSC_ACCESS_TOKEN", ""),
                 site_url=creds.get("GSC_SITE_URL", ""),
+                # **OAuth 那条路**：用 refresh_token 现场换一张 access_token
+                refresh_token=creds.get("GSC_REFRESH_TOKEN", ""),
+                client_id=creds.get("GSC_CLIENT_ID", ""),
+                client_secret=creds.get("GSC_CLIENT_SECRET", ""),
             )
         result = client.fetch(["personalized"], 28)
     else:
@@ -115,6 +120,106 @@ def _verify(platform: str, creds: dict[str, str], gsc_csv: str = "") -> tuple[bo
     if result.status.status == "observed":
         return True, f"取到 {len(result.signals)} 条信号（{detail}）"
     return False, detail
+
+
+GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
+GSC_AUTH_URL = (
+    "https://accounts.google.com/o/oauth2/v2/auth"
+    "?client_id={client_id}"
+    "&scope=" + GSC_SCOPE +
+    "&redirect_uri=http://localhost:{port}"
+    "&response_type=code"
+    "&access_type=offline"          # ← 关键：要 refresh_token（长期）
+    "&prompt=consent"
+)
+GSC_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+
+def _gsc_oauth_setup(client_id: str, client_secret: str, site_url: str,
+                     port: int = 8765) -> dict[str, str]:
+    """**走一遍 OAuth 授权**，换一张长期 refresh_token
+
+    流程（用户只做两件事：在浏览器点「允许」）：
+    1. 起一个本地小服务，等 Google 把授权码送回来；
+    2. 打印授权链接 → 用户打开、同意 → 浏览器跳回本地 → 我们拿到 code；
+    3. code 换 token（带 refresh_token = 以后不用再授权）；
+    4. 返回要落盘的四个值。
+
+    **为什么值得做**：CSV 那条路每次都要手动导出；
+    这条路配一次，之后每轮自动查——**这才是「自动实验」需要的**。
+    """
+    import http.server
+    import threading
+    import urllib.parse
+    import urllib.request
+
+    captured: dict[str, str] = {}
+    done = threading.Event()
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802（http.server 的命名）
+            query = urllib.parse.urlparse(self.path).query
+            params = dict(urllib.parse.parse_qsl(query))
+            if "code" in params:
+                captured["code"] = params["code"]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                "授权好了，可以关掉这个页面了。"
+                .encode("utf-8")
+            )
+            done.set()
+
+        def log_message(self, *args: Any) -> None:      # 别刷屏
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", port), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    url = GSC_AUTH_URL.format(client_id=client_id, port=port)
+    print("\n  ① 打开这个链接（用你登录了 Google 的浏览器）：\n")
+    print(f"     {url}\n")
+    print("  ② 选你的 Google 账号 → 点「允许」→ 浏览器会跳回 127.0.0.1（页面会显示「授权好了」）")
+    print("  ③ 回来这里，我接着换长期令牌…")
+    try:
+        done.wait(timeout=300)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.shutdown()
+
+    if "code" not in captured:
+        raise SystemExit("没收到授权码——上面那步没走完？再跑一次就行。")
+
+    body = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": captured["code"],
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": f"http://localhost:{port}",
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        GSC_TOKEN_URL,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    refresh_token = str(payload.get("refresh_token") or "")
+    if not refresh_token:
+        raise SystemExit(
+            "没拿到 refresh_token——"
+            "多半是之前授权过（Google 不会再发）。"
+            "去 Google 账号的「第三方应用」里删掉这个应用，再跑一次。"
+        )
+    return {
+        "GSC_CLIENT_ID": client_id,
+        "GSC_CLIENT_SECRET": client_secret,
+        "GSC_REFRESH_TOKEN": refresh_token,
+        "GSC_SITE_URL": site_url,
+    }
 
 
 def _write_env(entries: dict[str, str]) -> None:
@@ -151,13 +256,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform", required=True, choices=list(PLATFORMS))
     parser.add_argument("--gsc-csv", default="",
                         help="GSC 免授权那条路：Search Console 导出的「查询」CSV")
+    parser.add_argument("--gsc-oauth", action="store_true",
+                        help="GSC **配一次、之后全自动**那条路：走 OAuth 授权换长期令牌")
     parser.add_argument("--dry-run", action="store_true", help="只验，不落盘")
     args = parser.parse_args(argv)
 
     names = list(PLATFORM_CREDENTIALS.get(args.platform, ()))
     creds: dict[str, str] = {}
 
-    if args.platform == "gsc" and args.gsc_csv:
+    if args.platform == "gsc" and args.gsc_oauth:
+        # ---- OAuth：配一次，之后每轮自动查 ----
+        client_id = os.environ.get("GSC_CLIENT_ID", "").strip() or _prompt(
+            ["GSC_CLIENT_ID"])["GSC_CLIENT_ID"]
+        client_secret = os.environ.get("GSC_CLIENT_SECRET", "").strip() or _prompt(
+            ["GSC_CLIENT_SECRET"])["GSC_CLIENT_SECRET"]
+        site_url = os.environ.get("GSC_SITE_URL", "").strip() or _prompt(
+            ["GSC_SITE_URL"])["GSC_SITE_URL"]
+        creds = _gsc_oauth_setup(client_id, client_secret, site_url)
+    elif args.platform == "gsc" and args.gsc_csv:
         source = Path(args.gsc_csv).expanduser()
         if not source.exists():
             raise SystemExit(f"CSV 不存在：{source}")

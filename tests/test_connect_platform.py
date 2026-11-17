@@ -241,3 +241,59 @@ def test_the_secret_is_optional_when_prompting(monkeypatch):
     )
     assert creds["REDDIT_CLIENT_ID"] == "cid"
     assert "REDDIT_CLIENT_SECRET" not in creds
+
+
+# ============================================================
+# GSC 的 OAuth：配一次，之后每轮自动拉
+# ============================================================
+
+
+def test_the_refresh_token_is_exchanged_for_an_access_token(monkeypatch):
+    """**配一次、之后全自动**——refresh_token 换 access_token
+
+    CSV 那条路每次都要手动导出；这条路配一次就够。
+    """
+    from boxes.shopify_market_signal import clients as cl
+
+    seen: dict[str, str] = {}
+
+    class _Resp:
+        def read(self) -> bytes:
+            return b'{"access_token": "ya29.abc"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        seen["body"] = request.data.decode()
+        seen["url"] = request.full_url
+        return _Resp()
+
+    monkeypatch.setattr(cl.urllib.request, "urlopen", fake_urlopen)
+
+    client = cl.GscClient(
+        refresh_token="1//refresh",
+        client_id="cid",
+        client_secret="sec",
+        site_url="sc-domain:giftsjourneyshop.com",
+    )
+    assert client._token() == "ya29.abc"
+    assert "grant_type=refresh_token" in seen["body"], seen["body"]
+    assert seen["url"].startswith("https://oauth2.googleapis.com/token")
+
+
+def test_without_any_token_it_says_so_instead_of_guessing():
+    """**一个都没有就说清楚**——别静默返回空 token"""
+    from boxes.shopify_market_signal import clients as cl
+
+    client = cl.GscClient(site_url="sc-domain:x")
+    assert client._token() == ""
+
+
+def test_the_oauth_url_asks_for_a_refresh_token():
+    """**`access_type=offline` 才有 refresh_token**——少了就只是一次性的"""
+    assert "access_type=offline" in connect.GSC_AUTH_URL
+    assert "webmasters.readonly" in connect.GSC_AUTH_URL

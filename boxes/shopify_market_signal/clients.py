@@ -97,26 +97,39 @@ class GscClient:
     两条路：
     - **API**：`GSC_ACCESS_TOKEN` + `GSC_SITE_URL` 在环境变量里 → 自动跑
     - **CSV**：投料给一个导出的 CSV 路径 → 立刻能跑（不用授权）
+    - **OAuth（推荐：配一次、之后全自动）**：
+      `GSC_CLIENT_ID` + `GSC_CLIENT_SECRET` + `GSC_REFRESH_TOKEN` + `GSC_SITE_URL`
+      → 每轮自动换 token 自动查，**不用再手动导出 CSV**。
+      （`scripts/connect_platform.py --platform gsc --oauth` 走完整个流程）
 
     GSC 导出的 CSV 表头每次可能变（"Top queries" / "Query"），
     所以这里按表头**猜列名**，不写死。
     """
 
     API_URL = "https://searchconsole.googleapis.com/webmasters/v3/sites/{site}/searchAnalytics/query"
+    TOKEN_URL = "https://oauth2.googleapis.com/token"
 
     def __init__(
         self,
         access_token: str = "",
         site_url: str = "",
         csv_path: str = "",
+        refresh_token: str = "",
+        client_id: str = "",
+        client_secret: str = "",
         opener: Optional[Callable[[urllib.request.Request, float], Any]] = None,
         now: Callable[[], str] = _now_iso,
     ) -> None:
         self.access_token = access_token
         self.site_url = site_url
         self.csv_path = csv_path
+        # **OAuth 那条路**：配一次，之后每轮自动换 token 自动查
+        self.refresh_token = refresh_token
+        self.client_id = client_id
+        self.client_secret = client_secret
         self.opener = opener
         self.now = now
+        self._cached_token = ""
 
     def fetch(self, keywords: list[str], window_days: int) -> FetchResult:
         if self.csv_path:
@@ -193,6 +206,35 @@ class GscClient:
             status=PlatformStatus("gsc", "observed", f"CSV {len(signals)} 条", len(signals)),
         )
 
+    def _token(self) -> str:
+        """**拿一张能用的 access token**
+
+        - 已经有 access_token → 直接用；
+        - 有 refresh_token → 用它换一张新的（**配一次，之后每轮自动换**）；
+        - 都没有 → 空（调用方会说清楚缺哪个）。
+        """
+        if self._cached_token:
+            return self._cached_token
+        if self.access_token:
+            self._cached_token = self.access_token
+            return self._cached_token
+        if not (self.refresh_token and self.client_id and self.client_secret):
+            return ""
+        body = urllib.parse.urlencode({
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+        }).encode("utf-8")
+        payload = _http_json(
+            self.TOKEN_URL,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data=body,
+            method="POST",
+        )
+        self._cached_token = str(payload.get("access_token") or "")
+        return self._cached_token
+
     # ---- API ----
 
     def _from_api(self, window_days: int) -> FetchResult:
@@ -205,10 +247,15 @@ class GscClient:
             "rowLimit": 250,
         }).encode("utf-8")
         site = urllib.parse.quote(self.site_url, safe="")
+        token = self._token()
+        if not token:
+            return FetchResult(status=PlatformStatus(
+                "gsc", "unverifiable",
+                "有 refresh_token 但换不到 access_token（client_id / client_secret 不对？）"))
         payload = _http_json(
             self.API_URL.format(site=site),
             headers={
-                "Authorization": f"Bearer {self.access_token}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
             data=body,
