@@ -297,7 +297,11 @@ class RedditClient:
         if not self.client_id:
             return FetchResult(status=PlatformStatus(
                 "reddit", "unverifiable",
-                "没配 REDDIT_CLIENT_ID（去 reddit.com/prefs/apps 建一个 app）"))
+                "没配 REDDIT_CLIENT_ID —— **Reddit 现在不发自助凭证了**："
+                "官方《Responsible Builder Policy》要求先获批"
+                "（自助发证 2025-11-11 关闭；官方三条路：Devvit / "
+                "人工申请 support ticket / 商业合作）。"
+                "拿到凭证后填进 ~/.config/beeos/shopify.env 即可"))
         if not self.client_secret and not self.device_id:
             return FetchResult(status=PlatformStatus(
                 "reddit", "unverifiable",
