@@ -274,6 +274,7 @@ class RedditClient:
         client_secret: str = "",
         subs: Optional[list[str]] = None,
         user_agent: str = "",
+        device_id: str = "",
         opener: Optional[Callable[[urllib.request.Request, float], Any]] = None,
         now: Callable[[], str] = _now_iso,
     ) -> None:
@@ -286,14 +287,22 @@ class RedditClient:
             or os.environ.get("REDDIT_USER_AGENT", "").strip()
             or self.DEFAULT_USER_AGENT
         )
+        # **device_id**（installed app 那条路要用）——它必须**稳定**
+        # （重新换 token 时要复用同一个），所以放在环境变量里，不每次现生成。
+        self.device_id = device_id or os.environ.get("REDDIT_DEVICE_ID", "").strip()
         self.opener = opener
         self.now = now
 
     def fetch(self, keywords: list[str], window_days: int) -> FetchResult:
-        if not (self.client_id and self.client_secret):
+        if not self.client_id:
             return FetchResult(status=PlatformStatus(
                 "reddit", "unverifiable",
-                "没配 REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET（官方 API 要先注册 app）"))
+                "没配 REDDIT_CLIENT_ID（去 reddit.com/prefs/apps 建一个 app）"))
+        if not self.client_secret and not self.device_id:
+            return FetchResult(status=PlatformStatus(
+                "reddit", "unverifiable",
+                "既没 secret（script app）也没 device_id（installed app）——"
+                "两个都没有就换不了 token"))
         try:
             token = self._token()
         except urllib.error.HTTPError as exc:
@@ -342,13 +351,41 @@ class RedditClient:
         )
 
     def _token(self) -> str:
-        basic = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+        """换一张 token（**两条官方支持的路**）
+
+        | app 类型 | 授权方式 | 要什么 |
+        |---|---|---|
+        | script / web（confidential client） | `client_credentials` | client_id + **secret** |
+        | installed（非机密 client） | `https://oauth.reddit.com/grants/installed_client` | client_id + **device_id**（没有 secret） |
+
+        **两条都要用 HTTP Basic Auth 传 client 凭证**；
+        installed 那条把 secret 留空即可。
+
+        **为什么两条都留着**：script app 的 secret 在 Reddit 那边
+        只显示一次，用户拿不到时整条路就断了——
+        而 installed 那条完全不需要 secret。
+        """
         import base64
 
+        if self.client_secret:
+            grant = {"grant_type": "client_credentials"}
+            password = self.client_secret
+        elif self.device_id:
+            grant = {
+                "grant_type": "https://oauth.reddit.com/grants/installed_client",
+                "device_id": self.device_id,
+            }
+            password = ""
+        else:
+            raise ValueError(
+                "要 secret（script app）或 device_id（installed app）"
+                "——两个都没有就换不了 token"
+            )
+
         cred = base64.b64encode(
-            f"{self.client_id}:{self.client_secret}".encode()
+            f"{self.client_id}:{password}".encode()
         ).decode()
-        body = urllib.parse.urlencode({"grant_type": "client_credentials"}).encode()
+        body = urllib.parse.urlencode(grant).encode()
         request = urllib.request.Request(
             self.TOKEN_URL,
             data=body,

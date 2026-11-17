@@ -148,3 +148,96 @@ def test_every_platform_declares_its_credential_names():
         assert names, platform
         for name in names:
             assert name.isupper(), name
+
+
+# ============================================================
+# 拿不到 secret 时的退路：installed app + device_id
+# ============================================================
+
+
+def test_without_a_secret_the_installed_client_grant_is_used(monkeypatch):
+    """**Reddit 的 secret 只显示一次**——拿不到时还有官方支持的一条路
+
+    installed app（非机密 client）用
+    `grant_type=https://oauth.reddit.com/grants/installed_client` + device_id。
+    """
+    from boxes.shopify_market_signal import clients as cl
+
+    seen: dict[str, str] = {}
+
+    class _Resp:
+        def read(self) -> bytes:
+            return b'{"access_token": "tok123"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        seen["body"] = request.data.decode()
+        seen["auth"] = request.headers.get("Authorization", "")
+        return _Resp()
+
+    monkeypatch.setattr(cl.urllib.request, "urlopen", fake_urlopen)
+
+    client = cl.RedditClient(client_id="cid", device_id="dev-12345678901234567890")
+    token = client._token()
+
+    assert token == "tok123"
+    assert "installed_client" in seen["body"]
+    assert "device_id=dev-12345678901234567890" in seen["body"], seen["body"]
+
+
+def test_with_a_secret_the_client_credentials_grant_is_used(monkeypatch):
+    """**script app 那条路**（有 secret 时优先用它）"""
+    from boxes.shopify_market_signal import clients as cl
+
+    seen: dict[str, str] = {}
+
+    class _Resp:
+        def read(self) -> bytes:
+            return b'{"access_token": "tok456"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        seen["body"] = request.data.decode()
+        return _Resp()
+
+    monkeypatch.setattr(cl.urllib.request, "urlopen", fake_urlopen)
+
+    client = cl.RedditClient(client_id="cid", client_secret="s3cr3t")
+    assert client._token() == "tok456"
+    assert "grant_type=client_credentials" in seen["body"]
+
+
+def test_without_a_secret_and_without_a_device_id_it_says_so(monkeypatch):
+    """**两个都没有就换不了 token**——说清楚，别静默失败"""
+    from boxes.shopify_market_signal import clients as cl
+
+    client = cl.RedditClient(client_id="cid")
+    result = client.fetch(["personalized gift"], 28)
+    assert result.status.status == "unverifiable"
+    assert "device_id" in result.status.detail
+
+
+def test_the_secret_is_optional_when_prompting(monkeypatch):
+    """**secret 可以留空**——否则用户拿不到 secret 就卡死在提示这一步"""
+    monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    def fake_getpass(prompt: str) -> str:
+        return "cid" if "CLIENT_ID" in prompt else ""   # secret 留空
+
+    monkeypatch.setattr(connect.getpass, "getpass", fake_getpass)
+    creds = connect._prompt(
+        ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"],
+        optional=("REDDIT_CLIENT_SECRET",),
+    )
+    assert creds["REDDIT_CLIENT_ID"] == "cid"
+    assert "REDDIT_CLIENT_SECRET" not in creds

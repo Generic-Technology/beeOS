@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
+import secrets
 import shutil
 import sys
 from pathlib import Path
@@ -48,8 +49,12 @@ from fulfillment_scopes.shopify.market_signal import (  # noqa: E402
 )
 
 
-def _prompt(names: list[str]) -> dict[str, str]:
-    """逐个提示输入凭证（**不回显**）"""
+def _prompt(names: list[str], optional: tuple[str, ...] = ()) -> dict[str, str]:
+    """逐个提示输入凭证（**不回显**）
+
+    `optional` 里的可以留空——Reddit 的 secret 只显示一次，
+    用户拿不到时还有 installed app（device_id）那条路。
+    """
     out: dict[str, str] = {}
     for name in names:
         value = os.environ.get(name, "").strip()
@@ -57,10 +62,14 @@ def _prompt(names: list[str]) -> dict[str, str]:
             try:
                 value = getpass.getpass(f"{name}（不回显）: ").strip()
             except (EOFError, KeyboardInterrupt):
+                if name in optional:
+                    break
                 raise SystemExit(
                     f"没拿到 {name}——凭证也可以直接写进环境变量再跑一次"
                 )
         if not value:
+            if name in optional:
+                continue
             raise SystemExit(f"没有 {name}——这一步过不去")
         out[name] = value
     return out
@@ -161,7 +170,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[{args.platform}] 要这几个（环境变量里没有就逐个提示，不回显）：")
         for name in names:
             print(f"  - {name}")
-        creds = _prompt(names)
+        creds = _prompt(
+            names,
+            optional=("REDDIT_CLIENT_SECRET",) if args.platform == "reddit" else (),
+        )
         if args.platform == "reddit":
             # **User-Agent 要按 Reddit 的格式写**：
             # `<platform>:<app ID>:<version> (by /u/<用户名>)`
@@ -176,6 +188,16 @@ def main(argv: list[str] | None = None) -> int:
                     f"linux:beeos-market-signal:v0.1 (by /u/{who})"
                 )
                 print(f"  → User-Agent: {creds['REDDIT_USER_AGENT']}")
+            if not creds.get("REDDIT_CLIENT_SECRET"):
+                # **installed app 那条路不需要 secret**——
+                # 用 device_id 授权（官方支持）。device_id 必须**稳定**，
+                # 所以生成一次存进凭证文件，以后复用。
+                device_id = "".join(
+                    secrets.choice("abcdefghijklmnopqrstuvwxyz0123456789")
+                    for _ in range(24)
+                )
+                creds["REDDIT_DEVICE_ID"] = device_id
+                print("  → 没给 secret → 走 installed app 那条路（用 device_id）")
 
     print(f"[{args.platform}] 验证中（用的是盒子真正要走的那条路）…")
     ok, detail = _verify(args.platform, creds, args.gsc_csv)
