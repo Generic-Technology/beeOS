@@ -205,8 +205,24 @@ def _gsc_oauth_setup(client_id: str, client_secret: str, site_url: str,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=30) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+        except Exception:  # pragma: no cover - 读不出正文就算了
+            detail = ""
+        if "redirect_uri_mismatch" in detail or "redirect" in detail.lower():
+            raise SystemExit(
+                "Google 说回调地址不匹配。\n"
+                f"  我们的回调是：http://localhost:{port}\n"
+                "  两种改法（任选其一）：\n"
+                "  ① 客户端类型选「桌面应用」——Google 对 localhost 的端口不敏感；\n"
+                "  ② 或选「Web 应用」，把「已获授权的重定向 URI」填成上面那行。"
+            )
+        raise SystemExit(f"换令牌失败（HTTP {exc.code}）：{detail}")
     refresh_token = str(payload.get("refresh_token") or "")
     if not refresh_token:
         raise SystemExit(
