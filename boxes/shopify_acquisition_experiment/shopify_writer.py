@@ -24,8 +24,10 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -35,6 +37,9 @@ from fulfillment_scopes.shopify.auth import ShopifyAuthError, resolve_token
 from fulfillment_scopes.shopify.vocabulary import (
     ALLOW_WRITES_ENV,
     DOMAIN_ENV,
+    MAX_TRANSPORT_RETRIES,
+    RETRYABLE_HTTP_STATUS,
+    TRANSPORT_BACKOFF_SECONDS,
     WRITABLE_FIELDS,
 )
 
@@ -90,6 +95,7 @@ class ShopifyWriter:
     allow_writes: bool = False
     timeout: float = 30.0
     opener: Optional[Callable[[urllib.request.Request, float], Any]] = None
+    sleeper: Callable[[float], None] = time.sleep
 
     # ---- 构造 ----
 
@@ -198,16 +204,35 @@ class ShopifyWriter:
                 "User-Agent": "beeOS-shopify-experiment/0.1",
             },
         )
-        try:
-            if self.opener is not None:
-                raw = self.opener(request, self.timeout).read()
-            else:
-                with urllib.request.urlopen(request, timeout=self.timeout) as resp:
-                    raw = resp.read()
-        except urllib.error.HTTPError as exc:  # pragma: no cover - 网络异常
-            raise ShopifyWriteError(f"HTTP {exc.code}：Shopify 请求失败") from exc
-        except urllib.error.URLError as exc:  # pragma: no cover - 网络异常
-            raise ShopifyWriteError(f"连不上店铺：{exc.reason}") from exc
+        # **瞬时故障重试**——`productUpdate` 是**幂等**的：
+        # 同一份 values 再写一遍，落地结果一模一样。
+        # （这里重试的前提是「变量没变」——草稿生成一次，
+        #  重试用的是同一份，所以幂等成立。）
+        for attempt in range(MAX_TRANSPORT_RETRIES + 1):
+            try:
+                if self.opener is not None:
+                    raw = self.opener(request, self.timeout).read()
+                else:
+                    with urllib.request.urlopen(request, timeout=self.timeout) as resp:
+                        raw = resp.read()
+                break
+            except urllib.error.HTTPError as exc:  # pragma: no cover - 网络异常
+                if exc.code in RETRYABLE_HTTP_STATUS and attempt < MAX_TRANSPORT_RETRIES:
+                    self._backoff(attempt)
+                    continue
+                raise ShopifyWriteError(f"HTTP {exc.code}：Shopify 请求失败") from exc
+            except (OSError, http.client.HTTPException) as exc:  # pragma: no cover
+                if attempt < MAX_TRANSPORT_RETRIES:
+                    self._backoff(attempt)
+                    continue
+                # **结果未知**：断连可能发生在「店已经改完了」之后——
+                # 所以这话必须说清「去核对，别直接重写」。
+                raise ShopifyWriteError(
+                    f"连不上店铺（重试 {MAX_TRANSPORT_RETRIES} 次后）："
+                    f"{type(exc).__name__}: {exc}"
+                    "——**写入结果未知**：可能已经写进去了，"
+                    "去商品页核对一下，别直接重写"
+                ) from exc
 
         payload = json.loads(raw.decode("utf-8"))
         errors = payload.get("errors") or []
@@ -215,6 +240,11 @@ class ShopifyWriter:
             messages = "; ".join(str(e.get("message") or e) for e in errors)
             raise ShopifyWriteError(f"GraphQL 报错：{messages}")
         return payload
+
+    def _backoff(self, attempt: int) -> None:
+        """退避——**逐次变长，别把店面打得更狠**"""
+        index = min(attempt, len(TRANSPORT_BACKOFF_SECONDS) - 1)
+        self.sleeper(TRANSPORT_BACKOFF_SECONDS[index])
 
 
 def _filter_whitelisted(changes: dict[str, Any]) -> dict[str, Any]:

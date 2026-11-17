@@ -14,10 +14,11 @@
 
 ## 哪些验过、哪些没验
 
-- **GSC 的 CSV 路径**：用夹具测过 ✓（格式容错，GSC 导出表头会变）
+- **GSC 的 CSV 路径**：夹具测过 ✓，而且 2026-11-18 **在真店上真跑过** ✓
+  （读真导出的**中文表头** CSV，取到 25 条需求词）
 - **GSC 的 API 路径 / Reddit / Etsy / Pinterest**：**代码按各自官方文档写的，
-  但没有真凭证跑过**（凭证在你手上）。
-  → 所以盒子整体标 `skeleton`，等第一次真跑过再标 `live`。
+  但没有真凭证跑过**（凭证在你手上）——
+  那些平台跑不到时标 `unverifiable` + 原因，其余平台照常。
 """
 
 from __future__ import annotations
@@ -102,12 +103,23 @@ class GscClient:
       → 每轮自动换 token 自动查，**不用再手动导出 CSV**。
       （`scripts/connect_platform.py --platform gsc --oauth` 走完整个流程）
 
-    GSC 导出的 CSV 表头每次可能变（"Top queries" / "Query"），
-    所以这里按表头**猜列名**，不写死。
+    GSC 导出的 CSV 表头每次可能变——**界面语言变了列名就跟着变**
+    （英文 "Top queries" / "Clicks" / "Impressions"，
+    中文「热门查询 / 点击次数 / 展示」），
+    所以这里按表头**猜列名**，**中英文都认**，不写死。
     """
 
     API_URL = "https://searchconsole.googleapis.com/webmasters/v3/sites/{site}/searchAnalytics/query"
     TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+    #: **GSC 导出的表头有中英文两套**——界面语言变了，列名就变。
+    #: 这里按名字**猜列**，两套都认（写死一套 = 换个界面就读不出来）。
+    QUERY_COLS = ("top queries", "query", "search query", "search term",
+                  "热门查询", "查询", "搜索字词", "搜索词", "热门搜索字词")
+    CLICKS_COLS = ("clicks", "点击次数", "点击", "点击数")
+    IMPRESSIONS_COLS = ("impressions", "展示", "展示次数", "曝光", "曝光次数")
+    POSITION_COLS = ("position", "排名")
+    CTR_COLS = ("ctr", "点击率")
 
     def __init__(
         self,
@@ -167,15 +179,26 @@ class GscClient:
         header_idx, header = _find_header_row(rows)
         if header is None:
             return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable", "CSV 里找不到表头行（含 clicks / impressions 的那行）"))
+                "gsc", "unverifiable", "CSV 里找不到表头行（含点击次数 / clicks 的那行）"))
 
         cols = {name: idx for idx, name in enumerate(header)}
-        q_col = _pick_col(cols, ("top queries", "query", "search query", "search term"))
-        c_col = _pick_col(cols, ("clicks",))
-        i_col = _pick_col(cols, ("impressions",))
+        q_col = _pick_col(cols, self.QUERY_COLS)
+        c_col = _pick_col(cols, self.CLICKS_COLS)
+        i_col = _pick_col(cols, self.IMPRESSIONS_COLS)
+        p_col = _pick_col(cols, self.POSITION_COLS)
+        ctr_col = _pick_col(cols, self.CTR_COLS)
         if q_col is None:
+            # **要说清是哪种表**——Search Console 一次导出好几张表
+            # （查询 / 网页 / 国家地区 / 设备……），
+            # 拿错表不是「读不出来」，是「这张表里没有需求词」。
+            looks_like = next(
+                (h for h in header if "网页" in h or "page" in h.lower()), ""
+            )
             return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable", "CSV 表头里找不到查询词列（Top queries / Query）"))
+                "gsc", "unverifiable",
+                ("CSV 表头里找不到查询词列（热门查询 / Top queries）"
+                 + (f"——这张像是「网页」表（{looks_like}），要的是「热门查询」那张表"
+                    if looks_like else ""))))
 
         captured = self.now()
         signals = []
@@ -183,27 +206,48 @@ class GscClient:
             if len(row) <= q_col:
                 continue
             topic = (row[q_col] or "").strip()
-            if not topic or topic.lower() in ("total", "总计"):
+            if not topic or topic.lower() in ("total", "总计", "合计"):
                 continue
             clicks = _safe_int(row[c_col]) if c_col is not None and len(row) > c_col else None
             impressions = _safe_int(row[i_col]) if i_col is not None and len(row) > i_col else None
+            position = _safe_float(row[p_col]) if p_col is not None and len(row) > p_col else None
+            ctr = (row[ctr_col] or "").strip() if ctr_col is not None and len(row) > ctr_col else ""
             signals.append({
                 "platform": "gsc",
                 "topic": topic,
-                "occurrences": clicks if clicks is not None else impressions,
+                # **需求大小 = 展示数**（有多少人在门外搜这个词），
+                # 不是点击数——点击数是**我们接住了多少**，不是需求。
+                # 「搜了 59 次、点了 0 次」恰恰是最该看的需求。
+                "occurrences": impressions if impressions is not None else clicks,
                 "source_url": f"gsc://{self.site_url or 'gsc'}/search-analytics/{topic}",
                 "captured_at": captured,
                 "snippet": (
                     f"clicks={clicks} impressions={impressions}"
-                    if clicks is not None or impressions is not None else ""
+                    + (f" ctr={ctr}" if ctr else "")
+                    + (f" pos={position}" if position is not None else "")
                 ),
+                # **内部排序用**（不进产出形状——产出形状是固定的）
+                "_demand": impressions if impressions is not None else (clicks or 0),
+                "_clicks": clicks if clicks is not None else 0,
             })
-            if len(signals) >= MAX_SIGNALS_PER_PLATFORM:
-                break
+
+        # **按需求大小排**（展示多的排前面）——
+        # GSC 自己导出的顺序是**按点击数**排的，
+        # 于是「搜了很多次、一次没点」的那些词全被压在后面看不见，
+        # 而那些词恰恰是我们最该去接的。
+        signals.sort(key=lambda s: (-int(s["_demand"]), -int(s["_clicks"])))
+        signals = signals[:MAX_SIGNALS_PER_PLATFORM]
+        for sig in signals:
+            sig.pop("_demand", None)
+            sig.pop("_clicks", None)
 
         return FetchResult(
             signals=signals,
-            status=PlatformStatus("gsc", "observed", f"CSV {len(signals)} 条", len(signals)),
+            status=PlatformStatus(
+                "gsc", "observed",
+                f"CSV {len(signals)} 条（按展示数排序取前 {MAX_SIGNALS_PER_PLATFORM}）",
+                len(signals),
+            ),
         )
 
     def _token(self) -> str:
@@ -656,10 +700,16 @@ def _find_header_row(rows: list[list[str]]) -> tuple[int, list[str]]:
 
     GSC 的导出前面可能有标题行、可能有筛选行 —— 表头是**含 clicks 或
     impressions 的那一行**。
+
+    **中英文表头都认**：Search Console 的界面语言变了，列名就跟着变
+    （中文界面导出的是「热门查询,点击次数,展示,点击率,排名」）。
+    写死一套 = 用户换个界面就读不出来，而且**读不出来时还看不出为什么**。
     """
     for idx, row in enumerate(rows[:20]):
         lowered = [str(c or "").strip().lower() for c in row]
         if any("clicks" in c for c in lowered) or any("impressions" in c for c in lowered):
+            return idx, [str(c or "").strip() for c in row]
+        if any(c in ("点击次数", "点击", "点击数", "展示", "展示次数", "曝光") for c in lowered):
             return idx, [str(c or "").strip() for c in row]
     return -1, []
 
@@ -679,5 +729,13 @@ def _pick_col(cols: dict[str, int], names: tuple[str, ...]) -> Optional[int]:
 def _safe_int(value: Any) -> Optional[int]:
     try:
         return int(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    """**排名这类小数**——「25.00」要读成 25.0，不能读成空"""
+    try:
+        return float(str(value).replace(",", "").strip())
     except (TypeError, ValueError):
         return None

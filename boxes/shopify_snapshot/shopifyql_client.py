@@ -33,6 +33,7 @@ token 只从环境变量读，**永远不出现在返回的 dict 里**，
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import time
@@ -45,6 +46,11 @@ from fulfillment_scopes.shopify.auth import resolve_token
 from fulfillment_scopes.shopify.auth import ShopifyAuthError
 from fulfillment_scopes.shopify.vocabulary import (
     DOMAIN_ENV as SHOPIFY_STORE_DOMAIN_ENV,
+)
+from fulfillment_scopes.shopify.vocabulary import (
+    MAX_TRANSPORT_RETRIES,
+    RETRYABLE_HTTP_STATUS,
+    TRANSPORT_BACKOFF_SECONDS,
 )
 from fulfillment_scopes.shopify.vocabulary import (
     TOKEN_ENV as SHOPIFY_ADMIN_TOKEN_ENV,
@@ -211,26 +217,48 @@ class ShopifyQLClient:
             },
         )
 
-        try:
-            if self.opener is not None:
-                response = self.opener(request, self.timeout)
-                raw = response.read()
-            else:
-                with urllib.request.urlopen(request, timeout=self.timeout) as resp:
-                    raw = resp.read()
-        except urllib.error.HTTPError as exc:  # pragma: no cover - 网络异常
-            if exc.code in (401, 403):
-                # 401/403 在这里几乎总是**权限**问题，不是网络问题——
-                # 说清缺什么，人就不用自己猜了。
-                raise ShopifyQLPermissionError(
-                    f"HTTP {exc.code}：权限不够——shopifyqlQuery 需要 "
-                    "read_reports scope + Level 2 受保护客户数据审批"
+        # **瞬时故障重试**——Shopify 店面会频发断连与限流。
+        # 那不是「这轮做不成」，那是「过两秒再来一次」；
+        # 不重试 = 一次断连把整轮打死了（实测：IncompleteRead 打死一轮快照）。
+        for attempt in range(MAX_TRANSPORT_RETRIES + 1):
+            try:
+                if self.opener is not None:
+                    response = self.opener(request, self.timeout)
+                    raw = response.read()
+                else:
+                    with urllib.request.urlopen(request, timeout=self.timeout) as resp:
+                        raw = resp.read()
+                break
+            except urllib.error.HTTPError as exc:  # pragma: no cover - 网络异常
+                if exc.code in (401, 403):
+                    # 401/403 在这里几乎总是**权限**问题，不是网络问题——
+                    # 说清缺什么，人就不用自己猜了。
+                    raise ShopifyQLPermissionError(
+                        f"HTTP {exc.code}：权限不够——shopifyqlQuery 需要 "
+                        "read_reports scope + Level 2 受保护客户数据审批"
+                    ) from exc
+                if exc.code in RETRYABLE_HTTP_STATUS and attempt < MAX_TRANSPORT_RETRIES:
+                    self._backoff(attempt)
+                    continue
+                raise ShopifyQLError(f"HTTP {exc.code}：ShopifyQL 请求失败") from exc
+            except (OSError, http.client.HTTPException) as exc:
+                # **连接断了 / 读断了 / SSL 断了**——都是瞬时的
+                # （OSError 盖住 URLError / ConnectionResetError / ssl.SSLError / 超时；
+                #  HTTPException 盖住 IncompleteRead / RemoteDisconnected）。
+                if attempt < MAX_TRANSPORT_RETRIES:
+                    self._backoff(attempt)
+                    continue
+                raise ShopifyQLError(
+                    f"连不上店铺（重试 {MAX_TRANSPORT_RETRIES} 次后）："
+                    f"{type(exc).__name__}: {exc}"
                 ) from exc
-            raise ShopifyQLError(f"HTTP {exc.code}：ShopifyQL 请求失败") from exc
-        except urllib.error.URLError as exc:  # pragma: no cover - 网络异常
-            raise ShopifyQLError(f"连不上店铺：{exc.reason}") from exc
 
         return self._read_payload(json.loads(raw.decode("utf-8")))
+
+    def _backoff(self, attempt: int) -> None:
+        """退避——**逐次变长，别把店面打得更狠**"""
+        index = min(attempt, len(TRANSPORT_BACKOFF_SECONDS) - 1)
+        self.sleeper(TRANSPORT_BACKOFF_SECONDS[index])
 
     def _read_payload(self, payload: dict[str, Any]) -> ShopifyQLResult:
         """把响应读成结果——**先看错误，再看数据**"""

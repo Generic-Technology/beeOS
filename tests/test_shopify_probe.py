@@ -22,7 +22,9 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import urllib.error
 from typing import Any
 
 import pytest
@@ -267,3 +269,77 @@ class TestTheProbe:
         start, end = _window(28)
         assert end == (date.today() - timedelta(days=1)).isoformat()
         assert start == (date.today() - timedelta(days=28)).isoformat()
+
+
+# ============================================================
+# 瞬时断连：店面会抽风，不能一次断连就打死一整轮
+# ============================================================
+
+
+class TestTheTransientDisconnect:
+    def test_it_retries_after_an_incomplete_read(self):
+        """**断连不是「这轮做不成」**——过两秒再来一次就好
+
+        实测：一次 `IncompleteRead` 打死了一整轮快照，
+        而那只是店面抖了一下。
+        """
+        calls: list[int] = []
+        waits: list[float] = []
+
+        def opener(request: Any, timeout: float) -> _FakeResponse:
+            calls.append(1)
+            if len(calls) == 1:
+                raise http.client.IncompleteRead(b"")
+            return _FakeResponse(_ok_payload([{"sessions": 168}]))
+
+        client = ShopifyQLClient(
+            store_domain="giftsjourneyrebirth.myshopify.com",
+            token="shpat_secret_token_value",
+            api_version="2026-01",
+            opener=opener,
+            sleeper=waits.append,
+        )
+        result = client.query("FROM sessions SHOW sessions")
+        assert result.rows == ({"sessions": 168},)
+        assert len(calls) == 2
+        assert waits and waits[0] > 0, "重试之间要退避，别把店面打得更狠"
+
+    def test_it_gives_up_after_the_retries_and_says_so(self):
+        """退避用完还断 → **失败要说清试了几次**"""
+        calls: list[int] = []
+
+        def opener(request: Any, timeout: float) -> _FakeResponse:
+            calls.append(1)
+            raise http.client.IncompleteRead(b"")
+
+        client = ShopifyQLClient(
+            store_domain="giftsjourneyrebirth.myshopify.com",
+            token="shpat_secret_token_value",
+            api_version="2026-01",
+            opener=opener,
+            sleeper=lambda _s: None,
+        )
+        with pytest.raises(ShopifyQLError) as exc:
+            client.query("FROM sessions SHOW sessions")
+        assert "重试" in str(exc.value)
+        assert len(calls) == 4      # 1 次 + 3 次重试
+
+    def test_a_permission_error_is_not_retried(self):
+        """**401/403 是权限问题**——重试一万次也一样"""
+        calls: list[int] = []
+
+        def opener(request: Any, timeout: float) -> _FakeResponse:
+            calls.append(1)
+            raise urllib.error.HTTPError(
+                request.full_url, 403, "Forbidden", {}, None)
+
+        client = ShopifyQLClient(
+            store_domain="giftsjourneyrebirth.myshopify.com",
+            token="shpat_secret_token_value",
+            api_version="2026-01",
+            opener=opener,
+            sleeper=lambda _s: None,
+        )
+        with pytest.raises(ShopifyQLPermissionError):
+            client.query("FROM sessions SHOW sessions")
+        assert len(calls) == 1, "权限错误不该重试"

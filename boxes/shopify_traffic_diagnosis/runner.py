@@ -96,6 +96,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _int(value: Any) -> int:
+    """**排序用的数字**——取不到就当 0
+
+    这个数只用来**排序**（哪个需求词更值得追），
+    不作为观测值报进产出——所以 0 在这里是「排最后」，
+    不是「测到了 0」。
+    """
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _facts_for_prompt(snapshot: dict[str, Any]) -> str:
     """给模型看的快照事实（只给事实，不给它结论）
 
@@ -208,33 +221,147 @@ def _tokens(text: str) -> set[str]:
     return out - _STOPWORDS
 
 
+#: **通用词**——它们几乎出现在每个 handle、每条搜索词里
+#: （personalized / custom / gift / photo / mom …）。
+#:
+#: 它们**不算「像」**：拿它们凑够门槛就是在制造巧合。
+#:
+#: 实测踩到的坑：「personalized globe lamp w」命中「月亮灯页」，
+#: 靠的就是 {personalized, lamp}——`personalized` 谁都有，
+#: 那个页面跟买家搜的「globe lamp」根本不是一回事。
+#: 把它剔掉之后，命中才算真命中。
+_GENERIC_TOKENS = frozenset({
+    # 定制形式
+    "personalized", "personalisation", "personalization", "personalise",
+    "personalize", "custom", "customized", "customised", "customize",
+    "customise", "gift", "gifts", "present", "presents", "photo", "photos",
+    "picture", "pictures", "diy", "made", "make", "unique", "special",
+    "beautiful", "best", "top", "new", "online", "shop", "wholesale", "bulk",
+    # 收礼的人（不是产品特征）
+    "mom", "mum", "dad", "him", "her", "they", "them", "kids", "kid",
+    "baby", "babies", "wife", "husband", "boyfriend", "girlfriend", "parent",
+    "parents", "family", "employee", "employees", "colleague", "colleagues",
+    "teacher", "boss", "friend", "friends", "customer", "customers",
+    "everyone", "anyone", "someone", "lover", "lovers",
+})
+
+#: **匹配门槛**：命中的内容词至少这么多个
+MATCH_MIN_WORDS = 2
+
+#: **匹配门槛**：查询里的内容词，至少被页面覆盖这么高
+#:
+#: 为什么还要覆盖率：查询比页面更具体时不该硬套。
+#: 「personalized globe lamp with speaker」里的 {globe, lamp, speaker}，
+#: 一个只卖 lamp 的页面覆盖 1/3 = 33% → 那是**别的东西**。
+MATCH_MIN_COVERAGE = 0.75
+
+
+def _stem(word: str) -> str:
+    """**词干**——只去尾部的 s
+
+    买家搜「crystal music **boxes**」，页面写的是「…music **box**」——
+    那是同一个东西。
+
+    **只比较时用词干，输出时保留原词**：
+    把词干塞进词集里会造出「christma」这种幽灵词
+    （christmas → christma）——它能跟任何带 christma 的东西对上，
+    还会被写进标题，那不是词。
+    """
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _demand_match(query: str, handle: str) -> tuple[int, float, set[str]]:
+    """**这个词有多像这一页**——(命中数, 覆盖率, 命中的词)
+
+    规则（**只看字面，不猜语义**）：
+    - 取查询与页面各自的**内容词**（通用词不算）；
+    - 按**词干**比对（单复数算同一个）；
+    - 要求命中 ≥ 2 个内容词，**且**覆盖查询内容词的 75% 以上。
+
+    **为什么要有覆盖率**：查询比页面更具体时不能硬套——
+    「globe lamp with speaker」不该落到一个只卖 lamp 的页面上。
+    """
+    q_words = _tokens(query) - _GENERIC_TOKENS
+    if not q_words:
+        return 0, 0.0, set()
+    p_stems = {_stem(w) for w in (_tokens(handle) - _GENERIC_TOKENS)}
+    hit = {w for w in q_words if _stem(w) in p_stems}
+    if not hit:
+        return 0, 0.0, set()
+    return len(hit), len(hit) / len(q_words), hit
+
+
+#: 站外平台的**人话名字**——产出里写「gsc」谁也看不懂
+_PLATFORM_LABELS = {
+    "gsc": "Google 搜索",
+    "reddit": "Reddit",
+    "etsy": "Etsy",
+    "pinterest": "Pinterest",
+}
+
+
+def _demand_terms(snapshot: dict[str, Any]) -> list[tuple[str, str, int]]:
+    """**买家打过的字**——站内 + 站外，两边一起
+
+    | 来源 | 是什么 | 说明 |
+    |---|---|---|
+    | 站内 | `site_search_terms` | **已经进了店**的买家打的字（搜了、没买成） |
+    | 站外 | `market_signals` | **还没进店**的人在 Google 等地方搜的字 |
+
+    **为什么要合起来看**：两边的字是同一种东西——「买家想要什么」。
+    区别只在**阶段**：
+    站内的字说明**需求已经到门口了但没接住**（改页面立刻能接）；
+    站外的字说明**门外的需求**（改标题让它能被搜到 → 未来的访客）。
+
+    **站内的优先级更高**（离成交更近），排序时排在前面。
+
+    返回 `(词, 来源, 需求大小)`——
+    **需求大小**是「有多少人搜过这个词」：
+    站内是搜索次数，站外是展示数（搜了多少次）。
+    同样命中两个词时，**需求大的那个词**才是值得追的。
+    """
+    out: list[tuple[str, str, int]] = []
+    for term in snapshot.get("site_search_terms") or []:
+        query = str(term.get("query") or "").strip()
+        if query:
+            out.append((query, "站内搜索", _int(term.get("searches"))))
+    for signal in snapshot.get("market_signals") or []:
+        topic = str(signal.get("topic") or "").strip()
+        if topic:
+            platform = str(signal.get("platform") or "").strip()
+            label = _PLATFORM_LABELS.get(platform, platform or "站外")
+            out.append((topic, f"站外（{label}）", _int(signal.get("occurrences"))))
+    return out
+
+
 def _demand_matched_page(
     snapshot: dict[str, Any],
     rows: list[dict[str, Any]],
-) -> tuple[str, int, str] | None:
+) -> tuple[str, int, str, str] | None:
     """**买家搜的词最像它、但它零成交**的那一页
 
-    **为什么用站内的搜索词**：那是**真实买家**打出来的字——
-    比任何爬来的线索都强，而且零合规风险。
+    **用买家打过的字**（站内的 + 站外的，见 `_demand_terms`）——
+    那是**真实需求**，比任何爬来的线索都强。
 
     **怎么算「像」**：买家搜的词 ∩ 这一页的 handle（标题的代理）
     命中的词越多，说明这一页就是他搜的那个东西。
     **只看字面，不猜语义**——「crystal ball」是不是「globe」，
     规则不猜（猜错了就会改错页）。
 
-    **门槛**：至少命中 2 个词才算「像」——
-    命中 1 个多半是巧合（很多 handle 都有 personalized）。
+    **门槛**：至少命中 2 个**内容词**，且覆盖查询内容词的 75%。
+    通用词（personalized / custom / gift / mom）**不算命中**——
+    拿它们凑数就是在制造巧合（见 `_GENERIC_TOKENS`）。
 
     **排序**：先看**没改过的**（改过的要留观察期），
-    再看零成交（需求在那儿却没接住），再看命中数，最后看 session 数。
+    再看零成交（需求在那儿却没接住），再看**站内词优先**（离成交更近），
+    再看**命中数**，再看**需求大小**（这个词有多少人搜过），
+    最后看 session 数。
 
-    返回 `(handle, 命中词数, 买家的那个词)`。
+    返回 `(handle, 命中词数, 买家的那个词, 那个词的来源)`。
     """
-    terms = [
-        str(t.get("query") or "").strip()
-        for t in (snapshot.get("site_search_terms") or [])
-        if str(t.get("query") or "").strip()
-    ]
+    terms = _demand_terms(snapshot)
     if not terms:
         return None
 
@@ -243,24 +370,23 @@ def _demand_matched_page(
     if not candidates:
         return None
 
-    best: tuple[str, int, str] | None = None
-    best_key: tuple[int, int, int, int] = (0, 0, 0, 0)
+    best: tuple[str, int, str, str] | None = None
+    best_key: tuple[int, int, int, int, int, int] = (0, 0, 0, 0, 0, 0)
     for row in candidates:
-        handle_tokens = _tokens(row["handle"])
-        if not handle_tokens:
-            continue
-        for query in terms:
-            overlap = _tokens(query) & handle_tokens
-            if len(overlap) < 2:
+        for query, source, demand in terms:
+            score, coverage, _hit = _demand_match(query, row["handle"])
+            if score < MATCH_MIN_WORDS or coverage < MATCH_MIN_COVERAGE:
                 continue
             # **没改过的优先**（改过的要留观察期）
             # **零成交优先**：有成交的页面说明它接住了需求
             fresh = 0 if row.get("recently_changed") else 1
             zero_sales = 1 if row["sales"] == 0 else 0
-            key = (fresh, zero_sales, len(overlap), row["sessions"])
+            # **站内词优先**（离成交更近）；站外词一样能选，只是排后
+            in_store = 1 if source == "站内搜索" else 0
+            key = (fresh, zero_sales, in_store, score, demand, row["sessions"])
             if key > best_key:
                 best_key = key
-                best = (row["handle"], len(overlap), query)
+                best = (row["handle"], score, query, source)
     return best
 
 
@@ -269,31 +395,37 @@ def _demand_keywords(snapshot: dict[str, Any], handle: str) -> dict[str, Any]:
 
     **从买家搜的词里来**——不是我们自己想出来的词。
     命中目标页的那几个词，就是买家打字时用的词；
-    页面照着这些词写，站内搜索和 AI 引荐才接得上。
+    页面照着这些词写，站内搜索、Google 和 AI 引荐才接得上。
 
     - `query`：买家打的那一句（原样）
     - `keywords`：那句话里的词（去掉 1 个字母的碎片）
+    - `source`：这个词来自哪儿（站内搜索 / 站外 GSC 等）
+
+    **站内 + 站外一起看**（见 `_demand_terms`）——
+    站外的词（GSC）正是「还没进店的人怎么搜的」，
+    把它们写进标题，就是给未来的访客铺路。
 
     找不到就返回空——**没有需求词就说没有**，
     不许拿店里的品类词来充数（那是另一回事）。
     """
     if not handle:
         return {}
-    handle_tokens = _tokens(handle)
-    best: tuple[int, str, set[str]] | None = None
-    for term in snapshot.get("site_search_terms") or []:
-        query = str(term.get("query") or "").strip()
-        if not query:
+    best: tuple[int, str, set[str], str] | None = None
+    best_key: tuple[int, int, int] = (-1, -1, -1)
+    for query, source, demand in _demand_terms(snapshot):
+        score, coverage, hit = _demand_match(query, handle)
+        if score < MATCH_MIN_WORDS or coverage < MATCH_MIN_COVERAGE:
             continue
-        overlap = _tokens(query) & handle_tokens
-        if len(overlap) < 2:
-            continue
-        if best is None or len(overlap) > best[0]:
-            best = (len(overlap), query, overlap)
+        # **与选页用同一套排序**（站内优先 → 命中数 → 需求大小），
+        # 这样「为什么选它」和「往标题里写什么词」永远说的是同一件事。
+        key = (1 if source == "站内搜索" else 0, score, demand)
+        if key > best_key:
+            best_key = key
+            best = (score, query, hit, source)
     if best is None:
         return {}
-    _score, query, overlap = best
-    return {"query": query, "keywords": sorted(overlap)}
+    _score, query, hit, source = best
+    return {"query": query, "keywords": sorted(hit), "source": source}
 
 
 def choose_landing_page(
@@ -367,10 +499,10 @@ def choose_landing_page(
     if strategy == "demand_match":
         picked = _demand_matched_page(snapshot, pool_all)
         if picked:
-            handle, score, query = picked
+            handle, score, query, source = picked
             return handle, (
                 f"按策略 demand_match 选：{handle}"
-                f"（买家站内搜的「{query}」最像它，命中 {score} 个词，"
+                f"（买家{source}的「{query}」最像它，命中 {score} 个词，"
                 f"但它零成交）"
             )
         strategy = "conversion_lift"  # 没有匹配上的页 → 退回
@@ -503,6 +635,9 @@ def diagnosis_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
                 "strategy": str(snapshot.get("strategy") or ""),
                 "target_demand_query": demand.get("query") or "",
                 "target_keywords": demand.get("keywords") or [],
+                # **这个词是从哪儿来的**——站内搜索（需求到门口了）
+                # 还是站外 GSC（门外的需求）——读的人要知道差在哪
+                "target_demand_source": demand.get("source") or "",
                 "reject_reason": "",
             }
         if attempt == 0:
@@ -635,6 +770,7 @@ def diagnosis_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         # **买家搜的那句话 + 这一轮要接住的词**（demand_match 时才有）
         "target_demand_query": str(input_data.get("target_demand_query") or ""),
         "target_keywords": list(input_data.get("target_keywords") or []),
+        "target_demand_source": str(input_data.get("target_demand_source") or ""),
         "snapshot_ref_present": True,
         "hypothesis_present": True,
         "evidence_validated": True,

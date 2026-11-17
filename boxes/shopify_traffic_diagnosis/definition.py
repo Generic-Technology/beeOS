@@ -35,10 +35,16 @@ from core.scaffold import BoxDeclaration
 
 from fulfillment_scopes.shopify.vocabulary import BOTTLENECK_STAGES
 
-ESCALATION_RULES = [
-    {"trigger": "hypothesis_present == false", "action": "escalate_to_human"},
-    {"trigger": "snapshot_ref_present == false", "action": "escalate_to_human"},
-]
+#: **没有一条需要升级给人**
+#:
+#: 「模型没给出结论」**不升级**——那不是「这次交付要不要放行」的决定，
+#: 那是「这一轮做不成」（再跑一遍的事）。
+#: 升级的后果：看板上攒下一条**没人答得了**的账
+#: （没有结论可放行，人能做的只是重跑），
+#: 而真正的原因（哪条判据没过）写在产出里没人看。
+#:
+#: 跟市场信号盒同一个口径（那边是「没配凭证」）。
+ESCALATION_RULES: list[dict[str, str]] = []
 
 DECLARATION = BoxDeclaration(
     id="shopify_traffic_diagnosis_box",
@@ -83,9 +89,18 @@ DECLARATION = BoxDeclaration(
         AcceptanceRule(metric="evidence_validated", op="eq", value=True),
     ],
     exceptions=[
-        ExceptionRule(condition="hypothesis_present == false", action="escalate"),
-        ExceptionRule(condition="evidence_validated == false", action="escalate"),
-        ExceptionRule(condition="snapshot_ref_present == false", action="escalate"),
+        # **模型没给出结论 / 没接住上游** → **明确的不交付**（no_deliver）。
+        #
+        # 为什么不是 escalate（升级给人判定）：
+        # 「这次交付要不要放行？」——**没有结论可放行**。
+        # 模型两次都不合格时产出的是空结论，人能做的只有「再跑一遍」，
+        # 不是「判一下」。挂一条等人判定的账，只会让看板上
+        # 攒下没人答得了的票，而真正的原因（哪条判据没过）写在别处。
+        #
+        # **触发顺序**：例外的匹配按声明顺序。
+        ExceptionRule(condition="hypothesis_present == false", action="no_deliver"),
+        ExceptionRule(condition="evidence_validated == false", action="no_deliver"),
+        ExceptionRule(condition="snapshot_ref_present == false", action="no_deliver"),
     ],
 
     # ---- 作业路线（Procedure）----

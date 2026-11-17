@@ -271,7 +271,7 @@ python scripts/new_box.py --help
   | [`learning_chinese/`](boxes/learning_chinese/README.md) | `learning_chinese_box` | Learning | 3 | 2 | live |
   | [`learning_english/`](boxes/learning_english/README.md) | `learning_english_box` | Learning | 3 | 2 | live |
   | [`learning_growth/`](boxes/learning_growth/README.md) | `learning_growth_box` | Learning | 4 | 2 | live |
-  | [`shopify_market_signal/`](boxes/shopify_market_signal/README.md) | `shopify_market_signal_box` | shopify_store | 3 | 4 | skeleton |
+  | [`shopify_market_signal/`](boxes/shopify_market_signal/README.md) | `shopify_market_signal_box` | shopify_store | 3 | 4 | live |
   | [`shopify_snapshot/`](boxes/shopify_snapshot/README.md) | `shopify_snapshot_box` | shopify_store | 7 | 2 | live |
   | [`shopify_traffic_diagnosis/`](boxes/shopify_traffic_diagnosis/README.md) | `shopify_traffic_diagnosis_box` | shopify_store | 3 | 3 | live |
   | [`shopify_acquisition_experiment/`](boxes/shopify_acquisition_experiment/README.md) | `shopify_acquisition_experiment_box` | shopify_store | 4 | 5 | live |

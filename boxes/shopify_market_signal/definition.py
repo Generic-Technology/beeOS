@@ -79,7 +79,11 @@ DECLARATION = BoxDeclaration(
     result_type="market_signals",
     result_schema="schema_market_signal_output",
     result_description="这一轮站外的需求主题清单（带出处、无个人信息）",
-    maturity="skeleton",
+    # **live**：2026-11-18 真跑过——真店的 GSC 导出（中文表头）读出 25 条需求词，
+    # 整轮交付并进了档案。
+    # （Reddit / Etsy / Pinterest 那三条路**还没跑过**：它们要凭证才走得到，
+    #  没凭证时那些平台标 `unverifiable`，其余平台照常——不拖垮整轮。）
+    maturity="live",
     artifact_view="generic",
     acceptance=[
         # **安全底线**：产出里不能有一个邮箱/手机号

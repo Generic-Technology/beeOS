@@ -101,8 +101,80 @@ class TestTheGscCsvPath:
         assert topics == ["personalized stocking", "santa hat"], topics
         # 汇总行不算需求
         assert "Total" not in topics
-        assert result.signals[0]["occurrences"] == 4
+        # **需求大小 = 展示数**（有多少人搜过），不是点击数——
+        # 点击数是「我们接住了多少」，不是需求。
+        assert result.signals[0]["occurrences"] == 120
         assert result.signals[0]["source_url"]
+
+    def test_it_reads_the_chinese_header(self, tmp_path):
+        """**中文界面导出的表头也得读得出**——写死英文 = 用户换个界面就断"""
+        csv_path = tmp_path / "gsc_cn.csv"
+        csv_path.write_text(
+            "热门查询,点击次数,展示,点击率,排名\n"
+            "personalized pet gifts,0,59,0%,71.36\n"
+            "gifts journey,2,8,25%,26.75\n"
+            "总计,2,67,0%,26.75\n",
+            encoding="utf-8",
+        )
+        client = GscClient(csv_path=str(csv_path))
+        result = client.fetch(["personalized pet gifts"], 28)
+
+        assert result.status.status == "observed", result.status.detail
+        topics = [s["topic"] for s in result.signals]
+        assert "总计" not in topics
+        assert topics[0] == "personalized pet gifts"
+        assert result.signals[0]["occurrences"] == 59
+
+    def test_it_sorts_by_demand_not_by_the_export_order(self, tmp_path):
+        """GSC 自己按点击数排——「搜了很多次、一次没点」的需求词全被压在后面
+
+        那些词恰恰是我们最该去接的，所以按**展示数**排。
+        """
+        csv_path = tmp_path / "gsc_order.csv"
+        csv_path.write_text(
+            "Top queries,Clicks,Impressions,CTR,Position\n"
+            "gifts journey,2,8,0.25,26.75\n"
+            "personalized pet gifts,0,59,0,71.36\n"
+            "custom pet gifts,0,37,0,69.95\n",
+            encoding="utf-8",
+        )
+        client = GscClient(csv_path=str(csv_path))
+        result = client.fetch([], 28)
+        topics = [s["topic"] for s in result.signals]
+        assert topics[0] == "personalized pet gifts", topics
+        assert topics[1] == "custom pet gifts", topics
+
+    def test_it_keeps_position_in_the_snippet(self, tmp_path):
+        """**排名是判断「值不值得改」的依据**
+
+        「第一页却 0 点击」= 我们排在前面但没接住——
+        这是最该改的一类页面。
+        """
+        csv_path = tmp_path / "gsc_pos.csv"
+        csv_path.write_text(
+            "热门查询,点击次数,展示,点击率,排名\n"
+            "crystal music box,0,27,0%,25\n",
+            encoding="utf-8",
+        )
+        client = GscClient(csv_path=str(csv_path))
+        result = client.fetch([], 28)
+        snippet = result.signals[0]["snippet"]
+        assert "pos=25" in snippet
+        assert "clicks=0" in snippet
+
+    def test_the_pages_table_says_which_table_it_wanted(self, tmp_path):
+        """Search Console 一次导出好几张表——拿错表要说清楚是哪张"""
+        csv_path = tmp_path / "gsc_pages.csv"
+        csv_path.write_text(
+            "排名靠前的网页,点击次数,展示,点击率,排名\n"
+            "https://giftsjourneyshop.com/,7,32,0.21,7.69\n",
+            encoding="utf-8",
+        )
+        client = GscClient(csv_path=str(csv_path))
+        result = client.fetch([], 28)
+        assert result.status.status == "unverifiable"
+        assert "热门查询" in result.status.detail
+        assert "网页" in result.status.detail
 
     def test_it_tolerates_a_different_header(self, tmp_path):
         """GSC 导出表头会变——按名字猜列，不写死"""

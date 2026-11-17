@@ -65,7 +65,7 @@ _DRAFT_PROMPT = """\
 主问题假设：{hypothesis}
 当前标题：{current_title}
 当前正文（前 800 字）：{current_description}
-买家在站内搜的词：{demand_query}
+买家搜的词（站内搜索 / Google 搜索）：{demand_query}
 这一轮要接住的词：{demand_keywords}
 
 【硬要求】
@@ -78,7 +78,10 @@ _DRAFT_PROMPT = """\
    - descriptionHtml：正文（HTML 片段）。要包含：这是什么、怎么个性化、
      送谁合适、什么时候要下单（圣诞有交付期）、怎么下单。
      正文里**不许出现未经证实的承诺**（比如「24 小时送达」「100% 满意」）。
-   - seoTitle：SEO 标题，**不超过 70 个字符**。
+   - seoTitle：SEO 标题，**不超过 70 个字符**，
+     **而且不能和 title 一字不差**——
+     Google 里标题与 SEO 标题挨着显示，写成一样就白白浪费了一条位置；
+     换个说法，把「这一轮要接住的词」自然地放进去。
    - seoDescription：SEO 描述，**不超过 160 个字符**。
      **它就是 Google 搜索结果里给买家看的那句话**——
      所以原来描述里的**硬事实要留着**（价格、尺寸/规格、适用人数、
@@ -91,7 +94,8 @@ _DRAFT_PROMPT = """\
   "seoDescription": "...", "tags": ["..."]}}
 
 【买家搜的词怎么用】
-5. 「这一轮要接住的词」是**真实买家在店里打出来的字**——
+5. 「这一轮要接住的词」是**真实买家打出来的字**（店里的站内搜索，
+   或 Google 搜索里他们搜的词）——
    标题和正文要**自然地包含这些词**，
    这样买家搜同样的词时才搜得到我们（站内搜索、搜索引擎、AI 引荐都靠这个）。
 6. **但不许为了塞词而写假话**：只有当那个词说的确实是这个商品时才能用。
@@ -215,9 +219,9 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         current_description=(baseline_fields["descriptionHtml"] or "（空）")[:4000],
         # **买家搜的那句话 + 这一轮要接住的词**——
         # 从诊断盒传下来（那边是从真实搜索词里算的）。
-        demand_query=diagnosis.get("target_demand_query") or "（这轮没有对应的站内搜索词）",
+        demand_query=diagnosis.get("target_demand_query") or "（这轮没有对应的买家搜索词）",
         demand_keywords=", ".join(demand_keywords) if demand_keywords
-        else "（这轮没有对应的站内搜索词——按商品页本身写，别硬塞词）",
+        else "（这轮没有对应的买家搜索词——按商品页本身写，别硬塞词）",
     )
 
     # **起草两次**：第一次不合格就把问题写回提示词再问一次
