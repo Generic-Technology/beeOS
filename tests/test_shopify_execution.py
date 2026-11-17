@@ -882,3 +882,60 @@ class TestTheSeoTitleMustNotEqualTheProductTitle:
         })
         assert part.get("applied") is False, "没存进去也算交付？"
         assert "没存进去" in str(part.get("reject_reason"))
+
+
+class TestTheSeoDescriptionKeepsItsFacts:
+    """**SEO 描述是 Google 摘要里给买家看的那句话**
+
+    正文的事实我们守住了，**描述里的事实没人管**——
+    而「$41.90」「Order by Dec 1」正是买家点进来的理由。
+    掉了它，Google 的摘要就少一个理由 → 点击率下降 → 访客变少。
+    """
+
+    def test_the_price_and_the_deadline_must_survive(self):
+        base = {
+            "seo.title": "Personalized Fair Isle Christmas Stocking with Embroidered Name",
+            "seo.description": (
+                "Wool-blend Fair Isle knit Christmas stocking with a name embroidered "
+                "on the cuff, $41.90 ($33.90 without a name). "
+                "12 designs, 3 fonts. Order by Dec 1"
+            ),
+        }
+        draft = {
+            "seo.title": "Personalized Christmas Stocking Gift with Embroidered Name",
+            "seo.description": (
+                "A beautiful personalized Christmas stocking with an embroidered "
+                "name. The perfect personalized gift for family and friends."
+            ),
+        }
+        missing = exp_runner._missing_seo_facts(base, draft)
+        assert "$41.90" in missing, missing
+        assert "$33.90" in missing, missing
+        assert "Dec 1" in missing, missing
+
+    def test_a_draft_that_keeps_the_facts_passes(self):
+        base = {
+            "seo.description": (
+                "Wool-blend Christmas stocking, $41.90 ($33.90 without a name). "
+                "12 designs, 3 fonts. Order by Dec 1"
+            ),
+        }
+        draft = {
+            "seo.description": (
+                "Personalized wool-blend Christmas stocking, $41.90 ($33.90 "
+                "without a name). 12 designs, 3 fonts. Order by Dec 1 for Christmas."
+            ),
+        }
+        assert exp_runner._missing_seo_facts(base, draft) == []
+
+    def test_the_number_of_people_survives(self):
+        base = {"seo.description": "A personalized 3D night lamp. For photos of 1 to 10 people."}
+        draft = {"seo.description": "Turn a photo into a personalized 3D lamp gift."}
+        missing = exp_runner._missing_seo_facts(base, draft)
+        assert missing, missing
+
+    def test_bare_numbers_are_not_facts(self):
+        """「3」这种裸数字到处都是，只有**带单位的短语**才算事实"""
+        base = {"seo.description": "3 fonts, 12 designs"}
+        draft = {"seo.description": "A personalized gift with 3 fonts and 12 designs, order by Nov 26"}
+        assert exp_runner._missing_seo_facts(base, draft) == []

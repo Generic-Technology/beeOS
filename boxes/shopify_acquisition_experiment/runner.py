@@ -80,6 +80,10 @@ _DRAFT_PROMPT = """\
      正文里**不许出现未经证实的承诺**（比如「24 小时送达」「100% 满意」）。
    - seoTitle：SEO 标题，**不超过 70 个字符**。
    - seoDescription：SEO 描述，**不超过 160 个字符**。
+     **它就是 Google 搜索结果里给买家看的那句话**——
+     所以原来描述里的**硬事实要留着**（价格、尺寸/规格、适用人数、
+     款数字体数、交付截止日）：那是买家点进来的理由。
+     在原描述上**加需求词**，别重写成一句没有信息量的广告语。
    - tags：3 到 6 个标签。
 3. **不许编造**：没给的信息不要写（材质、尺寸、退货政策、价格一律不要编）。
 4. 只用 JSON 回答：
@@ -238,6 +242,13 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
             if missing:
                 problems = ["把原正文里的事实弄丢了：" + ", ".join(missing)]
         if not problems:
+            # **SEO 描述里的硬事实也不能丢**——
+            # 那是 Google 摘要里给买家看的理由（价格 / 尺寸 / 交付截止日）。
+            # 正文守住了、描述没守住，等于把「点进来的理由」删了。
+            missing_seo = _missing_seo_facts(baseline_fields, draft)
+            if missing_seo:
+                problems = ["SEO 描述里弄丢了这些事实：" + ", ".join(missing_seo)]
+        if not problems:
             break
         # **把问题写回提示词**——再说一次，别原地作废
         feedback = (
@@ -388,6 +399,52 @@ def _missing_facts(baseline_html: str, draft_html: str) -> list[str]:
     missing = before - after
     # 「1」这种太常见的数字不单独判（它可能是列表序号，不一定是事实）
     return sorted(missing, key=lambda t: (len(t), t))
+
+
+#: **带单位的词**——它们是「事实短语」的一部分
+_FACT_UNITS = (
+    "in|inch|inches|people|designs|fonts|styles|sizes|business days|"
+    "days|hours|colors|colours|pieces|pcs|reviews|orders"
+)
+
+#: 月份（用于「交付截止日」这种事实）
+_MONTHS = (
+    "January|February|March|April|May|June|July|August|September|"
+    "October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec"
+)
+
+
+def _fact_phrases(text: str) -> set[str]:
+    """**带单位的事实短语**——价格、尺寸、人数、款数、交付截止日
+
+    **为什么要单独一套**：SEO 描述（`seo.description`）是
+    **Google 摘要里给买家看的那句话**——
+    里面掉了「$41.90」「Order by Dec 1」，买家就少了一个点进来的理由。
+    而「1」「3」这种裸数字在描述里到处都是，用**带单位的短语**才判得准。
+    """
+    raw = str(text or "")
+    out: set[str] = set()
+    for m in re.finditer(r"\$\s*[\d,]+(?:\.\d{1,2})?", raw):
+        out.add(re.sub(r"\s+", "", m.group(0)))
+    for m in re.finditer(rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}}\b", raw, re.I):
+        out.add(re.sub(r"\s+", " ", m.group(0)).strip())
+    for m in re.finditer(rf"\b(\d+(?:\.\d+)?)\s*({_FACT_UNITS})\b", raw, re.I):
+        out.add(f"{m.group(1)} {m.group(2).lower()}")
+    return out
+
+
+def _missing_seo_facts(baseline: dict[str, Any], draft: dict[str, Any]) -> list[str]:
+    """**SEO 描述里丢了哪些硬事实**（价格 / 尺寸 / 人数 / 截止日）
+
+    正文的事实我们已经在守；**SEO 描述的事实没人管**——
+    而它才是 Google 摘要里给买家看的理由。
+    """
+    before: set[str] = set()
+    after: set[str] = set()
+    for key in ("seo.title", "seo.description"):
+        before |= _fact_phrases(str(baseline.get(key) or ""))
+        after |= _fact_phrases(str(draft.get(key) or ""))
+    return sorted(before - after)
 
 
 def _validate_draft(raw: Any) -> tuple[dict[str, Any], list[str]]:
