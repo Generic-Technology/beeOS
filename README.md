@@ -274,7 +274,7 @@ python scripts/new_box.py --help
   | [`shopify_market_signal/`](boxes/shopify_market_signal/README.md) | `shopify_market_signal_box` | shopify_store | 3 | 4 | skeleton |
   | [`shopify_snapshot/`](boxes/shopify_snapshot/README.md) | `shopify_snapshot_box` | shopify_store | 7 | 2 | live |
   | [`shopify_traffic_diagnosis/`](boxes/shopify_traffic_diagnosis/README.md) | `shopify_traffic_diagnosis_box` | shopify_store | 3 | 3 | live |
-  | [`shopify_acquisition_experiment/`](boxes/shopify_acquisition_experiment/README.md) | `shopify_acquisition_experiment_box` | shopify_store | 4 | 5 | skeleton |
+  | [`shopify_acquisition_experiment/`](boxes/shopify_acquisition_experiment/README.md) | `shopify_acquisition_experiment_box` | shopify_store | 4 | 5 | live |
   | [`shopify_archive/`](boxes/shopify_archive/README.md) | `shopify_archive_box` | shopify_store | 4 | 3 | live |
 
 - **`runtime/`** — 执行运行时（**不含任何业务知识**）
