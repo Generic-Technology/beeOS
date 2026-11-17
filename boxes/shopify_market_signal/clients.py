@@ -479,7 +479,24 @@ class RedditClient:
 class EtsyClient:
     """Etsy 官方 API v3（**官方 API，不爬**）
 
-    只取公开的在售商品标题/描述 —— 用来看**同类目买家在找什么**。
+    ## 它**不是需求信号源**（2026-11 核实）
+
+    我们要的是「**别人卖什么、买家搜什么**」——跨店的公开需求。
+    但 Etsy 官方 API 的形状是「**卖家管自己的店**」：
+
+    - 我们的代码调的是 `/v3/application/listings/active`——
+      **`/v3/application/` 命名空间 = 拿令牌的那家店的商品**，
+      不是全站的；而且它要 OAuth Bearer（2026-02 起还要
+      `x-api-key` 里带 `keystring:secret`），只发 key 会被 401/403。
+    - 想跨店看别人的商品，Etsy **只准 scraping**（官方明令禁止）；
+      跨店 OAuth 又需要**对方卖家授权**——那不是我们要的信号。
+
+    → 所以这里的 Etsy 是「**我们自己也在 Etsy 开店时的运营工具**」，
+    不是站外需求源。凭证有了它能查自己店的商品，
+    但**别指望它给出「买家在找什么」**。
+
+    保留实现是因为：政策会变（就像 Reddit 那样），
+    代码留着，真变成可用了不用重写。
     """
 
     LISTINGS_URL = "https://openapi.etsy.com/v3/application/listings/active"
@@ -499,7 +516,11 @@ class EtsyClient:
     def fetch(self, keywords: list[str], window_days: int) -> FetchResult:
         if not self.api_key:
             return FetchResult(status=PlatformStatus(
-                "etsy", "unverifiable", "没配 ETSY_API_KEY（官方 API 要先注册 app）"))
+                "etsy", "unverifiable",
+                "**Etsy 给不了站外需求信号**：它的 API 是给你管**自己店**的"
+                "（/v3/application/ 只返回你店的商品，还要 OAuth），"
+                "跨店数据官方只准 scraping（明令禁止）。"
+                "需要的是「买家搜什么」的话，用 GSC。"))
         captured = self.now()
         signals: list[dict[str, Any]] = []
         failures: list[str] = []
@@ -548,7 +569,20 @@ class EtsyClient:
 class PinterestClient:
     """Pinterest API v5（**官方 API，不爬**）
 
-    只取公开 pin 的标题/描述 —— 用来看「这类东西在 Pinterest 上怎么被搜」。
+    ## 它**不是需求信号源**（2026-11 核实）
+
+    我们要的是「**别人在搜什么、别人在 pin 什么**」——全站的公开需求。
+    但 Pinterest 官方 v5 的形状是「**广告主/商家管自己的账号**」：
+
+    - 官方文档写明：`pin search` **只覆盖你自己的 Pin**，
+      「search across all Pins is a beta **not available to every app**」；
+    - 注册还要**商业账号**（个人账号不能注册 app）+
+      app 申请**每个工作日审一次**；Trial 额度 1000 请求/天。
+
+    → 所以这里的 Pinterest 是「**我们自己也在 Pinterest 开店时的运营工具**」，
+    不是站外需求源。**别指望它给出「别人在搜什么」**。
+
+    保留实现是因为：政策会变，代码留着，真变成可用了不用重写。
     """
 
     SEARCH_URL = "https://api.pinterest.com/v5/pins/search"
@@ -567,7 +601,10 @@ class PinterestClient:
         if not self.access_token:
             return FetchResult(status=PlatformStatus(
                 "pinterest", "unverifiable",
-                "没配 PINTEREST_ACCESS_TOKEN（官方 API 要先注册 app）"))
+                "**Pinterest 给不了站外需求信号**：官方 pin 搜索只覆盖"
+                "**你自己的 Pin**，全站搜索是 beta、不给普通 app；"
+                "注册还要商业账号 + 每个工作日审一次。"
+                "需要「别人在搜什么」的话，用 GSC。"))
         captured = self.now()
         signals: list[dict[str, Any]] = []
         failures: list[str] = []
