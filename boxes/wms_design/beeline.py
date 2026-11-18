@@ -38,7 +38,10 @@ beeline 跟盒子是 **1:1 且不可分割的**：它引用的 schema id 全部�
 from __future__ import annotations
 
 from core.beeline_models import Idempotency
+from core.plugins import PluginSpec
 from core.scaffold import Component
+
+from boxes.wms_design.plugins import PACKAGE_GATE_PLUGIN
 
 
 #: **幂等声明——逐 op 说的是真话**（2026-11-01 改）
@@ -147,5 +150,29 @@ COMPONENTS: list[Component] = [
         next=[],
         bee_type="design_packager_impl",
         idempotency=IDEMPOTENT_BY_SET,
+        # **打包之前的准入闸**（op 级业务插件）：
+        # 证据齐不齐，齐了才许打包。
+        #
+        # **以前这一段没有闸**——证据腿漏了字段，打包腿照样把包打出来交付了
+        # （`requirement_count` 漏在外面、evidence 那一跳漏过好几次东西，
+        # 每次都是交付之后才发现的）。
+        plugins=[
+            PluginSpec(
+                id=PACKAGE_GATE_PLUGIN,
+                extension_point="op.before",
+                params={
+                    "required_fields": [
+                        "requirement_count",
+                        "requirement_coverage",
+                        "rule_consistency",
+                        "reference_integrity",
+                        "structural_compliance",
+                        "expectation_completeness",
+                        "expectations",
+                        "evidence_detail",
+                    ],
+                },
+            ),
+        ],
     ),
 ]

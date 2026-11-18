@@ -194,3 +194,82 @@ def register_design_output_check() -> None:
         )
     )
     register_implementation(OUTPUT_CHECK_IMPL, check_design_output)
+
+
+# ============================================================
+# op 级插件：打包之前的准入闸
+# ============================================================
+
+#: 打包准入插件的类型 id（业务专有）
+PACKAGE_GATE_PLUGIN = "wms_design_package_gate"
+
+#: 它的实现键
+PACKAGE_GATE_IMPL = "wms_design.package_gate"
+
+#: op 级「执行前」钩子（runtime 留的钩子）
+EXTENSION_OP_BEFORE = "op.before"
+
+
+class DesignPackageGateParams(BaseModel):
+    """设计包打包前的准入规则——**业务规矩**
+
+    **不许静默吞字段**：写错当场报错。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    required_fields: list[str] = Field(
+        default_factory=list,
+        description="证据里必须带到、且不许是空的字段名",
+    )
+
+
+def gate_design_package(
+    view: dict[str, Any], params: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    """**打包之前**：证据齐不齐？
+
+    **为什么这是业务**：设计盒的规矩是「判了就要带出来」——
+    证据腿算出来的东西，必须**原样**进到打包的产出里。
+
+    **以前这一段没有闸**：证据腿漏了字段，打包腿照样把包打出来交付了。
+    这条腿上翻过好几次车（`requirement_count` 漏在外面、
+    evidence 那一跳漏过好几次东西）——每次都是**交付出去之后**才发现的。
+
+    **这个闸在打包之前**：不齐就不许打包 ✗（不是交付完了再回头说）。
+
+    **通过返回 `None`，不通过返回 `{"problems": [...]}`**——
+    准入钩子用的是 `verdict` 契约 ✓。
+    """
+    input_data = view.get("input") or {}
+    rules = DesignPackageGateParams.model_validate(params or {})
+
+    problems: list[str] = []
+    for name in rules.required_fields:
+        if name not in input_data:
+            problems.append(
+                f"证据里没有「{name}」——不能就这么打包交付"
+            )
+        elif input_data[name] is None:
+            problems.append(
+                f"证据里的「{name}」是空的——不能就这么打包交付"
+            )
+
+    if not problems:
+        return None
+    return {"problems": problems}
+
+
+def register_design_package_gate() -> None:
+    """登记这个 op 级业务插件"""
+    register_plugin_type(
+        PluginType(
+            id=PACKAGE_GATE_PLUGIN,
+            allowed_hosts=("op",),
+            extension_points=(EXTENSION_OP_BEFORE,),
+            implementation_key=PACKAGE_GATE_IMPL,
+            params_model=DesignPackageGateParams,
+            summary="设计包打包前的准入：证据必须齐（业务规矩，不是形状）",
+        )
+    )
+    register_implementation(PACKAGE_GATE_IMPL, gate_design_package)

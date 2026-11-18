@@ -49,6 +49,18 @@ from runtime.models import ALL_DECISIONS, ALLOWED_TRANSITIONS, TaskRun, TaskRunS
 #: 它**不是**通用的「执行后」——挂在上面的是「这次履约的终态由谁定」。
 EXTENSION_ESCALATE = "box.escalate"
 
+#: op 级「执行前」钩子（准入）
+#:
+#: **看得到这一跳的输入**，返回 None = 放行；
+#: 返回问题清单 = **拒绝执行这一跳**（履约中止）。
+EXTENSION_OP_BEFORE = "op.before"
+
+#: op 级「执行后」钩子（收尾）
+#:
+#: **看得到这一跳的输入与输出**，返回 None = 没什么要补的；
+#: 返回 `{"append": {字段: [要追加的项]}}` = 往产出里**追加**。
+EXTENSION_OP_AFTER = "op.after"
+
 #: 盒级核验钩子
 #:
 #: **触发时机**：产出定案之后、验收之前。
@@ -90,6 +102,30 @@ def register_runtime_extension_points() -> None:
             # 这里只引用它，不另抄一份。
             decision_values=ALL_DECISIONS,
             summary="产出验收失败、且例外要求升级时的决策点",
+        )
+    )
+    register_extension_point(
+        ExtensionPoint(
+            id=EXTENSION_OP_BEFORE,
+            host_kinds=("op",),
+            kind="action",
+            max_bindings_per_host=1,
+            view_keys=("input",),
+            return_contract="verdict",
+            granularity="per_call",
+            summary="这一跳执行之前：看得到输入，可以拒绝执行",
+        )
+    )
+    register_extension_point(
+        ExtensionPoint(
+            id=EXTENSION_OP_AFTER,
+            host_kinds=("op",),
+            kind="action",
+            max_bindings_per_host=1,
+            view_keys=("input", "output"),
+            return_contract="patch",
+            granularity="per_call",
+            summary="这一跳执行之后：看得到输入与输出，可以往产出里追加",
         )
     )
     register_extension_point(
@@ -136,6 +172,17 @@ class PluginFailure(Exception):
 
 class PluginContractError(Exception):
     """插件返回的东西不符合扩展点的返回契约"""
+
+
+class PluginRejected(Exception):
+    """**插件拒绝**——不是插件坏了，是它说「不行」
+
+    两者要分开：
+    - 插件坏了（抛异常）→ 机制问题
+    - 插件拒绝（准入没过）→ 业务问题
+
+    混成一个，读者就分不清「这个能力没跑起来」和「它跑起来了、结论是不行」。
+    """
 
 
 # ============================================================
@@ -207,11 +254,35 @@ def check_return(point: ExtensionPoint, value: Any) -> Any:
             )
         return value
     if point.return_contract == "patch":
-        if value is not None and not isinstance(value, dict):
+        # **补丁的形状只有一个**：`{"append": {字段: [要追加的项, ...]}}`
+        #
+        # **不许有别的键**：补丁是唯一能改产出内容的东西，
+        # 形状放开 = 「改」与「追加」分不清了——
+        # 而「改」会让下游读到的产出与声明的契约对不上。
+        if value is None:
+            return None
+        if not isinstance(value, dict) or "append" not in value:
             raise PluginContractError(
-                f"扩展点 {point.id!r} 只许返回 None 或一份补丁 dict，"
-                f"收到的是 {type(value).__name__}"
+                f"扩展点 {point.id!r} 的补丁只许是 "
+                f"{{'append': {{字段: [要追加的项]}}}}，收到的是 {value!r}"
             )
+        extra = sorted(set(value) - {"append"})
+        if extra:
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的补丁只许有 'append'，多了：{extra}"
+            )
+        append = value["append"]
+        if not isinstance(append, dict):
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 的 'append' 必须是 dict，"
+                f"收到的是 {type(append).__name__}"
+            )
+        for field, items in append.items():
+            if not isinstance(items, list):
+                raise PluginContractError(
+                    f"扩展点 {point.id!r} 的 'append.{field}' 必须是列表，"
+                    f"收到的是 {type(items).__name__}"
+                )
         return value
     if point.return_contract == "verdict":
         # **核验结论**：None = 通过；{"problems": [str, ...]} = 不通过。
@@ -385,3 +456,55 @@ def verify_output(
             continue
         problems.extend(str(p) for p in (value.get("problems") or []))
     return problems
+
+
+def verdict_problems(results: Sequence[Any]) -> list[str]:
+    """verdict 类钩子的返回值 → **问题清单**（空 = 通过）
+
+    多个插件的问题**按宿主声明顺序**连起来——
+    读者要能看出「一共被拒了几条、每条为什么」。
+    """
+    problems: list[str] = []
+    for value in results:
+        if not value:
+            continue
+        problems.extend(str(p) for p in (value.get("problems") or []))
+    return problems
+
+
+def merge_patch(
+    output: dict[str, Any],
+    patch: Any,
+    *,
+    allowed_targets: Sequence[str] = (),
+) -> dict[str, Any]:
+    """把插件返回的补丁合并进产出
+
+    **只许往 list 尾部追加**：
+    - 不许改已有值（那会让「声明的契约」与「实际交付的」对不上）
+    - 不许往不在 `allowed_targets` 里的字段追加
+      （那是**业务插件自己声明**的范围——机制只负责执行这条声明）
+    - 不许往不是 list 的字段追加（那就不是「追加」，是「改」）
+
+    **合并后要重新过形状闸**：那是 `runtime/finalize.py` 的活
+    （盒级形状闸在整条链跑完之后验最终产出 ✓）。
+    """
+    if not patch:
+        return output
+    merged = dict(output)
+    for field, items in (patch.get("append") or {}).items():
+        if allowed_targets and field not in allowed_targets:
+            raise PluginContractError(
+                f"补丁想追加到「{field}」，但这类插件只许追加到 "
+                f"{list(allowed_targets)}——越界了"
+            )
+        current = merged.get(field)
+        if current is None:
+            current = []
+        if not isinstance(current, list):
+            raise PluginContractError(
+                f"补丁想追加到「{field}」，但它现在不是列表"
+                f"（{type(current).__name__}）——那就不是「追加」，是「改」"
+            )
+        merged[field] = list(current) + list(items)
+    return merged

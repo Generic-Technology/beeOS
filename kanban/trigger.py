@@ -1728,7 +1728,14 @@ def trigger_task(
             "a box must carry its own op implementations "
             "(boxes/<box>/runner.py) so it stays self-contained"
         )
-    task_run = BeelineExecutor(runner).execute(task_run, beeline, payload)
+    # **把插件上下文交给执行器**——
+    # op 上的插件声明要有人执行，否则就是「声明了却一次都没跑过」。
+    # 用的是该盒装配时冻结的快照 ✓（装配期验过的那份 = 运行时跑的那份）。
+    executor = BeelineExecutor(
+        runner,
+        plugin_context=PLUGIN_CONTEXT_REGISTRY.get(box_id),
+    )
+    task_run = executor.execute(task_run, beeline, payload)
 
     # ===== 产出定案后的统一收口（形状闸 + 盒级核验）=====
     #

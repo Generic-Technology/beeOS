@@ -32,7 +32,16 @@ from typing import Any, Callable, Optional
 
 from core.beeline_models import Beeline, NextRef, Operation
 from runtime.llm import LLMError, LLMParseError
+from core.plugins import PluginContext
 from runtime.models import OperationRecord, TaskRun, TaskRunStatus
+from runtime.plugins import (
+    EXTENSION_OP_AFTER,
+    EXTENSION_OP_BEFORE,
+    PluginRejected,
+    call_plugins,
+    merge_patch,
+    verdict_problems,
+)
 from runtime.runner import HandlerRunner
 
 
@@ -206,7 +215,11 @@ class BeelineExecutor:
     加盒子必须改内核。兜底掉的代价是盒子带不走自己的实现。
     """
 
-    def __init__(self, runner: HandlerRunner) -> None:
+    def __init__(
+        self,
+        runner: HandlerRunner,
+        plugin_context: Optional[PluginContext] = None,
+    ) -> None:
         if runner is None:
             raise ValueError(
                 "BeelineExecutor requires a runner from the box "
@@ -214,6 +227,68 @@ class BeelineExecutor:
                 "falls back to a shared handler table"
             )
         self.runner = runner
+        # **插件上下文（装配时冻结的快照）**——
+        # 没有它就等于没有插件：op 上的插件声明不会被调用。
+        # 「装配期验过的那份 = 运行时跑的那份」✓
+        self.plugin_context = plugin_context
+
+    def _run_op_hooks(
+        self,
+        task_run: TaskRun,
+        op: Operation,
+        point_id: str,
+        view: dict[str, Any],
+        *,
+        granularity: str,
+    ) -> list[Any]:
+        """执行挂在某个 op 上的钩子插件
+
+        **粒度对不上就不调**——钩子自己声明了它是 `per_call` 还是 `per_attempt` ✓
+        （重试几次都只跑一遍 vs 每试一次都跑 ✓）。
+
+        **verdict 类钩子有问题 = 拒绝** → 抛 `PluginRejected`，
+        由调用方决定这一跳还跑不跑（准入拒绝 → 整跳中止 ✓）。
+        """
+        if self.plugin_context is None:
+            return []
+        point = self.plugin_context.extension_points.get(point_id)
+        if point is None or point.granularity != granularity:
+            return []
+        bindings = [b for b in op.plugins if b.extension_point == point_id]
+        if not bindings:
+            return []
+        results = call_plugins(
+            self.plugin_context,
+            bindings,
+            extension_point=point_id,
+            source=view,
+        )
+        if point.return_contract == "verdict":
+            problems = verdict_problems(results)
+            if problems:
+                raise PluginRejected("；".join(problems))
+        return results
+
+    def _apply_patches(
+        self,
+        op: Operation,
+        output: dict[str, Any],
+        results: list[Any],
+    ) -> dict[str, Any]:
+        """把「执行后」钩子返回的补丁合并进产出
+
+        **只许往 list 尾部追加**（`runtime/plugins.py::merge_patch` 守着 ✓），
+        追加到哪些字段由**插件类型自己声明**（`append_targets` ✓）。
+        """
+        if self.plugin_context is None or not results:
+            return output
+        bindings = [b for b in op.plugins if b.extension_point == EXTENSION_OP_AFTER]
+        merged = output
+        for binding, patch in zip(bindings, results):
+            ptype = self.plugin_context.types.get(binding.id)
+            allowed = ptype.append_targets if ptype is not None else ()
+            merged = merge_patch(merged, patch, allowed_targets=allowed)
+        return merged
 
     def execute(
         self,
@@ -263,87 +338,124 @@ class BeelineExecutor:
 
         try:
             while current_op is not None:
-                step_count += 1
-                if step_count > max_steps:
-                    _end_unfinished(task_run, beeline, reason="step limit exceeded")
-                    return task_run
-
-                task_run.current_op = current_op.op_id
-                task_run.event_log.append(event="op_start", op_id=current_op.op_id)
-
-                # 记录 op 启动（**重试时沿用上一条记录**，只加 attempts）
-                previous = task_run.operations.get(current_op.op_id)
-                record = OperationRecord(
-                    op_id=current_op.op_id,
-                    status="running",
-                    started_at=datetime.now(timezone.utc),
-                    input=op_input,
-                    attempts=(previous.attempts + 1) if previous is not None else 1,
-                )
-                task_run.operations[current_op.op_id] = record
-
+                # ================= 一次「组件调用」（call）=================
+                #
+                # **调用** = 这一跳的一次执行 + 它的所有重试；
+                # **尝试** = 真正调了一次 handler。
+                #
+                # 「执行前 / 执行后」这类钩子默认 **per_call**（在调用这一层，
+                # 重试几次都只跑一遍）；声明 `per_attempt` 的则每试一次都跑。
+                #
+                # **为什么要有这一层**：重试发生在**组件内部**，
+                # 「准入校验」不该每试一次都查（查三遍 = 三倍的错），
+                # 而「每次尝试都记一笔」又必须每试一次都记。
                 try:
-                    op_output = self.runner.run(current_op.type, op_input)
-                except Exception as e:
-                    record.status = "failed"
-                    record.finished_at = datetime.now(timezone.utc)
-                    record.error = str(e)
-                    # 中止归因：LLM 是基础设施设施，runtime 认得它；盒子据此统计
-                    # 自己的调用失败率。判据不是业务知识，所以这层归类不算越界。
-                    # **三态归因，别把两件事混成一个**：
-                    # - llm_parse：模型答了但格式不对（提示词/约束的问题）
-                    # - llm_call：网络/凭证/服务端挂了（基础设施的问题）
-                    # - op_error：跟 LLM 无关，盒子的逻辑错了
-                    # 混成一个的后果：盒子的 llm_call_failure_rate 指标
-                    # 既反映不了网络稳定性，也反映不了模型服从度——
-                    # 一个数同时坏在两个方向上。
-                    error_kind = _classify_error(e)
-                    record.error_kind = error_kind
-                    task_run.event_log.append(
-                        event="op_finish",
-                        op_id=current_op.op_id,
-                        detail={"status": "failed", "error": str(e), "error_kind": error_kind},
+                    self._run_op_hooks(
+                        task_run,
+                        current_op,
+                        EXTENSION_OP_BEFORE,
+                        {"input": dict(op_input)},
+                        granularity="per_call",
                     )
-
-                    # ---- 重试（RETRYING）----
-                    #
-                    # **重试的是同一条腿、同一个模型、同一份 prompt**——
-                    # 不是降级（不换模型、不换数据、不跳过这一跳）。
-                    #
-                    # 走 RETRYING 再回 RUNNING，是为了让「这次在重试」
-                    # 在履约层**看得见**：光在 op 里闷头重试，
-                    # 看板上看它一直停在 running，人不知道它是在动还是死了。
-                    if _retryable(current_op, error_kind, record.attempts):
-                        task_run.transition_to(
-                            TaskRunStatus.RETRYING,
-                            reason=(
-                                f"op '{current_op.op_id}' 第 {record.attempts} 次"
-                                f"传输失败（{error_kind}），准备重试"
-                            ),
-                        )
-                        task_run.event_log.append(
-                            event="op_retry",
-                            op_id=current_op.op_id,
-                            detail={
-                                "attempt": record.attempts + 1,
-                                "error_kind": error_kind,
-                                "error": str(e),
-                                "max_attempts": MAX_OP_ATTEMPTS,
-                            },
-                        )
-                        task_run.transition_to(
-                            TaskRunStatus.RUNNING,
-                            reason=f"retry op '{current_op.op_id}'",
-                        )
-                        # **重跑同一个 op，input 不变**
-                        continue
-
-                    # ---- 走不下去：失败 / 部分完成 ----
+                except Exception as e:
+                    # **准入没过 → 履约中止**（不进重试：
+                    # 准入拒绝不是「传输失败」，重试它只会再拒一次）
                     _end_unfinished(
                         task_run, beeline,
-                        reason=f"op '{current_op.op_id}' failed: {e}",
+                        reason=f"op '{current_op.op_id}' 准入没过：{e}",
                     )
                     return task_run
+
+                while True:
+                    step_count += 1
+                    if step_count > max_steps:
+                        _end_unfinished(task_run, beeline, reason="step limit exceeded")
+                        return task_run
+
+                    task_run.current_op = current_op.op_id
+                    task_run.event_log.append(event="op_start", op_id=current_op.op_id)
+
+                    # 记录 op 启动（**重试时沿用上一条记录**，只加 attempts）
+                    previous = task_run.operations.get(current_op.op_id)
+                    record = OperationRecord(
+                        op_id=current_op.op_id,
+                        status="running",
+                        started_at=datetime.now(timezone.utc),
+                        input=op_input,
+                        attempts=(previous.attempts + 1) if previous is not None else 1,
+                    )
+                    task_run.operations[current_op.op_id] = record
+
+                    try:
+                        self._run_op_hooks(
+                            task_run,
+                            current_op,
+                            EXTENSION_OP_BEFORE,
+                            {"input": dict(op_input)},
+                            granularity="per_attempt",
+                        )
+                        op_output = self.runner.run(current_op.type, op_input)
+                    except Exception as e:
+                        record.status = "failed"
+                        record.finished_at = datetime.now(timezone.utc)
+                        record.error = str(e)
+                        # 中止归因：LLM 是基础设施设施，runtime 认得它；盒子据此统计
+                        # 自己的调用失败率。判据不是业务知识，所以这层归类不算越界。
+                        # **三态归因，别把两件事混成一个**：
+                        # - llm_parse：模型答了但格式不对（提示词/约束的问题）
+                        # - llm_call：网络/凭证/服务端挂了（基础设施的问题）
+                        # - op_error：跟 LLM 无关，盒子的逻辑错了
+                        # 混成一个的后果：盒子的 llm_call_failure_rate 指标
+                        # 既反映不了网络稳定性，也反映不了模型服从度——
+                        # 一个数同时坏在两个方向上。
+                        error_kind = _classify_error(e)
+                        record.error_kind = error_kind
+                        task_run.event_log.append(
+                            event="op_finish",
+                            op_id=current_op.op_id,
+                            detail={"status": "failed", "error": str(e), "error_kind": error_kind},
+                        )
+
+                        # ---- 重试（RETRYING）----
+                        #
+                        # **重试的是同一条腿、同一个模型、同一份 prompt**——
+                        # 不是降级（不换模型、不换数据、不跳过这一跳）。
+                        #
+                        # 走 RETRYING 再回 RUNNING，是为了让「这次在重试」
+                        # 在履约层**看得见**：光在 op 里闷头重试，
+                        # 看板上看它一直停在 running，人不知道它是在动还是死了。
+                        if _retryable(current_op, error_kind, record.attempts):
+                            task_run.transition_to(
+                                TaskRunStatus.RETRYING,
+                                reason=(
+                                    f"op '{current_op.op_id}' 第 {record.attempts} 次"
+                                    f"传输失败（{error_kind}），准备重试"
+                                ),
+                            )
+                            task_run.event_log.append(
+                                event="op_retry",
+                                op_id=current_op.op_id,
+                                detail={
+                                    "attempt": record.attempts + 1,
+                                    "error_kind": error_kind,
+                                    "error": str(e),
+                                    "max_attempts": MAX_OP_ATTEMPTS,
+                                },
+                            )
+                            task_run.transition_to(
+                                TaskRunStatus.RUNNING,
+                                reason=f"retry op '{current_op.op_id}'",
+                            )
+                            # **重跑同一个 op，input 不变**
+                            continue
+
+                        # ---- 走不下去：失败 / 部分完成 ----
+                        _end_unfinished(
+                            task_run, beeline,
+                            reason=f"op '{current_op.op_id}' failed: {e}",
+                        )
+                        return task_run
+                    break  # 这一跳成功了 → 退出「尝试」循环
 
                 # op 成功
                 record.status = "completed"
@@ -354,6 +466,18 @@ class BeelineExecutor:
                     op_id=current_op.op_id,
                     detail={"status": "completed"},
                 )
+
+                # **调用层的「执行后」钩子**（收尾：可以往产出里追加）
+                call_patches = self._run_op_hooks(
+                    task_run,
+                    current_op,
+                    EXTENSION_OP_AFTER,
+                    # **产出原样给插件**（不转 dict）——同上
+                    {"input": dict(op_input), "output": op_output},
+                    granularity="per_call",
+                )
+                op_output = self._apply_patches(current_op, op_output, call_patches)
+                record.output = op_output
 
                 # 选 next
                 next_ref = _pick_next(current_op, op_output)

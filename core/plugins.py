@@ -111,6 +111,14 @@ class PluginType:
     extension_points: tuple[str, ...]
     implementation_key: str = ""
     params_model: Optional[type[BaseModel]] = None
+    #: **这类插件的补丁许追加到哪些字段**（产出里当前是 list 的字段）。
+    #:
+    #: **为什么由类型声明**：补丁是**唯一**能改产出内容的东西，
+    #: 不圈定范围的话，一个插件就能往业务列表（`items` 之类）里塞东西，
+    #: 而形状闸看不出那塞得对不对。
+    #: 圈定范围 = 业务自己说清楚「我往哪儿追加」，
+    #: 机制只负责**执行**这条声明（不许越界、不许改已有值）。
+    append_targets: tuple[str, ...] = ()
     summary: str = ""
 
 
@@ -159,6 +167,14 @@ class ExtensionPoint:
     return_contract: Literal["none", "decision", "patch", "verdict"] = "none"
     return_required_fields: tuple[str, ...] = ()
     decision_values: tuple[str, ...] = ()
+    #: **这个钩子的粒度**——
+    #: - `per_call`（默认）：一次**组件调用**里只调一次
+    #: - `per_attempt`：每一次**执行尝试**里调一次（重试时会再调）
+    #:
+    #: **为什么要有这一维**：重试发生在**组件内部**，
+    #: 「准入校验」这种钩子不该每试一次都跑（试三次 = 查三遍），
+    #: 而「每次尝试都记一笔」这种钩子又必须每试一次都跑。
+    granularity: Literal["per_call", "per_attempt"] = "per_call"
     summary: str = ""
 
 
