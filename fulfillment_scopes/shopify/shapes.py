@@ -91,11 +91,43 @@ MARKET_SIGNAL_OUTPUT_SCHEMA = SchemaDef(
             name="market_signal", type="object", required=True, properties=[
                 FieldDef(name="platform", type="string", required=True),
                 FieldDef(name="topic", type="string", required=True),
-                FieldDef(name="occurrences", type="integer", required=False),
+                FieldDef(name="occurrences", type="integer", required=False,
+                         description="**需求大小**——有多少人在门外搜过这个词（展示数）"),
+                FieldDef(name="clicks", type="integer", required=False,
+                         description="点击数——**我们接住了多少**（不是需求大小）"),
+                FieldDef(name="position", type="number", required=False,
+                         description="平均排名——离第 1 页多远"),
+                FieldDef(name="ctr_percent", type="number", required=False,
+                         description="点击率（百分比，2.48 = 2.48%）"),
                 FieldDef(name="source_url", type="string", required=False),
                 FieldDef(name="captured_at", type="string", required=False),
                 FieldDef(name="snippet", type="string", required=False),
             ],
+        )),
+        FieldDef(name="page_signals", type="array", required=True, items=FieldDef(
+            name="market_page_signal", type="object", required=True, properties=[
+                FieldDef(name="platform", type="string", required=True),
+                FieldDef(name="path", type="string", required=True,
+                         description="页面路径（/products/xxx）——要和 landing_page_path 对得上"),
+                FieldDef(name="url", type="string", required=False,
+                         description="完整 URL（出处）"),
+                FieldDef(name="query", type="string", required=False,
+                         description="**是哪个词把它摆在那儿的**——"
+                                     "（API 那条路才有；CSV 导出没有这个维度）"),
+                FieldDef(name="impressions", type="integer", required=False,
+                         description="展示数——有多少人在搜索结果里见过它"),
+                FieldDef(name="clicks", type="integer", required=False,
+                         description="点击数——**0 就是「摆在那儿没人点」**"),
+                FieldDef(name="position", type="number", required=False,
+                         description="平均排名——**离第 1 页多远**"),
+                FieldDef(name="ctr_percent", type="number", required=False,
+                         description="点击率（百分比，2.48 = 2.48%）"),
+                FieldDef(name="captured_at", type="string", required=False),
+            ],
+        ), description=(
+            "**站外需求落到我们页面上的样子**——"
+            "「有展示、0 点击、排在第 2 页」= Google 已经把这一页摆给人了，"
+            "只是没人点进来 → 标题没接住。"
         )),
         FieldDef(name="platform_status", type="array", required=True, items=FieldDef(
             name="platform_status", type="object", required=True, properties=[
@@ -219,12 +251,38 @@ SNAPSHOT_OUTPUT_SCHEMA = SchemaDef(
             name="market_signal", type="object", required=True, properties=[
                 FieldDef(name="platform", type="string", required=True),
                 FieldDef(name="topic", type="string", required=True),
-                FieldDef(name="occurrences", type="integer", required=False),
+                FieldDef(name="occurrences", type="integer", required=False,
+                         description="**需求大小**——多少人搜过（展示数）"),
+                FieldDef(name="clicks", type="integer", required=False),
+                FieldDef(name="position", type="number", required=False),
+                FieldDef(name="ctr_percent", type="number", required=False),
                 FieldDef(name="source_url", type="string", required=False),
                 FieldDef(name="captured_at", type="string", required=False),
             ],
         ), description="**站外的公开需求**（上一跳市场信号盒带来）——"
                        "这一轮的事实 = 店里的数据 + 外面在找什么"),
+        FieldDef(name="market_page_signals", type="array", required=True, items=FieldDef(
+            name="market_page_signal", type="object", required=True, properties=[
+                FieldDef(name="platform", type="string", required=True),
+                FieldDef(name="path", type="string", required=True,
+                         description="页面路径（/products/xxx）"),
+                FieldDef(name="url", type="string", required=False),
+                FieldDef(name="query", type="string", required=False,
+                         description="是哪个词把它摆在那儿的（API 那条路才有）"),
+                FieldDef(name="impressions", type="integer", required=False,
+                         description="展示数——有多少人在搜索结果里见过它"),
+                FieldDef(name="clicks", type="integer", required=False,
+                         description="点击数——**0 就是「摆在那儿没人点」**"),
+                FieldDef(name="position", type="number", required=False,
+                         description="平均排名——离第 1 页多远"),
+                FieldDef(name="ctr_percent", type="number", required=False),
+                FieldDef(name="captured_at", type="string", required=False),
+            ],
+        ), description=(
+            "**站外需求落到我们页面上的样子**——"
+            "「有展示、0 点击、排在第 2 页」= Google 已经把这一页摆给人了，"
+            "只是没人点进来 → 标题没接住"
+        )),
         FieldDef(name="site_search_terms", type="array", required=True, items=FieldDef(
             name="site_search", type="object", required=True, properties=[
                 FieldDef(name="query", type="string", required=True,
@@ -310,6 +368,10 @@ DIAGNOSIS_OUTPUT_SCHEMA = SchemaDef(
         FieldDef(name="target_demand_source", type="string", required=False,
                  description="那个词来自哪儿——「站内搜索」（需求已经到门口了）"
                              "还是「站外」（门外的需求，比如 GSC 的查询词）"),
+        FieldDef(name="target_page_fact", type="string", required=False,
+                 description="**这一页在站外是什么样子**——"
+                             "例「站外 219 次展示、0 点击、平均排名 15.14」；"
+                             "有展示却没人点 = 标题没接住"),
         FieldDef(name="snapshot_ref_present", type="boolean", required=True,
                  description="接住了上游快照——这是**前提**，不是结论"),
         FieldDef(name="hypothesis_present", type="boolean", required=True,

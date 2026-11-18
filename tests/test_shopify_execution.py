@@ -346,6 +346,34 @@ _READ_OK_WITH_FACTS = {
     }
 }
 
+#: **基线标题里带着买家在搜的词**（这一页就是靠它们排在那儿的）
+_READ_OK_WITH_TITLE_WORDS = {
+    "data": {
+        "products": {
+            "nodes": [{
+                "id": "gid://shopify/Product/123",
+                "title": "Personalized Glitter Compact Mirror",
+                "handle": "personalized-santa-hat",
+                "descriptionHtml": (
+                    "<li>Size: about 9.8 in tall and 6.7 in wide.</li>"
+                    "<li>Production: 3–5 business days.</li>"
+                ),
+                "seo": {"title": "旧 SEO 标题", "description": "旧 SEO 描述"},
+                "tags": ["mirror"],
+            }]
+        }
+    }
+}
+
+
+def _diagnosis_with_keywords() -> dict[str, Any]:
+    """**这一轮要接住的词**——买家在搜、而这一页本来就在用它们"""
+    diagnosis = _diagnosis()
+    diagnosis["target_demand_query"] = "glitter compact mirror"
+    diagnosis["target_keywords"] = ["glitter", "compact", "mirror"]
+    return diagnosis
+
+
 _UPDATE_SEOTITLE_LOST = {
     "data": {
         "productUpdate": {
@@ -744,6 +772,76 @@ class TestTheWriteDoesNotDamageWhatItDidNotMeanToTouch:
         assert "For Baby + Kids" not in result["draft"]["tags"], (
             "草稿里的标签是模型起草的，合并发生在写入载荷上"
         )
+
+
+class TestTheTitleMayNotDropTheWordsItRanksFor:
+    """**丢掉买家在搜的词 = 把攒下来的排名扔了**
+
+    实测：这一轮要接住的词是 `glitter compact mirror`
+    （GSC：219 次展示、排第 2 页、0 点击——它就是靠这三个词排在那儿的），
+    而草稿把标题改成「Personalized Rhinestone Mirror Gift…」，
+    `glitter`/`compact` 没了 → 把能看见自己的那扇门关上了。
+    """
+
+    def test_the_words_it_already_ranks_for_are_detected(self):
+        missing = exp_runner._missing_title_words(
+            "Personalized Custom Name Glitter Compact Folding Makeup Mirror",
+            {"title": "Personalized Rhinestone Mirror Gift for Bridesmaids"},
+            ["glitter", "compact", "mirror"],
+        )
+        assert missing == ["compact", "glitter"], missing
+
+    def test_a_word_it_never_had_is_not_a_loss(self):
+        """**原来没有的词不是「丢」**——那是这轮要**加**的"""
+        missing = exp_runner._missing_title_words(
+            "Personalized Custom Name Glitter Compact Mirror",
+            {"title": "Personalized Crystal Music Box"},
+            ["crystal", "music"],
+        )
+        assert missing == [], missing
+
+    def test_keeping_the_word_anywhere_in_the_headings_passes(self):
+        """标题或 SEO 标题里留着就行"""
+        missing = exp_runner._missing_title_words(
+            "Personalized Glitter Compact Mirror",
+            {"title": "Personalized Compact Mirror", "seo.title": "Glitter Mirror Gift"},
+            ["glitter", "compact", "mirror"],
+        )
+        assert missing == [], missing
+
+    def test_a_draft_that_drops_the_words_is_refused(self, monkeypatch):
+        """**丢了不能写出去**——带反馈重写一次
+
+        这一版草稿**事实都守住了**（正文里的尺寸、制作时间还在），
+        掉的只有标题里那两个词——所以拒它的只能是**标题闸**。
+        """
+        calls = {"n": 0}
+
+        def _fake(prompt, **kw):
+            calls["n"] += 1
+            return {
+                "title": "Personalized Rhinestone Mirror Gift for Bridesmaids",
+                "descriptionHtml": (
+                    "<li>Size: about 9.8 in tall and 6.7 in wide.</li>"
+                    "<li>Production: 3–5 business days.</li>"
+                ),
+                "seoTitle": "Rhinestone Mirror Gift",
+                "seoDescription": "A glitter compact mirror with a name.",
+                "tags": ["mirror"],
+            }
+
+        monkeypatch.setattr(exp_runner, "complete_json", _fake)
+        _patch_writer(monkeypatch, [_READ_OK_WITH_TITLE_WORDS, _UPDATE_OK], allow=True)
+
+        part = exp_runner.experiment_work_handler({
+            "round_id": "giftsjourneyrebirth@2026-W47",
+            "target_handle": "personalized-santa-hat",
+            "apply": True,
+            "diagnosis_ref": _diagnosis_with_keywords(),
+        })
+
+        assert part.get("applied") is not True, "丢了买家在搜的词还写出去"
+        assert calls["n"] == 2, "应该带反馈重写一次"
 
 
 class TestTheDraftMustNotLoseFacts:

@@ -23,13 +23,47 @@ SIGNAL_ITEM = FieldDef(
         FieldDef(name="topic", type="string", required=True,
                  description="需求主题——**一句话，不含任何个人信息**"),
         FieldDef(name="occurrences", type="integer", required=False,
-                 description="出现次数（评论数 / 点击数 / 命中数）"),
+                 description="**需求大小**——有多少人在门外搜过（搜索词 = 展示数）"),
+        FieldDef(name="clicks", type="integer", required=False,
+                 description="点击数——**我们接住了多少**（不是需求大小）"),
+        FieldDef(name="position", type="number", required=False,
+                 description="平均排名——离第 1 页多远"),
+        FieldDef(name="ctr_percent", type="number", required=False,
+                 description="点击率（百分比，2.48 = 2.48%）"),
         FieldDef(name="source_url", type="string", required=False,
                  description="**出处**——没有出处的主题不算数"),
         FieldDef(name="captured_at", type="string", required=True,
                  description="抓取时间（ISO）"),
         FieldDef(name="snippet", type="string", required=False,
                  description="原文片段（已洗过个人信息）"),
+    ],
+)
+
+#: **一条页面信号**——站外「我们的哪一页有展示、点了没、排第几」
+#:
+#: 它跟需求词是**两件事**：词是「买家想要什么」，
+#: 页面信号是「那个东西在我们这儿摆成什么样」。
+PAGE_SIGNAL_ITEM = FieldDef(
+    name="page_signal",
+    type="object",
+    required=True,
+    properties=[
+        FieldDef(name="platform", type="string", required=True),
+        FieldDef(name="path", type="string", required=True,
+                 description="页面路径（/products/xxx）——要和 landing_page_path 对得上"),
+        FieldDef(name="url", type="string", required=False,
+                 description="完整 URL（**出处**）"),
+        FieldDef(name="query", type="string", required=False,
+                 description="**是哪个词把它摆在那儿的**——（API 那条路才有）"),
+        FieldDef(name="impressions", type="integer", required=False,
+                 description="展示数——有多少人在搜索结果里见过它"),
+        FieldDef(name="clicks", type="integer", required=False,
+                 description="点击数——**0 就是「摆在那儿没人点」**"),
+        FieldDef(name="position", type="number", required=False,
+                 description="平均排名——**离第 1 页多远**"),
+        FieldDef(name="ctr_percent", type="number", required=False,
+                 description="点击率（百分比，2.48 = 2.48%）"),
+        FieldDef(name="captured_at", type="string", required=False),
     ],
 )
 
@@ -88,6 +122,9 @@ MARKET_SIGNAL_RAW_SCHEMA = SchemaDef(
     fields=[
         FieldDef(name="round_id", type="string", required=True),
         FieldDef(name="signals", type="array", required=True, items=SIGNAL_ITEM),
+        FieldDef(name="page_signals", type="array", required=False,
+                 items=PAGE_SIGNAL_ITEM,
+                 description="**站外需求落到我们页面上的样子**（GSC 才有）"),
         FieldDef(name="platform_status", type="array", required=True,
                  items=PLATFORM_STATUS_ITEM),
         FieldDef(name="pii_removed", type="array", required=True,

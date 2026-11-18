@@ -29,12 +29,16 @@ import json
 import os
 import urllib.error
 import urllib.parse
+import zipfile
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from fulfillment_scopes.shopify.market_signal import (
+    GSC_MAX_SIGNALS,
     MAX_SIGNALS_PER_PLATFORM,
     REQUEST_INTERVAL_SECONDS,
 )
@@ -54,6 +58,9 @@ class PlatformStatus:
 class FetchResult:
     signals: list[dict[str, Any]] = field(default_factory=list)
     status: PlatformStatus = field(default_factory=lambda: PlatformStatus("unknown"))
+    #: **页面信号**——站外「我们的哪一页有展示、点了没、排第几」
+    #: （只有 GSC 有：Google 告诉我们自己的页面在搜索结果里的样子）
+    page_signals: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -95,18 +102,19 @@ class GscClient:
     **这是我们自己店的官方数据**——真实买家搜了什么词、点没点。
     比任何站外爬来的线索都强，而且零合规风险。
 
-    两条路：
+    三条路：
     - **API**：`GSC_ACCESS_TOKEN` + `GSC_SITE_URL` 在环境变量里 → 自动跑
-    - **CSV**：投料给一个导出的 CSV 路径 → 立刻能跑（不用授权）
-    - **OAuth（推荐：配一次、之后全自动）**：
-      `GSC_CLIENT_ID` + `GSC_CLIENT_SECRET` + `GSC_REFRESH_TOKEN` + `GSC_SITE_URL`
-      → 每轮自动换 token 自动查，**不用再手动导出 CSV**。
-      （`scripts/connect_platform.py --platform gsc --oauth` 走完整个流程）
+    - **API（OAuth）**：`GSC_CLIENT_ID` + `GSC_CLIENT_SECRET` +
+      `GSC_REFRESH_TOKEN` + `GSC_SITE_URL`
+      → 每轮自动换 token 自动查，**不用再手动导出 CSV**
+      （`scripts/connect_platform.py --platform gsc --gsc-oauth` 走完整个流程）
+    - **CSV / 导出包**：投料一个导出的路径 → 立刻能跑（不用授权）
 
-    GSC 导出的 CSV 表头每次可能变——**界面语言变了列名就跟着变**
-    （英文 "Top queries" / "Clicks" / "Impressions"，
-    中文「热门查询 / 点击次数 / 展示」），
-    所以这里按表头**猜列名**，**中英文都认**，不写死。
+    **导出包怎么认表**：Search Console 一次导出**好几张表**
+    （热门查询 / 排名靠前的网页 / 日期 / 国家地区 / 设备 / 搜索结果呈现），
+    让使用者自己挑一张丢进来 = 挑错就白搭——
+    所以这里**按表头自己认**：第一列是「热门查询」就是词表，
+    是「排名靠前的网页」就是页面表，其余的（日期 / 设备…）忽略。
     """
 
     API_URL = "https://searchconsole.googleapis.com/webmasters/v3/sites/{site}/searchAnalytics/query"
@@ -120,6 +128,9 @@ class GscClient:
     IMPRESSIONS_COLS = ("impressions", "展示", "展示次数", "曝光", "曝光次数")
     POSITION_COLS = ("position", "排名")
     CTR_COLS = ("ctr", "点击率")
+    #: **页面表**的列名（中文界面导出的是「排名靠前的网页」）
+    PAGE_COLS = ("top pages", "page", "pages", "url", "landing page",
+                 "排名靠前的网页", "热门网页", "网页", "页面", "网址")
 
     def __init__(
         self,
@@ -146,10 +157,16 @@ class GscClient:
     def fetch(self, keywords: list[str], window_days: int) -> FetchResult:
         if self.csv_path:
             return self._from_csv()
-        if not (self.access_token and self.site_url):
+        if not self.site_url:
             return FetchResult(status=PlatformStatus(
                 "gsc", "unverifiable",
-                "没配 GSC_ACCESS_TOKEN / GSC_SITE_URL，也没给 CSV 路径",
+                "没配 GSC_SITE_URL，也没给导出的文件路径",
+            ))
+        # **OAuth 那条路也算数**：refresh_token 在 → 现场换一张 access_token
+        if not (self.access_token or self._has_refresh_token()):
+            return FetchResult(status=PlatformStatus(
+                "gsc", "unverifiable",
+                "没配 GSC_ACCESS_TOKEN / GSC_REFRESH_TOKEN，也没给导出的文件路径",
             ))
         try:
             return self._from_api(window_days)
@@ -160,48 +177,66 @@ class GscClient:
             return FetchResult(status=PlatformStatus(
                 "gsc", "unverifiable", f"取数失败：{exc}"))
 
-    # ---- CSV ----
+    def _has_refresh_token(self) -> bool:
+        return bool(self.refresh_token and self.client_id and self.client_secret)
+
+    # ---- CSV / 导出包 ----
 
     def _from_csv(self) -> FetchResult:
-        if not os.path.exists(self.csv_path):
-            return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable", f"CSV 不存在：{self.csv_path}"))
         try:
-            with open(self.csv_path, encoding="utf-8-sig", newline="") as fh:
-                rows = list(csv.reader(fh))
-        except OSError as exc:
+            tables = _read_tables(self.csv_path)
+        except (OSError, zipfile.BadZipFile) as exc:
             return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable", f"CSV 读不了：{exc}"))
+                "gsc", "unverifiable", f"导出文件读不了：{exc}"))
 
-        if not rows:
-            return FetchResult(status=PlatformStatus("gsc", "unverifiable", "CSV 是空的"))
+        query_rows: Optional[list[list[str]]] = None
+        page_rows: Optional[list[list[str]]] = None
+        for rows in tables:
+            kind = _classify_table(rows)
+            if kind == "queries" and query_rows is None:
+                query_rows = rows
+            elif kind == "pages" and page_rows is None:
+                page_rows = rows
 
+        if query_rows is None and page_rows is None:
+            return FetchResult(status=PlatformStatus(
+                "gsc", "unverifiable",
+                "导出的文件里没有认得的表——"
+                "要「热门查询」或「排名靠前的网页」那张表"
+                "（Search Console 一次导出好几张表）"))
+
+        signals = self._parse_queries(query_rows) if query_rows else []
+        page_signals = self._parse_pages(page_rows) if page_rows else []
+        if not signals and not page_signals:
+            return FetchResult(status=PlatformStatus(
+                "gsc", "unverifiable",
+                "认得表了，但里面一行数据都没有"))
+
+        detail = f"读到 {len(signals)} 条需求词"
+        if page_signals:
+            detail += f"、{len(page_signals)} 个页面"
+        return FetchResult(
+            signals=signals,
+            page_signals=page_signals,
+            status=PlatformStatus("gsc", "observed", detail, len(signals)),
+        )
+
+    def _parse_queries(self, rows: list[list[str]]) -> list[dict[str, Any]]:
+        """**热门查询表**——买家搜了什么词"""
         header_idx, header = _find_header_row(rows)
-        if header is None:
-            return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable", "CSV 里找不到表头行（含点击次数 / clicks 的那行）"))
-
+        if not header:
+            return []
         cols = {name: idx for idx, name in enumerate(header)}
         q_col = _pick_col(cols, self.QUERY_COLS)
+        if q_col is None:
+            return []
         c_col = _pick_col(cols, self.CLICKS_COLS)
         i_col = _pick_col(cols, self.IMPRESSIONS_COLS)
         p_col = _pick_col(cols, self.POSITION_COLS)
         ctr_col = _pick_col(cols, self.CTR_COLS)
-        if q_col is None:
-            # **要说清是哪种表**——Search Console 一次导出好几张表
-            # （查询 / 网页 / 国家地区 / 设备……），
-            # 拿错表不是「读不出来」，是「这张表里没有需求词」。
-            looks_like = next(
-                (h for h in header if "网页" in h or "page" in h.lower()), ""
-            )
-            return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable",
-                ("CSV 表头里找不到查询词列（热门查询 / Top queries）"
-                 + (f"——这张像是「网页」表（{looks_like}），要的是「热门查询」那张表"
-                    if looks_like else ""))))
 
         captured = self.now()
-        signals = []
+        signals: list[dict[str, Any]] = []
         for row in rows[header_idx + 1:]:
             if len(row) <= q_col:
                 continue
@@ -211,7 +246,7 @@ class GscClient:
             clicks = _safe_int(row[c_col]) if c_col is not None and len(row) > c_col else None
             impressions = _safe_int(row[i_col]) if i_col is not None and len(row) > i_col else None
             position = _safe_float(row[p_col]) if p_col is not None and len(row) > p_col else None
-            ctr = (row[ctr_col] or "").strip() if ctr_col is not None and len(row) > ctr_col else ""
+            ctr = _safe_ctr(row[ctr_col]) if ctr_col is not None and len(row) > ctr_col else None
             signals.append({
                 "platform": "gsc",
                 "topic": topic,
@@ -219,11 +254,14 @@ class GscClient:
                 # 不是点击数——点击数是**我们接住了多少**，不是需求。
                 # 「搜了 59 次、点了 0 次」恰恰是最该看的需求。
                 "occurrences": impressions if impressions is not None else clicks,
+                "clicks": clicks,
+                "position": position,
+                "ctr_percent": ctr,
                 "source_url": f"gsc://{self.site_url or 'gsc'}/search-analytics/{topic}",
                 "captured_at": captured,
                 "snippet": (
                     f"clicks={clicks} impressions={impressions}"
-                    + (f" ctr={ctr}" if ctr else "")
+                    + (f" ctr={ctr}%" if ctr is not None else "")
                     + (f" pos={position}" if position is not None else "")
                 ),
                 # **内部排序用**（不进产出形状——产出形状是固定的）
@@ -236,19 +274,64 @@ class GscClient:
         # 于是「搜了很多次、一次没点」的那些词全被压在后面看不见，
         # 而那些词恰恰是我们最该去接的。
         signals.sort(key=lambda s: (-int(s["_demand"]), -int(s["_clicks"])))
-        signals = signals[:MAX_SIGNALS_PER_PLATFORM]
+        signals = signals[:GSC_MAX_SIGNALS]
         for sig in signals:
             sig.pop("_demand", None)
             sig.pop("_clicks", None)
+        return signals
 
-        return FetchResult(
-            signals=signals,
-            status=PlatformStatus(
-                "gsc", "observed",
-                f"CSV {len(signals)} 条（按展示数排序取前 {MAX_SIGNALS_PER_PLATFORM}）",
-                len(signals),
-            ),
-        )
+    def _parse_pages(self, rows: list[list[str]]) -> list[dict[str, Any]]:
+        """**排名靠前的网页表**——我们的哪一页有展示、点了没、排第几
+
+        这是**站外需求落到我们页面上的样子**：
+        「有展示、0 点击」= Google 已经把这一页摆给人了，只是没人点进来
+        → 标题/描述没接住（药方：把买家搜的词写进去）。
+
+        **没有这张表，选页只能靠词面猜**——
+        而词面猜会猜错（实测把 1 session 的月亮灯页选成目标）。
+        """
+        header_idx, header = _find_header_row(rows)
+        if not header:
+            return []
+        cols = {name: idx for idx, name in enumerate(header)}
+        p_col = _pick_col(cols, self.PAGE_COLS)
+        if p_col is None:
+            return []
+        c_col = _pick_col(cols, self.CLICKS_COLS)
+        i_col = _pick_col(cols, self.IMPRESSIONS_COLS)
+        pos_col = _pick_col(cols, self.POSITION_COLS)
+        ctr_col = _pick_col(cols, self.CTR_COLS)
+
+        captured = self.now()
+        out: list[dict[str, Any]] = []
+        for row in rows[header_idx + 1:]:
+            if len(row) <= p_col:
+                continue
+            url = (row[p_col] or "").strip()
+            if not url or url.lower() in ("total", "总计", "合计"):
+                continue
+            out.append({
+                "platform": "gsc",
+                "path": _url_to_path(url),
+                "url": url,
+                "impressions": (
+                    _safe_int(row[i_col]) if i_col is not None and len(row) > i_col else None
+                ),
+                "clicks": (
+                    _safe_int(row[c_col]) if c_col is not None and len(row) > c_col else None
+                ),
+                "position": (
+                    _safe_float(row[pos_col]) if pos_col is not None and len(row) > pos_col else None
+                ),
+                "ctr_percent": (
+                    _safe_ctr(row[ctr_col]) if ctr_col is not None and len(row) > ctr_col else None
+                ),
+                "captured_at": captured,
+            })
+
+        # **按展示数排**——展示多的先看
+        out.sort(key=lambda s: -(s.get("impressions") or 0))
+        return out[:MAX_PAGE_SIGNALS]
 
     def _token(self) -> str:
         """**拿一张能用的 access token**
@@ -262,7 +345,7 @@ class GscClient:
         if self.access_token:
             self._cached_token = self.access_token
             return self._cached_token
-        if not (self.refresh_token and self.client_id and self.client_secret):
+        if not self._has_refresh_token():
             return ""
         body = urllib.parse.urlencode({
             "grant_type": "refresh_token",
@@ -284,18 +367,80 @@ class GscClient:
     def _from_api(self, window_days: int) -> FetchResult:
         end = datetime.now(timezone.utc).date()
         start = end - timedelta(days=window_days)
-        body = json.dumps({
-            "startDate": start.isoformat(),
-            "endDate": end.isoformat(),
-            "dimensions": ["query"],
-            "rowLimit": 250,
-        }).encode("utf-8")
         site = urllib.parse.quote(self.site_url, safe="")
         token = self._token()
         if not token:
             return FetchResult(status=PlatformStatus(
                 "gsc", "unverifiable",
                 "有 refresh_token 但换不到 access_token（client_id / client_secret 不对？）"))
+
+        captured = self.now()
+        # **两次查询**：
+        # ① 按词——「买家搜了什么」（需求大小）
+        # ② 按 **词 × 页**——「哪个页面在为什么词排名」
+        #    这一条是 CSV 拿不到的（导出没有这个维度），
+        #    而它才是「选页不用猜」的关键。
+        queries = self._api_query(
+            site, token, start, end, ["query"], row_limit=250)
+        pairs = self._api_query(
+            site, token, start, end, ["query", "page"], row_limit=1000)
+
+        signals: list[dict[str, Any]] = []
+        for row in queries:
+            topic = str(row.get("query") or "").strip()
+            if not topic:
+                continue
+            clicks = _safe_int(row.get("clicks"))
+            impressions = _safe_int(row.get("impressions"))
+            signals.append({
+                "platform": "gsc",
+                "topic": topic,
+                "occurrences": impressions if impressions is not None else clicks,
+                "clicks": clicks,
+                "position": _safe_float(row.get("position")),
+                "ctr_percent": _safe_float(row.get("ctr")),
+                "source_url": f"gsc://{self.site_url or 'gsc'}/search-analytics/{topic}",
+                "captured_at": captured,
+                "snippet": (
+                    f"clicks={clicks} impressions={impressions}"
+                    + (f" ctr={row.get('ctr')}" if row.get("ctr") is not None else "")
+                    + (f" pos={row.get('position')}" if row.get("position") is not None else "")
+                ),
+                "_demand": impressions if impressions is not None else (clicks or 0),
+                "_clicks": clicks if clicks is not None else 0,
+            })
+        signals.sort(key=lambda s: (-int(s["_demand"]), -int(s["_clicks"])))
+        signals = signals[:GSC_MAX_SIGNALS]
+        for sig in signals:
+            sig.pop("_demand", None)
+            sig.pop("_clicks", None)
+
+        page_signals = self._page_signals_from_pairs(pairs, captured)
+        return FetchResult(
+            signals=signals,
+            page_signals=page_signals,
+            status=PlatformStatus(
+                "gsc", "observed",
+                f"API 取到 {len(signals)} 条需求词、{len(page_signals)} 个页面",
+                len(signals),
+            ),
+        )
+
+    def _api_query(
+        self,
+        site: str,
+        token: str,
+        start: Any,
+        end: Any,
+        dimensions: list[str],
+        row_limit: int,
+    ) -> list[dict[str, Any]]:
+        body = json.dumps({
+            "startDate": start.isoformat(),
+            "endDate": end.isoformat(),
+            "dimensions": dimensions,
+            "rowLimit": row_limit,
+        }).encode("utf-8")
         payload = _http_json(
             self.API_URL.format(site=site),
             headers={
@@ -305,28 +450,37 @@ class GscClient:
             data=body,
             method="POST",
         )
-        captured = self.now()
-        signals = []
-        for row in (payload.get("rows") or [])[:MAX_SIGNALS_PER_PLATFORM]:
-            keys = row.get("keys") or []
-            topic = str(keys[0]) if keys else ""
-            if not topic:
+        rows = payload.get("rows") or []
+        return [dict(r) for r in rows if isinstance(r, dict)]
+
+    def _page_signals_from_pairs(
+        self, pairs: list[dict[str, Any]], captured: str
+    ) -> list[dict[str, Any]]:
+        """**词 × 页**→ 页面信号（每个词 × 每个页面一条）
+
+        **为什么要按词分开**：同一页可能为好几个词排名，
+        而「哪个词把它摆在第 15 位」正是我们要写进标题的那句话。
+        """
+        out: list[dict[str, Any]] = []
+        for row in pairs:
+            page = str(row.get("page") or "").strip()
+            if not page:
                 continue
-            signals.append({
+            clicks = _safe_int(row.get("clicks"))
+            impressions = _safe_int(row.get("impressions"))
+            out.append({
                 "platform": "gsc",
-                "topic": topic,
-                "occurrences": row.get("clicks"),
-                "source_url": f"gsc://{self.site_url}/search-analytics/{topic}",
+                "path": _url_to_path(page),
+                "url": page,
+                "query": str(row.get("query") or "").strip(),
+                "impressions": impressions,
+                "clicks": clicks,
+                "position": _safe_float(row.get("position")),
+                "ctr_percent": _safe_float(row.get("ctr")),
                 "captured_at": captured,
-                "snippet": (
-                    f"clicks={row.get('clicks')} impressions={row.get('impressions')} "
-                    f"position={row.get('position')}"
-                ),
             })
-        return FetchResult(
-            signals=signals,
-            status=PlatformStatus("gsc", "observed", f"API {len(signals)} 条", len(signals)),
-        )
+        out.sort(key=lambda s: -(s.get("impressions") or 0))
+        return out[:MAX_PAGE_SIGNALS]
 
 
 # ============================================================
@@ -695,6 +849,81 @@ class PinterestClient:
 # ============================================================
 
 
+#: **导出包里每张表的第一列**——它是那张表的维度名
+_QUERY_FIRST_COLUMNS = {
+    "top queries", "query", "search query", "search term", "queries",
+    "热门查询", "查询", "搜索字词", "搜索词",
+}
+_PAGE_FIRST_COLUMNS = {
+    "top pages", "page", "pages", "url", "landing page",
+    "排名靠前的网页", "热门网页", "网页", "页面", "网址",
+}
+
+#: **页面信号最多留多少条**（我们自己站的数据，不算抓站，但也要有上限）
+MAX_PAGE_SIGNALS = 50
+
+
+def _read_tables(path: str) -> list[list[list[str]]]:
+    """把一个路径里的所有 CSV 表读出来
+
+    **路径可以是**：单个 CSV / Search Console 导出的 zip / 一个目录。
+
+    **为什么认 zip**：Search Console 一次导出**好几张表**
+    （热门查询 / 排名靠前的网页 / 日期 / 国家地区 / 设备 / 搜索结果呈现），
+    让使用者自己挑一张丢进来 = 挑错就白搭——
+    所以这里**按表头自己认表**，丢整个导出包进来也行。
+    """
+    target = Path(path)
+    texts: list[str] = []
+    if target.is_dir():
+        for csv_file in sorted(target.glob("*.csv")):
+            texts.append(csv_file.read_text(encoding="utf-8-sig", errors="replace"))
+    elif target.suffix.lower() == ".zip":
+        with zipfile.ZipFile(target) as archive:
+            for name in sorted(archive.namelist()):
+                if name.lower().endswith(".csv"):
+                    texts.append(archive.read(name).decode("utf-8-sig", errors="replace"))
+    else:
+        texts.append(target.read_text(encoding="utf-8-sig", errors="replace"))
+    out: list[list[list[str]]] = []
+    for text in texts:
+        rows = list(csv.reader(io.StringIO(text)))
+        if rows:
+            out.append(rows)
+    return out
+
+
+def _classify_table(rows: list[list[str]]) -> str:
+    """这张表是什么——`queries` / `pages` / 认不出
+
+    **按第一列判**：Search Console 导出的每张表，第一列都是它的维度名
+    （热门查询 / 排名靠前的网页 / 日期 / 国家地区 / 设备 / 搜索结果呈现）。
+    日期、设备那些表**不影响选页**——它们是「整个站」的数，不是「需求」。
+    """
+    header_idx, header = _find_header_row(rows)
+    if not header:
+        return ""
+    first = str(header[0] or "").strip().lower()
+    if first in _QUERY_FIRST_COLUMNS:
+        return "queries"
+    if first in _PAGE_FIRST_COLUMNS:
+        return "pages"
+    return ""
+
+
+def _url_to_path(url: str) -> str:
+    """URL → 路径（`/products/xxx`）——要和快照里的 landing_page_path 对得上"""
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    if text.startswith("/"):
+        return text
+    parsed = urllib.parse.urlparse(text)
+    if parsed.scheme and parsed.netloc:
+        return parsed.path or "/"
+    return text
+
+
 def _find_header_row(rows: list[list[str]]) -> tuple[int, list[str]]:
     """找出 GSC 导出 CSV 的表头行
 
@@ -738,4 +967,26 @@ def _safe_float(value: Any) -> Optional[float]:
     try:
         return float(str(value).replace(",", "").strip())
     except (TypeError, ValueError):
+        return None
+
+
+def _safe_ctr(value: Any) -> Optional[float]:
+    """**点击率**——统一成**百分比**（2.48 = 2.48%）
+
+    **同一个列，两种单位**：英文导出的 CTR 是**比例**（0.033），
+    中文导出的是**百分数字符串**（「2.48%」）。
+    不统一的话，两个文件读出来的同一个量会差 100 倍——
+    而「同一个量只能有一个来源」。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("%"):
+        try:
+            return float(text[:-1].strip())
+        except ValueError:
+            return None
+    try:
+        return float(text.replace(",", "").strip()) * 100.0
+    except ValueError:
         return None

@@ -569,12 +569,35 @@ def snapshot_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
                 "platform": str(m.get("platform") or ""),
                 "topic": str(m.get("topic") or ""),
                 "occurrences": m.get("occurrences"),
+                # **点击数与排名也要带下来**——
+                # 「这个词我们排第几、点了没」是判断「值不值得改」的事实
+                "clicks": m.get("clicks"),
+                "position": m.get("position"),
+                "ctr_percent": m.get("ctr_percent"),
                 "source_url": str(m.get("source_url") or ""),
                 "captured_at": str(m.get("captured_at") or ""),
             }
             for m in list(
                 ((input_data.get("market_signal_ref") or {}).get("signals") or [])
-            )[:40]
+            )[:100]
+        ],
+        # **站外需求落到我们页面上的样子**——
+        # 「有展示、0 点击、排在第 2 页」= Google 已经摆出来了，只是没人点
+        "market_page_signals": [
+            {
+                "platform": str(m.get("platform") or ""),
+                "path": str(m.get("path") or ""),
+                "url": str(m.get("url") or ""),
+                "query": str(m.get("query") or ""),
+                "impressions": m.get("impressions"),
+                "clicks": m.get("clicks"),
+                "position": m.get("position"),
+                "ctr_percent": m.get("ctr_percent"),
+                "captured_at": str(m.get("captured_at") or ""),
+            }
+            for m in list(
+                ((input_data.get("market_signal_ref") or {}).get("page_signals") or [])
+            )[:100]
         ],
         "site_search_terms": [
             {
@@ -670,11 +693,34 @@ def _empty_snapshot(input_data: dict[str, Any]) -> dict[str, Any]:
                 "platform": str(m.get("platform") or ""),
                 "topic": str(m.get("topic") or ""),
                 "occurrences": m.get("occurrences"),
+                # **点击数与排名也要带下来**——
+                # 「这个词我们排第几、点了没」是判断「值不值得改」的事实
+                "clicks": m.get("clicks"),
+                "position": m.get("position"),
+                "ctr_percent": m.get("ctr_percent"),
                 "source_url": str(m.get("source_url") or ""),
                 "captured_at": str(m.get("captured_at") or ""),
             }
             for m in list(
                 ((input_data.get("market_signal_ref") or {}).get("signals") or [])
+            )[:40]
+        ],
+        # **站外需求落到我们页面上的样子**——
+        # 「有展示、0 点击、排在第 2 页」= Google 已经摆出来了，只是没人点
+        "market_page_signals": [
+            {
+                "platform": str(m.get("platform") or ""),
+                "path": str(m.get("path") or ""),
+                "url": str(m.get("url") or ""),
+                "query": str(m.get("query") or ""),
+                "impressions": m.get("impressions"),
+                "clicks": m.get("clicks"),
+                "position": m.get("position"),
+                "ctr_percent": m.get("ctr_percent"),
+                "captured_at": str(m.get("captured_at") or ""),
+            }
+            for m in list(
+                ((input_data.get("market_signal_ref") or {}).get("page_signals") or [])
             )[:40]
         ],
         "site_search_terms": [

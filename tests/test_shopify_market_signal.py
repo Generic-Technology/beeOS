@@ -162,19 +162,96 @@ class TestTheGscCsvPath:
         assert "pos=25" in snippet
         assert "clicks=0" in snippet
 
-    def test_the_pages_table_says_which_table_it_wanted(self, tmp_path):
-        """Search Console 一次导出好几张表——拿错表要说清楚是哪张"""
+    def test_the_pages_table_is_read_too(self, tmp_path):
+        """**页面表也要读**——它才是「哪一页有展示却没人点」的证据"""
         csv_path = tmp_path / "gsc_pages.csv"
         csv_path.write_text(
             "排名靠前的网页,点击次数,展示,点击率,排名\n"
-            "https://giftsjourneyshop.com/,7,32,0.21,7.69\n",
+            "https://giftsjourneyshop.com/products/mirror,0,219,0%,15.14\n"
+            "https://giftsjourneyshop.com/,7,32,21.88%,7.69\n",
+            encoding="utf-8",
+        )
+        client = GscClient(csv_path=str(csv_path))
+        result = client.fetch([], 28)
+
+        assert result.status.status == "observed", result.status.detail
+        assert len(result.page_signals) == 2
+        # **按展示数排序**——展示多的先看
+        top = result.page_signals[0]
+        assert top["path"] == "/products/mirror", top
+        assert top["impressions"] == 219
+        assert top["clicks"] == 0
+        assert top["position"] == 15.14
+        assert top["ctr_percent"] == 0.0
+
+    def test_the_ctr_is_the_same_number_in_both_languages(self, tmp_path):
+        """**同一个列，两种单位**——英文导出是比例，中文是百分比
+
+        不统一的话，两个文件读出来的同一个量会差 100 倍
+        （而「同一个量只能有一个来源」）。
+        """
+        en = tmp_path / "en.csv"
+        en.write_text(
+            "Top pages,Clicks,Impressions,CTR,Position\n"
+            "/products/x,3,120,0.025,7.5\n",
+            encoding="utf-8",
+        )
+        cn = tmp_path / "cn.csv"
+        cn.write_text(
+            "排名靠前的网页,点击次数,展示,点击率,排名\n"
+            "/products/x,3,120,2.5%,7.5\n",
+            encoding="utf-8",
+        )
+        a = GscClient(csv_path=str(en)).fetch([], 28).page_signals[0]
+        b = GscClient(csv_path=str(cn)).fetch([], 28).page_signals[0]
+        assert a["ctr_percent"] == b["ctr_percent"] == 2.5, (a, b)
+
+    def test_a_zip_export_is_read_and_the_tables_are_picked(self, tmp_path):
+        """**丢整个导出包进来也行**——盒子按表头自己认表
+
+        Search Console 一次导出好几张表（查询 / 网页 / 日期 / 国家地区…），
+        让使用者自己挑一张 = 挑错就白搭。
+        """
+        import zipfile
+
+        zip_path = tmp_path / "export.zip"
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr(
+                "csv_0.csv",
+                "过滤器,值\n搜索类型,网页（基于文本）\n",
+            )
+            archive.writestr(
+                "csv_1.csv",
+                "热门查询,点击次数,展示,点击率,排名\n"
+                "crystal music box,0,27,0%,25\n",
+            )
+            archive.writestr(
+                "csv_2.csv",
+                "排名靠前的网页,点击次数,展示,点击率,排名\n"
+                "https://giftsjourneyshop.com/products/box,0,116,0%,14.99\n",
+            )
+            archive.writestr(
+                "csv_3.csv",
+                "日期,点击次数,展示,点击率,排名\n2026-11-01,0,30,0%,28.3\n",
+            )
+
+        result = GscClient(csv_path=str(zip_path)).fetch([], 28)
+        assert result.status.status == "observed", result.status.detail
+        assert [s["topic"] for s in result.signals] == ["crystal music box"]
+        assert [p["path"] for p in result.page_signals] == ["/products/box"]
+
+    def test_a_table_that_is_neither_says_what_it_wanted(self, tmp_path):
+        """**认不出的表要说清要哪张**——读者才知道自己是导错了"""
+        csv_path = tmp_path / "gsc_dates.csv"
+        csv_path.write_text(
+            "日期,点击次数,展示,点击率,排名\n2026-11-01,0,30,0%,28.3\n",
             encoding="utf-8",
         )
         client = GscClient(csv_path=str(csv_path))
         result = client.fetch([], 28)
         assert result.status.status == "unverifiable"
         assert "热门查询" in result.status.detail
-        assert "网页" in result.status.detail
+        assert "排名靠前的网页" in result.status.detail
 
     def test_it_tolerates_a_different_header(self, tmp_path):
         """GSC 导出表头会变——按名字猜列，不写死"""

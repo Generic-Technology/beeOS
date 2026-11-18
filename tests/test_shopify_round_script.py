@@ -259,10 +259,28 @@ def test_explicit_words_win_over_the_defaults():
 # ============================================================
 
 
-def test_without_credentials_no_platform_is_visited(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("GSC_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("GSC_SITE_URL", raising=False)
+def _no_gsc_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**把 GSC 凭证全部清掉**——不然单测结果跟着本机配置变
+
+    真实事故：开发机配好了 OAuth 凭证 → 「没配凭证就不去平台」那条守卫
+    在本机绿、别人机器红——**测试套件不能看开发者机器的脸色**。
+    """
+    for name in (
+        "GSC_ACCESS_TOKEN", "GSC_SITE_URL", "GSC_REFRESH_TOKEN",
+        "GSC_CLIENT_ID", "GSC_CLIENT_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _no_gsc_export(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**导出文件的位置也要清掉**——本机放了导出包，同理"""
+    monkeypatch.setattr(script, "GSC_EXPORT_DEFAULT", Path("/nonexistent/gsc_export.zip"))
     monkeypatch.setattr(script, "GSC_CSV_DEFAULT", Path("/nonexistent/gsc.csv"))
+
+
+def test_without_credentials_no_platform_is_visited(monkeypatch: pytest.MonkeyPatch):
+    _no_gsc_credentials(monkeypatch)
+    _no_gsc_export(monkeypatch)
     platforms, csv_path = script._market_platforms("")
     assert platforms == []
     assert csv_path == ""
@@ -271,9 +289,9 @@ def test_without_credentials_no_platform_is_visited(monkeypatch: pytest.MonkeyPa
 def test_an_exported_csv_is_picked_up_without_authorization(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """**GSC 的 CSV 路径是免授权的那条路**——导出表丢进来就能跑"""
-    monkeypatch.delenv("GSC_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("GSC_SITE_URL", raising=False)
+    """**GSC 的导出文件是免授权的那条路**——丢进来就能跑"""
+    _no_gsc_credentials(monkeypatch)
+    _no_gsc_export(monkeypatch)
     csv = tmp_path / "gsc.csv"
     csv.write_text("Top queries,Clicks,Impressions\n", encoding="utf-8")
     monkeypatch.setattr(script, "GSC_CSV_DEFAULT", csv)
@@ -283,16 +301,48 @@ def test_an_exported_csv_is_picked_up_without_authorization(
     assert csv_path == str(csv)
 
 
+def test_the_export_package_wins_over_a_single_csv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """**整包优先**——它里面有页面表（哪一页有展示、点了没）"""
+    _no_gsc_credentials(monkeypatch)
+    _no_gsc_export(monkeypatch)
+    package = tmp_path / "gsc_export.zip"
+    package.write_bytes(b"PK")
+    monkeypatch.setattr(script, "GSC_EXPORT_DEFAULT", package)
+    monkeypatch.setattr(script, "GSC_CSV_DEFAULT", tmp_path / "gsc.csv")
+
+    _platforms, csv_path = script._market_platforms("")
+    assert csv_path == str(package)
+
+
 def test_a_configured_token_turns_on_gsc_too(monkeypatch: pytest.MonkeyPatch):
+    _no_gsc_credentials(monkeypatch)
+    _no_gsc_export(monkeypatch)
     monkeypatch.setenv("GSC_ACCESS_TOKEN", "tok")
     monkeypatch.setenv("GSC_SITE_URL", "sc-domain:giftsjourneyshop.com")
-    monkeypatch.setattr(script, "GSC_CSV_DEFAULT", Path("/nonexistent/gsc.csv"))
+    platforms, _ = script._market_platforms("")
+    assert platforms == ["gsc"]
+
+
+def test_the_oauth_credentials_turn_on_gsc_too(monkeypatch: pytest.MonkeyPatch):
+    """**只配了 refresh_token 也要去查**——否则「配了却不生效」"""
+    _no_gsc_credentials(monkeypatch)
+    _no_gsc_export(monkeypatch)
+    for name, value in (
+        ("GSC_REFRESH_TOKEN", "refresh"),
+        ("GSC_CLIENT_ID", "cid"),
+        ("GSC_CLIENT_SECRET", "secret"),
+        ("GSC_SITE_URL", "https://giftsjourneyshop.com/"),
+    ):
+        monkeypatch.setenv(name, value)
     platforms, _ = script._market_platforms("")
     assert platforms == ["gsc"]
 
 
 def test_an_explicit_choice_wins(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(script, "GSC_CSV_DEFAULT", Path("/nonexistent/gsc.csv"))
+    _no_gsc_credentials(monkeypatch)
+    _no_gsc_export(monkeypatch)
     platforms, _ = script._market_platforms("reddit,etsy")
     assert platforms == ["reddit", "etsy"]
 

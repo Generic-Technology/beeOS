@@ -151,4 +151,16 @@ BOTTLENECK_STAGES = [
 #: 为什么把它显式化：策略变了，规则就得跟着变。
 #: 把它藏在代码里，换个假设时会继续按上一个假设选页——
 #: **规则不会因为假设变了而自己变**。
-TARGET_STRATEGIES = ["conversion_lift", "ai_referral", "demand_match"]
+TARGET_STRATEGIES = [
+    "conversion_lift",   # 有成交的商品页优先
+    "ai_referral",       # 有 AI 引荐流量但零成交的页优先
+    "demand_match",      # 买家搜的词最像它、但它零成交的页优先
+    "search_ctr",        # 站外有展示、0 点击的页优先（标题没接住）
+]
+
+#: **「推得动」的排名上限**——超过这个位置就不是改文案能救的
+#:
+#: 「排第 3 页往后」是**排名问题**（词不够相关、竞争力不够），
+#: 改标题救不回来；「排在第 1-3 页却没人点」才是**文案问题**。
+#: 两种药方不同，别拿改文案的力气去打排名。
+SEARCH_CTR_MAX_POSITION = 30.0

@@ -67,6 +67,7 @@ _DRAFT_PROMPT = """\
 当前正文（前 800 字）：{current_description}
 买家搜的词（站内搜索 / Google 搜索）：{demand_query}
 这一轮要接住的词：{demand_keywords}
+这一页在站外的表现：{page_fact}
 
 【硬要求】
 0. **用商品页现在的语言写**——照着「当前标题 / 当前正文」是什么语言，
@@ -102,7 +103,11 @@ _DRAFT_PROMPT = """\
    买家搜「globe lamp」而我们卖的是「月亮灯」——
    就写「lamp with speaker」「round base」这些**真的成立的**词，
    **不要写 globe**。宁可少一个词，不许骗人。
-7. **不要把原来正文里的事实弄丢**：尺寸、制作时间、运费与时效、
+7. 如果「这一页在站外的表现」写着**有展示、0 点击**——
+   说明 Google 已经把它摆给人看了，只是没人点进来：
+   **标题和描述要写成买家会点的那句话**（说清是什么、送谁、多少钱、什么时候到）。
+   别只是把关键词堆进去。
+8. **不要把原来正文里的事实弄丢**：尺寸、制作时间、运费与时效、
    FAQ 里的问答——**要改的是措辞和结构，不是把信息删了**。
    「当前正文」里写了的事实，**照抄进去**（数字必须一模一样）。
 
@@ -222,6 +227,8 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         demand_query=diagnosis.get("target_demand_query") or "（这轮没有对应的买家搜索词）",
         demand_keywords=", ".join(demand_keywords) if demand_keywords
         else "（这轮没有对应的买家搜索词——按商品页本身写，别硬塞词）",
+        # **这一页在站外是什么样子**——有展示却没人点 = 标题没接住
+        page_fact=diagnosis.get("target_page_fact") or "（这一轮没有站外数据）",
     )
 
     # **起草两次**：第一次不合格就把问题写回提示词再问一次
@@ -237,6 +244,20 @@ def experiment_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
             return not_applied(f"模型起草失败：{exc}", baseline_fields=baseline_fields)
 
         draft, problems = _validate_draft(raw)
+        if not problems:
+            # **标题里买家在搜的词不许丢**——
+            # 丢了 = 把「我们能被搜到」的资本扔了（实测：把 glitter 丢了）
+            missing_words = _missing_title_words(
+                baseline_fields.get("title") or "",
+                draft,
+                demand_keywords,
+            )
+            if missing_words:
+                problems = [
+                    "标题里丢了买家在搜的词：" + ", ".join(missing_words)
+                    + "——这些词是你现在能排在搜索结果里的原因，别丢；"
+                    "可以在后面补别的说法"
+                ]
         if not problems:
             # **事实不能丢**——丢了也算不合格
             missing = _missing_facts(
@@ -394,6 +415,35 @@ def _fact_numbers(html: str) -> set[str]:
         if text:
             out.add(text)
     return out
+
+
+def _missing_title_words(
+    baseline_title: str, draft: dict[str, Any], demand_keywords: list[str]
+) -> list[str]:
+    """**标题里买家在搜的词不许丢**——丢了就等于把攒下来的排名扔了
+
+    **实测踩到的**：这一轮要接住的词是 `glitter compact mirror`
+    （GSC：219 次展示、排第 2 页、0 点击——它就是靠这三个词排在那儿的），
+    而草稿把标题改成了「Personalized **Rhinestone** Mirror Gift…」，
+    `glitter` 和 `compact` 没了 → **把能看见自己的那扇门关上了**。
+
+    **只查「原来标题里就有的」那些词**：
+    原来没有的（那是这轮要**加**的），不算丢。
+    """
+    old = str(baseline_title or "").lower()
+    new_title = str(draft.get("title") or "").lower()
+    new_seo = str(draft.get("seo.title") or "").lower()
+    lost: list[str] = []
+    for word in demand_keywords or []:
+        token = str(word or "").strip().lower()
+        if len(token) < 3:
+            continue
+        if token not in old:
+            continue          # 原来就没有 → 不是「丢」，是「还没加」
+        if token in new_title or token in new_seo:
+            continue
+        lost.append(token)
+    return sorted(set(lost))
 
 
 def _missing_facts(baseline_html: str, draft_html: str) -> list[str]:

@@ -73,6 +73,7 @@ from fulfillment_scopes.shopify.auth import (  # noqa: E402
 from fulfillment_scopes.shopify.vocabulary import (  # noqa: E402
     ALLOW_WRITES_ENV,
     DOMAIN_ENV,
+    TARGET_STRATEGIES,
     TOKEN_ENV,
 )
 from kanban.trigger import trigger_task  # noqa: E402
@@ -111,7 +112,14 @@ DEFAULT_KEYWORDS = [
     "personalized gift for him",
 ]
 
-#: **GSC 导出的 CSV 放这儿**——放好了这一轮就自动去读它（不用授权）
+#: **GSC 导出的文件放这儿**——放好了这一轮就自动去读它（不用授权）
+#:
+#: 两个位置都认，**导出包优先**：
+#: - `gsc_export.zip`：Search Console 导出的**整个包**——
+#:   盒子按表头自己认表（「热门查询」「排名靠前的网页」各一张），
+#:   **拿错表就白搭**这件事就消失了；
+#: - `gsc_queries.csv`：只有一张表时的老位置（还在用）。
+GSC_EXPORT_DEFAULT = Path.home() / ".config" / "beeos" / "gsc_export.zip"
 GSC_CSV_DEFAULT = Path.home() / ".config" / "beeos" / "gsc_queries.csv"
 
 
@@ -129,9 +137,7 @@ def _market_platforms(explicit: str, csv_override: str = "") -> tuple[list[str],
 
     **凭证只从环境变量读**，不进投料、不进产出、不进日志。
     """
-    csv_path = csv_override.strip() or (
-        str(GSC_CSV_DEFAULT) if GSC_CSV_DEFAULT.exists() else ""
-    )
+    csv_path = csv_override.strip() or _gsc_export_path()
     if explicit.strip():
         platforms = [p.strip() for p in explicit.split(",") if p.strip()]
     else:
@@ -141,9 +147,28 @@ def _market_platforms(explicit: str, csv_override: str = "") -> tuple[list[str],
             os.environ.get("GSC_ACCESS_TOKEN", "").strip()
             and os.environ.get("GSC_SITE_URL", "").strip()
         )
-        if has_csv or has_api:
+        # **OAuth 那条路也算数**——
+        # 只认 ACCESS_TOKEN 的话，配好 refresh_token 也不会自动去查
+        # （「配了却不生效」比没配更让人困惑）。
+        has_oauth = all(
+            os.environ.get(name, "").strip()
+            for name in (
+                "GSC_REFRESH_TOKEN", "GSC_CLIENT_ID",
+                "GSC_CLIENT_SECRET", "GSC_SITE_URL",
+            )
+        )
+        if has_csv or has_api or has_oauth:
             platforms.append("gsc")
     return platforms, csv_path
+
+
+def _gsc_export_path() -> str:
+    """**GSC 导出的文件在哪**——导出包优先，其次是单张 CSV"""
+    if GSC_EXPORT_DEFAULT.exists():
+        return str(GSC_EXPORT_DEFAULT)
+    if GSC_CSV_DEFAULT.exists():
+        return str(GSC_CSV_DEFAULT)
+    return ""
 
 
 def _market_keywords(explicit: str) -> list[str]:
@@ -408,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="这一轮要找什么需求（逗号分隔）。"
                              "不给就从上一轮诊断的假设里拿")
     parser.add_argument("--strategy", default="conversion_lift",
-                        choices=["conversion_lift", "ai_referral", "demand_match"],
+                        choices=list(TARGET_STRATEGIES),
                         help="这一轮打哪种仗（决定下一轮改哪个落地页）："
                              "conversion_lift=有成交的商品页优先（默认）；"
                              "ai_referral=有 AI 引荐流量但零成交的页优先；"

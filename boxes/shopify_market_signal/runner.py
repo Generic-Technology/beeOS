@@ -55,6 +55,10 @@ def _build_clients(
             access_token=_env("GSC_ACCESS_TOKEN"),
             site_url=_env("GSC_SITE_URL"),
             csv_path=gsc_csv_path,
+            # **OAuth 那条路**：配一次，之后每轮自动换 token 自动查
+            refresh_token=_env("GSC_REFRESH_TOKEN"),
+            client_id=_env("GSC_CLIENT_ID"),
+            client_secret=_env("GSC_CLIENT_SECRET"),
         )
     if "reddit" in platforms:
         out["reddit"] = clients_mod.RedditClient(
@@ -133,6 +137,7 @@ def market_signal_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     built = _build_clients(platforms, csv_path)
 
     signals: list[dict[str, Any]] = []
+    page_signals: list[dict[str, Any]] = []
     statuses: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
 
@@ -148,6 +153,11 @@ def market_signal_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         kept, removed = pii.filter_signals(result.signals)
         signals.extend(kept)
         dropped.extend(removed)
+        # **页面信号也走一遍个人信息过滤**——
+        # 页面路径里也可能带人名（比如 /products/mom-…）。
+        kept_pages, removed_pages = pii.filter_signals(result.page_signals)
+        page_signals.extend(kept_pages)
+        dropped.extend(removed_pages)
         statuses.append({
             "platform": platform,
             "status": result.status.status,
@@ -158,6 +168,7 @@ def market_signal_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     return {
         "round_id": plan["round_id"],
         "signals": signals,
+        "page_signals": page_signals,
         "platform_status": statuses,
         "pii_removed": dropped,
     }
@@ -175,6 +186,7 @@ def market_signal_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]
     上一步丢过了，但这里再扫一次——**产出里绝不该有一个邮箱**。
     """
     signals = list(input_data.get("signals") or [])
+    page_signals = list(input_data.get("page_signals") or [])
     statuses = list(input_data.get("platform_status") or [])
     dropped = list(input_data.get("pii_removed") or [])
 
@@ -199,13 +211,37 @@ def market_signal_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]
         remaining += len(pii.find_personal_info(joined))
         cleaned.append(item)
 
+    # **页面信号也再洗一遍**（路径/URL/词）
+    cleaned_pages: list[dict[str, Any]] = []
+    for page in page_signals:
+        item = dict(page)
+        for field in ("path", "url", "query"):
+            text = str(item.get(field) or "")
+            if not text:
+                continue
+            scrubbed, hits = pii.scrub(text)
+            item[field] = scrubbed
+            removed_here += len(hits)
+        joined = " ".join(
+            str(item.get(key) or "") for key in ("path", "url", "query")
+        )
+        remaining += len(pii.find_personal_info(joined))
+        cleaned_pages.append(item)
+
     # 没出处的信号不算数（它可能是编的）
     with_source = [
         s for s in cleaned if str(s.get("source_url") or "").strip()
     ]
+    pages_with_source = [
+        p for p in cleaned_pages if str(p.get("url") or "").strip()
+    ]
     # **一条都没有也算不通过**——「什么都没取到」不是合格的产出。
     # （空集上「每条都有出处」在数学上恒真，但业务上它意味着这轮白跑了。）
-    source_present = bool(with_source) and len(with_source) == len(cleaned)
+    source_present = (
+        len(with_source) == len(cleaned)
+        and len(pages_with_source) == len(cleaned_pages)
+        and bool(with_source or pages_with_source)
+    )
 
     # 每个平台都交代了取没取到，**且至少有一个真的取到了**
     status_complete = (
@@ -221,13 +257,14 @@ def market_signal_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]
         "round_id": input_data["round_id"],
         "observed_at": _now(),
         "signals": with_source,
+        "page_signals": pages_with_source,
         "platform_status": statuses,
         "pii_removed_count": len(dropped) + removed_here,
         "pii_remaining_count": remaining,
-        # **「干净」= 有信号 且 没有个人信息**——
+        # **「干净」= 有产出（词 或 页面） 且 没有个人信息**——
         # 一条都没取到时，「没有个人信息」是空集上的真话，
         # 但这一轮其实白跑了——所以它判红。
-        "pii_clean": bool(cleaned) and remaining == 0,
+        "pii_clean": bool(cleaned or cleaned_pages) and remaining == 0,
         "signal_status_complete": status_complete,
         "source_present": source_present,
     }

@@ -43,7 +43,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fulfillment_scopes.shopify.auth import ENV_FILE_PATH  # noqa: E402
+from fulfillment_scopes.shopify.auth import ENV_FILE_PATH, load_env_file  # noqa: E402
 from fulfillment_scopes.shopify.market_signal import (  # noqa: E402
     PLATFORM_CREDENTIALS,
     PLATFORMS,
@@ -183,7 +183,7 @@ def _gsc_oauth_setup(client_id: str, client_secret: str, site_url: str,
     print("  ② 选你的 Google 账号 → 点「允许」→ 浏览器会跳回 127.0.0.1（页面会显示「授权好了」）")
     print("  ③ 回来这里，我接着换长期令牌…")
     try:
-        done.wait(timeout=300)
+        done.wait(timeout=600)      # 人要点「允许」——5 分钟不够就 10 分钟
     except KeyboardInterrupt:
         pass
     finally:
@@ -271,11 +271,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="接一个站外平台")
     parser.add_argument("--platform", required=True, choices=list(PLATFORMS))
     parser.add_argument("--gsc-csv", default="",
-                        help="GSC 免授权那条路：Search Console 导出的「查询」CSV")
+                        help="GSC 免授权那条路：Search Console 导出的文件"
+                             "（整包 zip / 一张 CSV / 一个目录都行）")
     parser.add_argument("--gsc-oauth", action="store_true",
                         help="GSC **配一次、之后全自动**那条路：走 OAuth 授权换长期令牌")
     parser.add_argument("--dry-run", action="store_true", help="只验，不落盘")
     args = parser.parse_args(argv)
+
+    # **先把凭证文件读进来**——
+    # 否则每次都要把 client_id / secret 手打一遍
+    # （它们本来就在 `~/.config/beeos/shopify.env` 里）。
+    load_env_file()
 
     names = list(PLATFORM_CREDENTIALS.get(args.platform, ()))
     creds: dict[str, str] = {}
@@ -292,11 +298,26 @@ def main(argv: list[str] | None = None) -> int:
     elif args.platform == "gsc" and args.gsc_csv:
         source = Path(args.gsc_csv).expanduser()
         if not source.exists():
-            raise SystemExit(f"CSV 不存在：{source}")
-        default_csv = Path.home() / ".config" / "beeos" / "gsc_queries.csv"
-        default_csv.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, default_csv)
-        print(f"→ CSV 已放到 {default_csv}（市场信号盒每轮自动读它）")
+            raise SystemExit(f"文件不存在：{source}")
+        default_dir = Path.home() / ".config" / "beeos"
+        default_dir.mkdir(parents=True, exist_ok=True)
+        # **整个导出包就放包，单张表就放那张**——
+        # 盒子按表头自己认表（「热门查询」「排名靠前的网页」各一张）。
+        if source.is_dir() or source.suffix.lower() == ".zip":
+            target = default_dir / "gsc_export.zip"
+            if source.is_dir():
+                # 目录 → 打包成 zip（一个文件比一堆文件好管）
+                import zipfile
+
+                with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for csv_file in sorted(source.glob("*.csv")):
+                        archive.write(csv_file, arcname=csv_file.name)
+            else:
+                shutil.copyfile(source, target)
+        else:
+            target = default_dir / "gsc_queries.csv"
+            shutil.copyfile(source, target)
+        print(f"→ 导出已放到 {target}（市场信号盒每轮自动读它）")
         creds = {}
     else:
         print(f"[{args.platform}] 要这几个（环境变量里没有就逐个提示，不回显）：")

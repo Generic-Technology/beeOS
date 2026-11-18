@@ -40,7 +40,10 @@ from typing import Any
 from runtime.llm import LLMError, complete_json
 from runtime.runner import HandlerRunner
 
-from fulfillment_scopes.shopify.vocabulary import BOTTLENECK_STAGES
+from fulfillment_scopes.shopify.vocabulary import (
+    BOTTLENECK_STAGES,
+    SEARCH_CTR_MAX_POSITION,
+)
 
 
 #: 模型的回答格式——**字段名和产出契约对齐**，少一个字段就作废
@@ -428,6 +431,98 @@ def _demand_keywords(snapshot: dict[str, Any], handle: str) -> dict[str, Any]:
     return {"query": query, "keywords": sorted(hit), "source": source}
 
 
+def _page_fact(snapshot: dict[str, Any], handle: str) -> str:
+    """**这一页在站外是什么样子**——一句话，给下游照着改
+
+    例：「站外 219 次展示、0 点击、平均排名 15.14」
+    """
+    if not handle:
+        return ""
+    path = f"/products/{handle}"
+    best: dict[str, Any] | None = None
+    for signal in snapshot.get("market_page_signals") or []:
+        signal_path = str(signal.get("path") or "").strip().rstrip("/")
+        if signal_path != path:
+            continue
+        if best is None or _int(signal.get("impressions")) > _int(best.get("impressions")):
+            best = signal
+    if best is None:
+        return ""
+    parts = []
+    impressions = _int(best.get("impressions"))
+    clicks = _int(best.get("clicks"))
+    if impressions:
+        parts.append(f"{impressions} 次展示")
+    if clicks:
+        parts.append(f"{clicks} 次点击")
+    else:
+        parts.append("0 点击")
+    position = best.get("position")
+    if position is not None:
+        parts.append(f"平均排名 {position}")
+    return "站外 " + "、".join(parts) if parts else ""
+
+
+def _search_ctr_page(
+    snapshot: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> tuple[str, str] | None:
+    """**站外有展示、却没人点**的那一页
+
+    **为什么它要单独立一条**：这类页面的证据不是「买家搜了它」，
+    而是「Google 已经把它摆给人看了，只是没人点进来」——
+    **药方也不同**：不是加需求词，是**把标题/描述写成买家会点的那句话**
+    （说清是什么、送谁、多少钱、什么时候到）。
+
+    **门槛**：有展示 + **0 点击** + 排名在**推得动**的范围内。
+    排太靠后是**排名问题**（词不够相关），改标题救不回来——
+    两种药方不同，别拿改文案的力气去打排名。
+
+    **排序**：展示多的先（空白最大的先），再比排名近的。
+    """
+    facts: dict[str, dict[str, Any]] = {}
+    for signal in snapshot.get("market_page_signals") or []:
+        path = str(signal.get("path") or "").strip().rstrip("/")
+        if not path or "/products/" not in path:
+            continue
+        impressions = _int(signal.get("impressions"))
+        clicks = _int(signal.get("clicks"))
+        if impressions <= 0 or clicks > 0:
+            continue
+        raw_position = signal.get("position")
+        position = float(raw_position) if raw_position is not None else None
+        if position is not None and position > SEARCH_CTR_MAX_POSITION:
+            continue
+        current = facts.get(path)
+        if current is None or impressions > current["impressions"]:
+            facts[path] = {
+                "impressions": impressions,
+                "position": position,
+                "query": str(signal.get("query") or "").strip(),
+            }
+    if not facts:
+        return None
+
+    candidates: list[tuple[int, float, str, dict[str, Any]]] = []
+    for row in rows:
+        path = f"/products/{row['handle']}"
+        fact = facts.get(path)
+        if fact is None:
+            continue
+        # **展示多的先，再比排名近的**
+        candidates.append((-fact["impressions"], fact["position"] or 999.0,
+                           row["handle"], fact))
+    if not candidates:
+        return None
+    candidates.sort()
+    _neg, position, handle, fact = candidates[0]
+    return handle, (
+        f"按策略 search_ctr 选：{handle}"
+        f"（站外 {fact['impressions']} 次展示、0 点击、平均排名 {position}"
+        f"——Google 把它摆在那儿了，只是没人点）"
+    )
+
+
 def choose_landing_page(
     snapshot: dict[str, Any],
     exclude_handles: list[str] | None = None,
@@ -441,9 +536,12 @@ def choose_landing_page(
     - `ai_referral`：**有 AI 引荐流量但零成交**的商品页优先——
       用来验证「AI 引荐来的流量能不能变成成交」：
       那些页面已经在被 AI 引荐了，只是没接住。
-    - `demand_match`：**买家在站内搜的词最像它、但它零成交**的商品页优先。
+    - `demand_match`：**买家搜的词最像它、但它零成交**的商品页优先。
       站内的搜索词是**真实买家**打出来的：
       搜了 → 点了 → 没买成 = 需求在那儿，页面没接住。
+    - `search_ctr`：**站外有展示、却 0 点击**的商品页优先。
+      Google 已经把它摆给人看了，只是没人点进来
+      → 标题/描述没接住（药方：写成买家会点的那句话）。
 
     **为什么不交给模型**：实测它挑了「11 sessions / 0 成交」那个页面，
     而「11 sessions / 1 成交」的圣诞袜页才是销冠——
@@ -488,6 +586,26 @@ def choose_landing_page(
 
     by_handle = {r["handle"] for r in rows}
 
+    if strategy == "search_ctr":
+        # **站外有曝光、但店里一个 session 都没有的页**也要进候选——
+        # 「有展示、0 点击」的页正是那种页（它压根不会被 Shopify 的
+        # 落地页漏斗收录，因为没人点进来）。
+        # 只从漏斗里挑的话，**最该改的那一页压根看不见**。
+        for signal in snapshot.get("market_page_signals") or []:
+            path = str(signal.get("path") or "").strip().rstrip("/")
+            if "/products/" not in path:
+                continue
+            handle = path.split("/products/", 1)[1].strip("/")
+            if not handle or handle in by_handle:
+                continue
+            by_handle.add(handle)
+            rows.append({
+                "handle": handle,
+                "sales": 0,
+                "sessions": 0,
+                "recently_changed": handle in excluded,
+            })
+
     # **观察期压过策略偏好**：先在**没改过的页**里选。
     # 理由：改过的页要留时间看效果；
     # 而且规则是确定性的，数据没变就还会选中同一页——
@@ -496,6 +614,11 @@ def choose_landing_page(
     fresh = [r for r in rows if not r["recently_changed"]]
     pool_all = fresh or rows
 
+    if strategy == "search_ctr":
+        picked = _search_ctr_page(snapshot, pool_all)
+        if picked:
+            return picked
+        strategy = "conversion_lift"   # 没有站外可见却没人点的页 → 退回
     if strategy == "demand_match":
         picked = _demand_matched_page(snapshot, pool_all)
         if picked:
@@ -638,6 +761,9 @@ def diagnosis_work_handler(input_data: dict[str, Any]) -> dict[str, Any]:
                 # **这个词是从哪儿来的**——站内搜索（需求到门口了）
                 # 还是站外 GSC（门外的需求）——读的人要知道差在哪
                 "target_demand_source": demand.get("source") or "",
+                # **这一页在站外是什么样子**——
+                # 下游要照着它改（search_ctr 时：「有展示、0 点击」= 标题没接住）
+                "target_page_fact": _page_fact(snapshot, handle),
                 "reject_reason": "",
             }
         if attempt == 0:
@@ -771,6 +897,8 @@ def diagnosis_packager_handler(input_data: dict[str, Any]) -> dict[str, Any]:
         "target_demand_query": str(input_data.get("target_demand_query") or ""),
         "target_keywords": list(input_data.get("target_keywords") or []),
         "target_demand_source": str(input_data.get("target_demand_source") or ""),
+        # **这一页在站外的样子**（站外有展示、0 点击 → 标题没接住）
+        "target_page_fact": str(input_data.get("target_page_fact") or ""),
         "snapshot_ref_present": True,
         "hypothesis_present": True,
         "evidence_validated": True,

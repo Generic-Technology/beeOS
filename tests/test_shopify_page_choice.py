@@ -221,6 +221,120 @@ def test_demand_match_sees_pages_beyond_the_top_25():
 
 
 # ============================================================
+# search_ctr —— 站外有展示、却没人点
+# ============================================================
+#
+# **这类页面的证据不是「买家搜了它」，是「Google 已经把它摆给人看了」**。
+# 药方也不同：不是加需求词，是把标题/描述写成买家会点的那句话。
+
+MIRROR_HANDLE = (
+    "personalized-custom-name-glitter-compact-folding-makeup-mirror"
+)
+
+
+def _search_ctr_snapshot(**over: Any) -> dict[str, Any]:
+    """一份带**站外页面事实**的快照（数字取自真店的 GSC 导出）"""
+    snapshot = _snapshot(strategy="search_ctr", **over)
+    if "market_page_signals" in over:
+        return snapshot
+    snapshot["market_page_signals"] = [
+        # **第一名候选**：219 次展示、0 点击、排第 2 页
+        {"platform": "gsc", "path": f"/products/{MIRROR_HANDLE}",
+         "url": f"https://giftsjourneyshop.com/products/{MIRROR_HANDLE}",
+         "impressions": 219, "clicks": 0, "position": 15.14, "ctr_percent": 0.0},
+        # 有展示**也有点击** → 它接住了，别动它
+        {"platform": "gsc",
+         "path": "/products/custom-pet-portrait-embroidered-wool-scarf",
+         "url": "https://giftsjourneyshop.com/products/custom-pet-portrait-embroidered-wool-scarf",
+         "impressions": 41, "clicks": 1, "position": 6.98, "ctr_percent": 2.44},
+        # 排太靠后 → **排名问题**，改标题救不回来
+        {"platform": "gsc", "path": "/products/custom-stuffed-animal-of-your-dog-cat",
+         "url": "https://giftsjourneyshop.com/products/custom-stuffed-animal-of-your-dog-cat",
+         "impressions": 97, "clicks": 0, "position": 36.77, "ctr_percent": 0.0},
+        # 不是商品页 → **改不了**（写权限只在商品页）
+        {"platform": "gsc", "path": "/pages/secret-santa-generator",
+         "url": "https://giftsjourneyshop.com/pages/secret-santa-generator",
+         "impressions": 243, "clicks": 0, "position": 59.15, "ctr_percent": 0.0},
+    ]
+    return snapshot
+
+
+def test_search_ctr_picks_the_page_that_gets_shown_but_not_clicked():
+    """**站外有展示、0 点击** → 标题没接住 → 改它"""
+    handle, note = diag.choose_landing_page(_search_ctr_snapshot())
+    assert handle == MIRROR_HANDLE, note
+    assert "search_ctr" in note
+    assert "0 点击" in note
+
+
+def test_search_ctr_skips_the_pages_that_already_get_clicks():
+    """**有点击的页面说明它接住了**——别去动它"""
+    snapshot = _search_ctr_snapshot()
+    snapshot["market_page_signals"] = [
+        sig for sig in snapshot["market_page_signals"]
+        if sig["path"] != f"/products/{MIRROR_HANDLE}"
+    ]
+    handle, note = diag.choose_landing_page(snapshot)
+    assert MIRROR_HANDLE not in handle, note
+    assert "search_ctr" not in note      # 没有这样的页 → 退回
+
+
+def test_search_ctr_skips_pages_too_far_down():
+    """**排太靠后是排名问题**——改标题救不回来"""
+    snapshot = _search_ctr_snapshot()
+    snapshot["market_page_signals"] = [
+        {"platform": "gsc", "path": f"/products/{MIRROR_HANDLE}",
+         "url": f"https://giftsjourneyshop.com/products/{MIRROR_HANDLE}",
+         "impressions": 219, "clicks": 0, "position": 36.77, "ctr_percent": 0.0},
+    ]
+    handle, note = diag.choose_landing_page(snapshot)
+    assert MIRROR_HANDLE not in handle, note
+
+
+def test_search_ctr_ignores_pages_we_cannot_write():
+    """**集合页 / 工具页我们没有写权限**——它们再值钱也改不了"""
+    snapshot = _search_ctr_snapshot()
+    snapshot["market_page_signals"] = [
+        {"platform": "gsc", "path": "/pages/secret-santa-generator",
+         "url": "https://giftsjourneyshop.com/pages/secret-santa-generator",
+         "impressions": 243, "clicks": 0, "position": 59.15, "ctr_percent": 0.0},
+    ]
+    handle, note = diag.choose_landing_page(snapshot)
+    assert "secret-santa-generator" not in handle, note
+
+
+def test_search_ctr_picks_the_bigger_blank_first():
+    """**空白最大的先**——那一块没人点的曝光最值钱"""
+    snapshot = _search_ctr_snapshot()
+    snapshot["market_page_signals"].append({
+        "platform": "gsc", "path": "/products/custom-superhero-bobblehead",
+        "url": "https://giftsjourneyshop.com/products/custom-superhero-bobblehead",
+        "impressions": 68, "clicks": 0, "position": 10.99, "ctr_percent": 0.0,
+    })
+    snapshot["landing_funnel"].append({
+        "landing_page_path": "/products/custom-superhero-bobblehead",
+        "sessions": 2, "sessions_that_completed_checkout": 0,
+    })
+    handle, note = diag.choose_landing_page(snapshot)
+    assert handle == MIRROR_HANDLE, note
+
+
+def test_search_ctr_without_page_facts_falls_back():
+    """**没有站外数据就退回**——不假装有"""
+    snapshot = _search_ctr_snapshot(market_page_signals=[])
+    handle, note = diag.choose_landing_page(snapshot)
+    assert "search_ctr" not in note
+    assert handle
+
+
+def test_the_page_fact_travels_to_the_diagnosis():
+    """**这一页在站外是什么样子**要跟着走——下游照着它改"""
+    snapshot = _search_ctr_snapshot()
+    fact = diag._page_fact(snapshot, MIRROR_HANDLE)
+    assert "219" in fact and "0 点击" in fact, fact
+
+
+# ============================================================
 # 站外需求（GSC）：门外的买家搜的词
 # ============================================================
 #
