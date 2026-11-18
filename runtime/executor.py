@@ -27,6 +27,7 @@ PoC 2 范围：
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -36,8 +37,12 @@ from core.plugins import PluginContext
 from runtime.models import OperationRecord, TaskRun, TaskRunStatus
 from runtime.plugins import (
     EXTENSION_OP_AFTER,
+    EXTENSION_OP_AROUND,
     EXTENSION_OP_BEFORE,
+    PluginFailure,
     PluginRejected,
+    abort_on_plugin_failure,
+    call_around_plugins,
     call_plugins,
     merge_patch,
     verdict_problems,
@@ -99,6 +104,71 @@ def _leaves_artifact(beeline: Beeline, op_id: str) -> bool:
     """这一跳声明了「成功后会留下东西」吗"""
     op = beeline.get_operation(op_id)
     return bool(op is not None and op.leaves_artifact)
+
+
+def _any_leaves_artifact(task_run: TaskRun, beeline: Beeline) -> bool:
+    """已经跑完的跳里，有没有哪一跳声明了「留下了东西」
+
+    **判的是声明，不是事实**（与 `_end_unfinished` 同一口径）。
+    """
+    return any(
+        _leaves_artifact(beeline, r.op_id) for r in _completed_ops(task_run)
+    )
+
+
+def _budget_exhausted(deadline: Optional[float]) -> bool:
+    """这一跳的时间预算用完了吗
+
+    **用单调钟**（`time.monotonic`）：墙钟会被 NTP 校正跳一下，
+    那种跳会让「还剩 3 秒」突然变成「还剩 -2 小时」。
+    """
+    if deadline is None:
+        return False
+    return time.monotonic() >= deadline
+
+
+def _note_budget_exceeded(
+    task_run: TaskRun,
+    op: Operation,
+    call_started: float,
+    deadline: Optional[float],
+) -> None:
+    """预算被突破、但这一跳**成功了** → 接受产出，但要**看得见**
+
+    **为什么不判失败**：这一跳可能已经产生了副作用（提交、部署、落库）。
+    说它「没成」而实际上它成了 → 下游重跑它 → **副作用做两遍**。
+    「跑得比说的久」是**要看得见的事实**，不是「没成」的证据。
+    """
+    if deadline is None:
+        return
+    elapsed = time.monotonic() - call_started
+    if elapsed <= (deadline - call_started):
+        return
+    task_run.event_log.append(
+        event="op_budget_exceeded",
+        op_id=op.op_id,
+        detail={
+            "budget_seconds": op.timeout_seconds,
+            "elapsed_seconds": round(elapsed, 3),
+        },
+    )
+
+
+class _OpCallFailed(Exception):
+    """这一跳没成——**内部信号**，不是给插件看的
+
+    **为什么需要它**：around 链把执行包起来之后，
+    「这一跳失败」不能再用 `return` 表达了——
+    `return` 会从 `execute()` 直接出去，把外层的包装绕过去。
+    所以失败要**抛出来**，由最外层统一落状态。
+
+    **插件看到的是它**：它的 `str()` 里带着原来的错误消息，
+    而 `__cause__` 是原始异常（插件要分类错误时看那个）。
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 def _classify_error(exc: Exception) -> str:
@@ -269,6 +339,35 @@ class BeelineExecutor:
                 raise PluginRejected("；".join(problems))
         return results
 
+    def _run_around(
+        self,
+        op: Operation,
+        source: dict[str, Any],
+        execute: Callable[[], Any],
+    ) -> Any:
+        """把这一跳的执行包在 around 插件链里
+
+        **没有 around 插件时**，直接执行——
+        「没挂插件」不该让这一跳多走一层（那会让 op_trace 变样）。
+
+        **包住的是整次调用**（含它内部的所有尝试）：
+        包裹层看到的是「这一跳总共跑了多久」，不是「一次尝试多久」。
+        """
+        if self.plugin_context is None:
+            return execute()
+        bindings = [
+            b for b in op.plugins if b.extension_point == EXTENSION_OP_AROUND
+        ]
+        if not bindings:
+            return execute()
+        return call_around_plugins(
+            self.plugin_context,
+            bindings,
+            extension_point=EXTENSION_OP_AROUND,
+            source=source,
+            execute=execute,
+        )
+
     def _apply_patches(
         self,
         op: Operation,
@@ -349,135 +448,195 @@ class BeelineExecutor:
                 # **为什么要有这一层**：重试发生在**组件内部**，
                 # 「准入校验」不该每试一次都查（查三遍 = 三倍的错），
                 # 而「每次尝试都记一笔」又必须每试一次都记。
-                try:
-                    self._run_op_hooks(
-                        task_run,
-                        current_op,
-                        EXTENSION_OP_BEFORE,
-                        {"input": dict(op_input)},
-                        granularity="per_call",
-                    )
-                except Exception as e:
-                    # **准入没过 → 履约中止**（不进重试：
-                    # 准入拒绝不是「传输失败」，重试它只会再拒一次）
-                    _end_unfinished(
-                        task_run, beeline,
-                        reason=f"op '{current_op.op_id}' 准入没过：{e}",
-                    )
-                    return task_run
+                # ---- 外层：around 链（包住这一整次调用）----
+                #
+                # **around 拿得到 `call()`**：`call()` 落到 `execute_call`，
+                # 它执行这一跳（含它内部的所有尝试）。
+                call_started = time.monotonic()
+                deadline = (
+                    call_started + current_op.timeout_seconds
+                    if current_op.timeout_seconds is not None
+                    else None
+                )
 
-                while True:
-                    step_count += 1
-                    if step_count > max_steps:
-                        _end_unfinished(task_run, beeline, reason="step limit exceeded")
-                        return task_run
+                def execute_call() -> dict[str, Any]:
+                    """这一跳的真正执行（around 链包住的就是它）"""
+                    nonlocal step_count
 
-                    task_run.current_op = current_op.op_id
-                    task_run.event_log.append(event="op_start", op_id=current_op.op_id)
-
-                    # 记录 op 启动（**重试时沿用上一条记录**，只加 attempts）
-                    previous = task_run.operations.get(current_op.op_id)
-                    record = OperationRecord(
-                        op_id=current_op.op_id,
-                        status="running",
-                        started_at=datetime.now(timezone.utc),
-                        input=op_input,
-                        attempts=(previous.attempts + 1) if previous is not None else 1,
-                    )
-                    task_run.operations[current_op.op_id] = record
-
+                    # ---- 执行前（准入）：不通过就别跑 ----
                     try:
                         self._run_op_hooks(
                             task_run,
                             current_op,
                             EXTENSION_OP_BEFORE,
                             {"input": dict(op_input)},
-                            granularity="per_attempt",
+                            granularity="per_call",
                         )
-                        op_output = self.runner.run(current_op.type, op_input)
                     except Exception as e:
-                        record.status = "failed"
-                        record.finished_at = datetime.now(timezone.utc)
-                        record.error = str(e)
-                        # 中止归因：LLM 是基础设施设施，runtime 认得它；盒子据此统计
-                        # 自己的调用失败率。判据不是业务知识，所以这层归类不算越界。
-                        # **三态归因，别把两件事混成一个**：
-                        # - llm_parse：模型答了但格式不对（提示词/约束的问题）
-                        # - llm_call：网络/凭证/服务端挂了（基础设施的问题）
-                        # - op_error：跟 LLM 无关，盒子的逻辑错了
-                        # 混成一个的后果：盒子的 llm_call_failure_rate 指标
-                        # 既反映不了网络稳定性，也反映不了模型服从度——
-                        # 一个数同时坏在两个方向上。
-                        error_kind = _classify_error(e)
-                        record.error_kind = error_kind
-                        task_run.event_log.append(
-                            event="op_finish",
+                        # **准入没过 → 履约中止**（不进重试：
+                        # 准入拒绝不是「传输失败」，重试它只会再拒一次）
+                        raise _OpCallFailed(
+                            f"op '{current_op.op_id}' 准入没过：{e}"
+                        ) from e
+
+                    while True:
+                        # **预算耗尽 → 不再开新尝试**（§4.6.9）
+                        if _budget_exhausted(deadline):
+                            raise _OpCallFailed(
+                                f"op '{current_op.op_id}' 的时间预算 "
+                                f"{current_op.timeout_seconds}s 已耗尽，不再开新尝试"
+                            )
+                        step_count += 1
+                        if step_count > max_steps:
+                            raise _OpCallFailed("step limit exceeded")
+
+                        task_run.current_op = current_op.op_id
+                        task_run.event_log.append(event="op_start", op_id=current_op.op_id)
+
+                        # 记录 op 启动（**重试时沿用上一条记录**，只加 attempts）
+                        previous = task_run.operations.get(current_op.op_id)
+                        record = OperationRecord(
                             op_id=current_op.op_id,
-                            detail={"status": "failed", "error": str(e), "error_kind": error_kind},
+                            status="running",
+                            started_at=datetime.now(timezone.utc),
+                            input=op_input,
+                            attempts=(previous.attempts + 1) if previous is not None else 1,
                         )
+                        task_run.operations[current_op.op_id] = record
 
-                        # ---- 重试（RETRYING）----
-                        #
-                        # **重试的是同一条腿、同一个模型、同一份 prompt**——
-                        # 不是降级（不换模型、不换数据、不跳过这一跳）。
-                        #
-                        # 走 RETRYING 再回 RUNNING，是为了让「这次在重试」
-                        # 在履约层**看得见**：光在 op 里闷头重试，
-                        # 看板上看它一直停在 running，人不知道它是在动还是死了。
-                        if _retryable(current_op, error_kind, record.attempts):
-                            task_run.transition_to(
-                                TaskRunStatus.RETRYING,
-                                reason=(
-                                    f"op '{current_op.op_id}' 第 {record.attempts} 次"
-                                    f"传输失败（{error_kind}），准备重试"
-                                ),
+                        try:
+                            self._run_op_hooks(
+                                task_run,
+                                current_op,
+                                EXTENSION_OP_BEFORE,
+                                {"input": dict(op_input)},
+                                granularity="per_attempt",
                             )
+                            op_output = self.runner.run(current_op.type, op_input)
+                        except Exception as e:
+                            record.status = "failed"
+                            record.finished_at = datetime.now(timezone.utc)
+                            record.error = str(e)
+                            # 中止归因：LLM 是基础设施设施，runtime 认得它；盒子据此统计
+                            # 自己的调用失败率。判据不是业务知识，所以这层归类不算越界。
+                            # **三态归因，别把两件事混成一个**：
+                            # - llm_parse：模型答了但格式不对（提示词/约束的问题）
+                            # - llm_call：网络/凭证/服务端挂了（基础设施的问题）
+                            # - op_error：跟 LLM 无关，盒子的逻辑错了
+                            # 混成一个的后果：盒子的 llm_call_failure_rate 指标
+                            # 既反映不了网络稳定性，也反映不了模型服从度——
+                            # 一个数同时坏在两个方向上。
+                            error_kind = _classify_error(e)
+                            record.error_kind = error_kind
                             task_run.event_log.append(
-                                event="op_retry",
+                                event="op_finish",
                                 op_id=current_op.op_id,
-                                detail={
-                                    "attempt": record.attempts + 1,
-                                    "error_kind": error_kind,
-                                    "error": str(e),
-                                    "max_attempts": MAX_OP_ATTEMPTS,
-                                },
+                                detail={"status": "failed", "error": str(e), "error_kind": error_kind},
                             )
-                            task_run.transition_to(
-                                TaskRunStatus.RUNNING,
-                                reason=f"retry op '{current_op.op_id}'",
-                            )
-                            # **重跑同一个 op，input 不变**
-                            continue
 
-                        # ---- 走不下去：失败 / 部分完成 ----
-                        _end_unfinished(
-                            task_run, beeline,
-                            reason=f"op '{current_op.op_id}' failed: {e}",
-                        )
-                        return task_run
-                    break  # 这一跳成功了 → 退出「尝试」循环
+                            # ---- 重试（RETRYING）----
+                            #
+                            # **重试的是同一条腿、同一个模型、同一份 prompt**——
+                            # 不是降级（不换模型、不换数据、不跳过这一跳）。
+                            #
+                            # 走 RETRYING 再回 RUNNING，是为了让「这次在重试」
+                            # 在履约层**看得见**：光在 op 里闷头重试，
+                            # 看板上看它一直停在 running，人不知道它是在动还是死了。
+                            if _retryable(current_op, error_kind, record.attempts):
+                                # **预算耗尽 → 不再开新尝试**
+                                # （预算的意义就在这儿：它止的是「再花一遍时间」）
+                                if _budget_exhausted(deadline):
+                                    raise _OpCallFailed(
+                                        f"op '{current_op.op_id}' 传输失败"
+                                        f"（{error_kind}），且时间预算 "
+                                        f"{current_op.timeout_seconds}s 已耗尽，"
+                                        f"不再重试：{e}"
+                                    ) from e
+                                task_run.transition_to(
+                                    TaskRunStatus.RETRYING,
+                                    reason=(
+                                        f"op '{current_op.op_id}' 第 {record.attempts} 次"
+                                        f"传输失败（{error_kind}），准备重试"
+                                    ),
+                                )
+                                task_run.event_log.append(
+                                    event="op_retry",
+                                    op_id=current_op.op_id,
+                                    detail={
+                                        "attempt": record.attempts + 1,
+                                        "error_kind": error_kind,
+                                        "error": str(e),
+                                        "max_attempts": MAX_OP_ATTEMPTS,
+                                    },
+                                )
+                                task_run.transition_to(
+                                    TaskRunStatus.RUNNING,
+                                    reason=f"retry op '{current_op.op_id}'",
+                                )
+                                # **重跑同一个 op，input 不变**
+                                continue
 
-                # op 成功
-                record.status = "completed"
-                record.finished_at = datetime.now(timezone.utc)
-                record.output = op_output
-                task_run.event_log.append(
-                    event="op_finish",
-                    op_id=current_op.op_id,
-                    detail={"status": "completed"},
-                )
+                            # ---- 走不下去：失败 / 部分完成 ----
+                            raise _OpCallFailed(
+                                f"op '{current_op.op_id}' failed: {e}"
+                            ) from e
+                        break  # 这一跳成功了 → 退出「尝试」循环
 
-                # **调用层的「执行后」钩子**（收尾：可以往产出里追加）
-                call_patches = self._run_op_hooks(
-                    task_run,
-                    current_op,
-                    EXTENSION_OP_AFTER,
-                    # **产出原样给插件**（不转 dict）——同上
-                    {"input": dict(op_input), "output": op_output},
-                    granularity="per_call",
-                )
-                op_output = self._apply_patches(current_op, op_output, call_patches)
-                record.output = op_output
+                    # op 成功
+                    record.status = "completed"
+                    record.finished_at = datetime.now(timezone.utc)
+                    record.output = op_output
+                    task_run.event_log.append(
+                        event="op_finish",
+                        op_id=current_op.op_id,
+                        detail={"status": "completed"},
+                    )
+
+                    # **调用层的「执行后」钩子**（收尾：可以往产出里追加）
+                    call_patches = self._run_op_hooks(
+                        task_run,
+                        current_op,
+                        EXTENSION_OP_AFTER,
+                        # **产出原样给插件**（不转 dict）——同上
+                        {"input": dict(op_input), "output": op_output},
+                        granularity="per_call",
+                    )
+                    op_output = self._apply_patches(current_op, op_output, call_patches)
+                    record.output = op_output
+
+                    # **超预算但成功**：接受产出，但要**看得见**
+                    _note_budget_exceeded(
+                        task_run, current_op, call_started, deadline
+                    )
+                    return op_output
+
+                try:
+                    op_output = self._run_around(
+                        current_op,
+                        {"input": dict(op_input)},
+                        execute_call,
+                    )
+                except PluginFailure as failure:
+                    # **插件坏了**（契约违反：改了产出 / 没调 call / 调了两次 /
+                    # 把失败变成成功）→ 按 §4.6.7 中止履约（不降级）。
+                    abort_on_plugin_failure(
+                        task_run,
+                        failure,
+                        leaves_artifact=_any_leaves_artifact(task_run, beeline),
+                    )
+                    return task_run
+                except _OpCallFailed as e:
+                    _end_unfinished(task_run, beeline, reason=e.reason)
+                    return task_run
+                except Exception as e:
+                    # **包裹层自己抛了异常** → 这一跳不行。
+                    # （不是「插件坏了」：包裹层抛异常是在说「这一跳不行」，
+                    #  那是**对执行的判断**，不是机制故障。）
+                    _end_unfinished(
+                        task_run, beeline,
+                        reason=f"op '{current_op.op_id}' 的执行外层插件失败：{e}",
+                    )
+                    return task_run
 
                 # 选 next
                 next_ref = _pick_next(current_op, op_output)

@@ -83,6 +83,19 @@ class Operation(BaseModel):
     bee: Optional[Bee] = None
     external_system: Optional[ExternalSystem] = None
 
+    #: 这一跳**总共**最多花多久（秒，含它的所有尝试）。
+    #:
+    #: **它不是「打断」的闸，是「不再开新尝试」的闸**——
+    #: 同进程杀不掉已经在跑的线程（§4.6.9）。
+    #:
+    #: **为什么留在组件字段**：超时要能在**两次尝试之间**止损，
+    #: 而重试循环在执行器里；做成插件的话插件只能看到「整跳跑完了」。
+    timeout_seconds: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="这一跳的总时间预算（秒）；留空 = 不限",
+    )
+
     #: 这一跳挂的**插件绑定**（装配器从声明层编译而来）。
     #:
     #: **这里只放可序列化的东西**：类型 id / 作用位置 / 参数 / 实现键。

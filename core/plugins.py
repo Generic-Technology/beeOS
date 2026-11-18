@@ -149,6 +149,8 @@ class ExtensionPoint:
     - `verdict` —— 核验类钩子：`None` = 通过，
       或 `{"problems": [...]}` = 不通过（**清单必须非空**——
       空清单会被拒：插件「忘了填」不该让它静默放行，通过只能返回 `None`）
+    - `around` —— 执行外层钩子：返回**这一跳的产出**，
+      且**必须等于 `call()` 的返回值**（§4.6.8 的三条锁之一）
 
     `return_required_fields` 是**返回值必须齐的字段**——
     决策类钩子不只收一个词：理由、命中的规则、用不上的规则都在里面，
@@ -164,7 +166,7 @@ class ExtensionPoint:
     kind: Literal["decision", "action"] = "action"
     max_bindings_per_host: int = 1
     view_keys: tuple[str, ...] = ()
-    return_contract: Literal["none", "decision", "patch", "verdict"] = "none"
+    return_contract: Literal["none", "decision", "patch", "verdict", "around"] = "none"
     return_required_fields: tuple[str, ...] = ()
     decision_values: tuple[str, ...] = ()
     #: **这个钩子的粒度**——

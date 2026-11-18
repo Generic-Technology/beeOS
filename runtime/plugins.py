@@ -32,7 +32,7 @@ core 定**协议**，runtime 真的把插件**调起来**。
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from core.plugins import (
     ExtensionPoint,
@@ -60,6 +60,16 @@ EXTENSION_OP_BEFORE = "op.before"
 #: **看得到这一跳的输入与输出**，返回 None = 没什么要补的；
 #: 返回 `{"append": {字段: [要追加的项]}}` = 往产出里**追加**。
 EXTENSION_OP_AFTER = "op.after"
+
+#: op 级「执行外层」钩子（包裹）
+#:
+#: **多拿到一个 `call()`**——执行器递给它一个可调用，
+#: 调它 = 真正执行这一跳（含它内部的所有尝试）。
+#:
+#: **它是「第三种形状」**：`before` / `after` 是两头（看得见输入、看得见输出，
+#: 但看不见执行本身）；`around` 包住执行，所以「跑了多久」「被调了几次」
+#: 这些问题问得到它。
+EXTENSION_OP_AROUND = "op.around"
 
 #: 盒级核验钩子
 #:
@@ -126,6 +136,21 @@ def register_runtime_extension_points() -> None:
             return_contract="patch",
             granularity="per_call",
             summary="这一跳执行之后：看得到输入与输出，可以往产出里追加",
+        )
+    )
+    register_extension_point(
+        ExtensionPoint(
+            id=EXTENSION_OP_AROUND,
+            host_kinds=("op",),
+            kind="action",
+            # **可以叠多层**（中间件语义：先声明的包住后声明的）——
+            # 叠层之间不冲突（它们是**套着**的，不是**并排**的）。
+            # 但不许无限叠：4 层足够表达「计时 + 留痕 + 看门狗」这类组合。
+            max_bindings_per_host=4,
+            view_keys=("input", "call"),
+            return_contract="around",
+            granularity="per_call",
+            summary="包住这一跳的执行：拿得到 call()，也拿得到产出",
         )
     )
     register_extension_point(
@@ -327,6 +352,15 @@ def check_return(point: ExtensionPoint, value: Any) -> Any:
                 f"读不懂的问题等于没报：{bad!r}"
             )
         return value
+    if point.return_contract == "around":
+        # **around 的返回值不在这里校验**——
+        # 它必须和「`call()` 到底返回了什么、抛没抛、调用了几次」对照，
+        # 那是 `_check_around_layer` 的活（它手上有记账）。
+        # 在这里只能看到返回值本身，**看不到它有没有被改过**。
+        raise PluginContractError(
+            f"扩展点 {point.id!r} 的返回值由 around 专用校验器判"
+            "（要连着 call() 的记账一起看），不走这里"
+        )
     raise PluginContractError(f"扩展点 {point.id!r} 的返回契约 {point.return_contract!r} 不认识")
 
 
@@ -365,6 +399,158 @@ def call_plugins(
             # 契约违反也是失败：这个能力没成，履约不能假装它成了
             raise PluginFailure(binding.id, extension_point, e) from e
     return results
+
+
+# ============================================================
+# 执行外层（around）：把插件包在执行外面
+# ============================================================
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    """两个值「是不是同一个东西」
+
+    **类型也要一样**：`True == 1` 在 Python 里成立，
+    而「产出被换成了别的东西」正是 around 要防的事——
+    只比值不比类型，就会放过这种替换。
+    """
+    if type(a) is not type(b):
+        return False
+    try:
+        return bool(a == b)
+    except Exception:
+        return False
+
+
+def _make_around_layer(
+    context: PluginContext,
+    binding: PluginBinding,
+    point: ExtensionPoint,
+    inner: Callable[[], Any],
+    source: Mapping[str, Any],
+) -> Callable[[], Any]:
+    """做一层 around（返回「跑这一层」的函数）
+
+    **三条锁**（docs §4.6.8）：
+    1. `call()` 至多调一次——第二次**当场抛错**，不执行第二次；
+    2. 返回值必须**等于** `call()` 的返回值（不许改产出）；
+    3. `call()` 必须被调用过恰好一次（不许跳过执行）。
+
+    **为什么 `call` 必须是普通函数**：`build_view` 会对视图做深拷贝，
+    而深拷贝对**函数**是原子的（返回同一个函数对象）。
+    用可调用对象的话，拷贝出来的是**另一个**对象——
+    里面的记账（调了几次）就记在副本上了，机制自己看不见。
+    """
+    state: dict[str, Any] = {"called": 0, "raised": False, "value": None}
+
+    def call() -> Any:
+        state["called"] += 1
+        if state["called"] > 1:
+            raise PluginContractError(
+                "call() 只能调一次——插件自己再调一次 = 私设重试，"
+                "实际调用次数就不可预测了"
+            )
+        try:
+            value = inner()
+        except BaseException:
+            state["raised"] = True
+            raise
+        state["value"] = value
+        return value
+
+    def run_layer() -> Any:
+        impl = context.implementation(binding.implementation_key)
+        view = build_view(point, {**dict(source), "call": call})
+        try:
+            # **插件自己抛的异常原样往上抛**——
+            # 包裹层抛异常是在说「这一跳不行」，那是**对执行的判断**，
+            # 不是「这个能力没跑起来」（契约违反才是）。
+            result = impl(view, copy.deepcopy(binding.params))
+        except PluginContractError as e:
+            # **机制自己抛的**（比如第二次调 `call()`）= 契约违反
+            # → 插件失败（这个能力没按规矩跑）。
+            raise PluginFailure(binding.id, point.id, e) from e
+        except Exception:
+            raise
+        _check_around_layer(binding, point, state, result)
+        return result
+
+    return run_layer
+
+
+def _check_around_layer(
+    binding: PluginBinding,
+    point: ExtensionPoint,
+    state: Mapping[str, Any],
+    result: Any,
+) -> None:
+    """校验这一层 around 有没有违反三条锁"""
+    called = int(state["called"])
+    if called == 0:
+        raise PluginFailure(
+            binding.id,
+            point.id,
+            PluginContractError(
+                "around 插件没有调用 call()——这一跳根本没执行，"
+                "而它装作成功（下游会拿到上一跳的旧输入）"
+            ),
+        )
+    if called > 1:
+        raise PluginFailure(
+            binding.id,
+            point.id,
+            PluginContractError(
+                f"around 插件调用了 call() {called} 次——只许一次"
+            ),
+        )
+    if state["raised"]:
+        raise PluginFailure(
+            binding.id,
+            point.id,
+            PluginContractError(
+                "around 插件把 call() 的失败吞掉了，正常返回了一个值——"
+                "不许把失败变成成功"
+            ),
+        )
+    if not _same_value(result, state["value"]):
+        raise PluginFailure(
+            binding.id,
+            point.id,
+            PluginContractError(
+                "around 插件改动了产出——它必须原样返回 call() 的结果"
+                "（产出内容只许由业务插件按自己声明的范围改）"
+            ),
+        )
+
+
+def call_around_plugins(
+    context: PluginContext,
+    bindings: Sequence[PluginBinding],
+    *,
+    extension_point: str,
+    source: Mapping[str, Any],
+    execute: Callable[[], Any],
+) -> Any:
+    """把一层层 around 插件包在执行外面，跑完拿产出
+
+    **嵌套顺序 = 宿主声明顺序**（先声明的在外层，像中间件）。
+    `execute` 是**真正的执行**（执行器递给插件的那个 `call()` 最终落到它）。
+    """
+    point = context.extension_points.get(extension_point)
+    if point is None:
+        raise KeyError(
+            f"扩展点 {extension_point!r} 不在装配快照里——"
+            f"快照里有：{sorted(context.extension_points) or '（一个都没有）'}"
+        )
+
+    layers = [b for b in bindings if b.extension_point == extension_point]
+    if not layers:
+        return execute()
+
+    # 从内到外构建（声明顺序是从外到内 → 反着建）
+    runner = execute
+    for binding in reversed(layers):
+        runner = _make_around_layer(context, binding, point, runner, source)
+    return runner()
 
 
 # ============================================================

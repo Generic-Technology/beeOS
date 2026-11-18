@@ -142,6 +142,15 @@ class Component(BaseModel):
         default=False,
         description="这一跳成功后会留下产物或副作用",
     )
+    #: 这一跳的**总时间预算**（秒，含它的所有尝试）。
+    #:
+    #: **它是「不再开新尝试」的闸，不是「打断」的闸**——
+    #: 同进程杀不掉已经在跑的线程（docs/component-plugin-model.md §4.6.9）。
+    timeout_seconds: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="这一跳的总时间预算（秒）；留空 = 不限",
+    )
     #: 这一跳挂的**插件声明**（横切能力：权限、审计、限流…）。
     #:
     #: **插件必有宿主**：声明只可能出现在这里或 `BoxDeclaration.plugins` 两处，
@@ -757,6 +766,7 @@ def assemble(
                 external_system=comp.external_system,
                 idempotency=comp.idempotency,
                 leaves_artifact=comp.leaves_artifact,
+                timeout_seconds=comp.timeout_seconds,
                 plugins=compile_bindings(list(comp.plugins)),
             )
             for comp in components
