@@ -16,7 +16,11 @@ from __future__ import annotations
 import pytest
 
 from boxes.shopify_market_signal import pii
-from boxes.shopify_market_signal.clients import GscClient
+from boxes.shopify_market_signal.clients import (
+    FetchResult,
+    GscClient,
+    PlatformStatus,
+)
 from boxes.shopify_market_signal.runner import (
     market_signal_intake_handler,
     market_signal_packager_handler,
@@ -239,6 +243,69 @@ class TestTheGscCsvPath:
         assert result.status.status == "observed", result.status.detail
         assert [s["topic"] for s in result.signals] == ["crystal music box"]
         assert [p["path"] for p in result.page_signals] == ["/products/box"]
+
+    def test_the_api_path_wins_over_the_export_file(self, tmp_path, monkeypatch):
+        """**API 优先，导出文件兜底**——
+        API 更新鲜，还能多给一个「词 × 页」维度。
+        """
+        csv_path = tmp_path / "gsc.csv"
+        csv_path.write_text(
+            "热门查询,点击次数,展示,点击率,排名\ncrystal music box,0,27,0%,25\n",
+            encoding="utf-8",
+        )
+        calls = {"api": 0, "csv": 0}
+
+        def _fake_api(self, window_days):
+            calls["api"] += 1
+            return FetchResult(
+                signals=[{"platform": "gsc", "topic": "来自 API 的词", "occurrences": 9,
+                          "source_url": "gsc://x", "captured_at": "t"}],
+                status=PlatformStatus("gsc", "observed", "API 取到 1 条需求词", 1),
+            )
+
+        def _fake_csv(self):
+            calls["csv"] += 1
+            return FetchResult(
+                signals=[],
+                status=PlatformStatus("gsc", "observed", "CSV 1 条", 1),
+            )
+
+        monkeypatch.setattr(GscClient, "_from_api", _fake_api)
+        monkeypatch.setattr(GscClient, "_from_csv", _fake_csv)
+
+        client = GscClient(
+            csv_path=str(csv_path),
+            site_url="https://giftsjourneyshop.com/",
+            access_token="tok",
+        )
+        result = client.fetch([], 28)
+        assert calls["api"] == 1 and calls["csv"] == 0, calls
+        assert [s["topic"] for s in result.signals] == ["来自 API 的词"]
+
+    def test_the_export_file_is_the_fallback_when_the_api_fails(self, tmp_path, monkeypatch):
+        """**API 挂了还有导出文件顶着**——不至于整轮没站外需求"""
+        csv_path = tmp_path / "gsc.csv"
+        csv_path.write_text(
+            "热门查询,点击次数,展示,点击率,排名\ncrystal music box,0,27,0%,25\n",
+            encoding="utf-8",
+        )
+
+        def _fake_api(self, window_days):
+            return FetchResult(
+                signals=[],
+                status=PlatformStatus("gsc", "unverifiable", "HTTP 429：配额用完了"),
+            )
+
+        monkeypatch.setattr(GscClient, "_from_api", _fake_api)
+        client = GscClient(
+            csv_path=str(csv_path),
+            site_url="https://giftsjourneyshop.com/",
+            access_token="tok",
+        )
+        result = client.fetch([], 28)
+        assert result.status.status == "observed", result.status.detail
+        assert "API 没取到" in result.status.detail, result.status.detail
+        assert "导出文件" in result.status.detail, result.status.detail
 
     def test_a_table_that_is_neither_says_what_it_wanted(self, tmp_path):
         """**认不出的表要说清要哪张**——读者才知道自己是导错了"""

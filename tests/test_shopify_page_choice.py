@@ -335,6 +335,49 @@ def test_the_page_fact_travels_to_the_diagnosis():
 
 
 # ============================================================
+# 词 × 页：Google 自己说这个页是为哪个词排的
+# ============================================================
+
+
+def test_the_word_google_ranks_the_page_for_is_taken_as_is():
+    """**同物异名只能靠它**——买家搜 globe lamp，页面写 3d lamp
+
+    词面规则接不住（`globe`/`speaker` 对不上），
+    但 **Google 的匹配接得住** —— 那个词就是答案。
+    """
+    snapshot = _snapshot()
+    snapshot["market_page_signals"] = [{
+        "platform": "gsc",
+        "path": "/products/custom-photo-3d-lamp-with-bluetooth-music-player",
+        "url": "https://giftsjourneyshop.com/products/custom-photo-3d-lamp-with-bluetooth-music-player",
+        "query": "personalized globe lamp with speaker",
+        "queries": ["personalized globe lamp with speaker"],
+        "impressions": 48, "clicks": 0, "position": 29.98, "ctr_percent": 0.0,
+    }]
+    demand = diag._demand_keywords(
+        snapshot, "custom-photo-3d-lamp-with-bluetooth-music-player")
+    assert demand["query"] == "personalized globe lamp with speaker", demand
+    assert "Google" in demand["source"], demand
+    # **要守住的词 = 页面本来就有、而 Google 在用的那些**
+    assert "lamp" in demand["keywords"], demand
+
+
+def test_the_page_fact_says_which_word_ranks_it():
+    snapshot = _snapshot()
+    snapshot["market_page_signals"] = [{
+        "platform": "gsc",
+        "path": "/products/custom-photo-3d-lamp-with-bluetooth-music-player",
+        "url": "https://giftsjourneyshop.com/products/custom-photo-3d-lamp-with-bluetooth-music-player",
+        "query": "3d lamp personalised",
+        "queries": ["3d lamp personalised"],
+        "impressions": 48, "clicks": 0, "position": 29.98, "ctr_percent": 0.0,
+    }]
+    fact = diag._page_fact(snapshot, "custom-photo-3d-lamp-with-bluetooth-music-player")
+    assert "3d lamp personalised" in fact, fact
+    assert "48 次展示" in fact, fact
+
+
+# ============================================================
 # 站外需求（GSC）：门外的买家搜的词
 # ============================================================
 #

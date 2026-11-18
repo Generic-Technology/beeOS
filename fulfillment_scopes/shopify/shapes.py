@@ -114,6 +114,10 @@ MARKET_SIGNAL_OUTPUT_SCHEMA = SchemaDef(
                 FieldDef(name="query", type="string", required=False,
                          description="**是哪个词把它摆在那儿的**——"
                                      "（API 那条路才有；CSV 导出没有这个维度）"),
+                FieldDef(name="queries", type="array", required=False,
+                         items=FieldDef(name="query", type="string", required=True),
+                         description="**排在它前面的那几个词**——"
+                                     "「词 × 页」是 Google 自己的语义匹配"),
                 FieldDef(name="impressions", type="integer", required=False,
                          description="展示数——有多少人在搜索结果里见过它"),
                 FieldDef(name="clicks", type="integer", required=False,
@@ -269,6 +273,9 @@ SNAPSHOT_OUTPUT_SCHEMA = SchemaDef(
                 FieldDef(name="url", type="string", required=False),
                 FieldDef(name="query", type="string", required=False,
                          description="是哪个词把它摆在那儿的（API 那条路才有）"),
+                FieldDef(name="queries", type="array", required=False,
+                         items=FieldDef(name="query", type="string", required=True),
+                         description="排在它前面的那几个词"),
                 FieldDef(name="impressions", type="integer", required=False,
                          description="展示数——有多少人在搜索结果里见过它"),
                 FieldDef(name="clicks", type="integer", required=False,

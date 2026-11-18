@@ -24,9 +24,11 @@
 from __future__ import annotations
 
 import csv
+import http.client
 import io
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import zipfile
@@ -78,6 +80,48 @@ def _http_json(
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(request, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+#: **瞬时故障退避重试**——GSC 也会 SSL EOF / 断连
+#: （实测：连着两次查询，第二次直接 EOF，整轮的站外需求就没了）。
+#: 401/403 **不重试**（那是权限问题，重试一万次也一样）。
+RETRYABLE_HTTP_STATUS = (408, 429, 500, 502, 503, 504)
+RETRY_BACKOFF_SECONDS = (1.0, 3.0, 8.0)
+
+#: 退避用的 sleep（测试里可替换——测试不该真等）
+_SLEEP = time.sleep
+
+
+def _http_json_retry(
+    url: str,
+    *,
+    headers: dict[str, str],
+    data: Optional[bytes] = None,
+    method: str = "GET",
+    timeout: float = 30.0,
+    retries: int = 3,
+) -> dict[str, Any]:
+    """**带退避重试的 JSON 请求**——瞬时故障不该打死整轮
+
+    为什么要有：Shopify 店面会频发断连，GSC 也会
+    （实测 `SSL: UNEXPECTED_EOF_WHILE_READING`）。
+    那不是「这一轮没有站外需求」，那是「再等三秒就好」。
+    """
+    last = ""
+    for attempt in range(retries + 1):
+        try:
+            return _http_json(url, headers=headers, data=data, method=method,
+                              timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403) or exc.code not in RETRYABLE_HTTP_STATUS:
+                raise
+            last = f"HTTP {exc.code}"
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+            last = f"{type(exc).__name__}: {exc}"
+        if attempt >= retries:
+            break
+        _SLEEP(RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)])
+    raise urllib.error.URLError(f"重试 {retries} 次后仍失败：{last}")
 
 
 def _http_text(
@@ -155,27 +199,43 @@ class GscClient:
         self._cached_token = ""
 
     def fetch(self, keywords: list[str], window_days: int) -> FetchResult:
+        # **API 优先，导出文件兜底**——
+        # API 更新鲜，还能多给一个「词 × 页」维度；
+        # API 挂了（配额/网络）还有导出文件顶着，不至于整轮没站外需求。
+        if self._api_ready():
+            try:
+                result = self._from_api(window_days)
+            except urllib.error.HTTPError as exc:
+                result = FetchResult(status=PlatformStatus(
+                    "gsc", "unverifiable", f"HTTP {exc.code}：{exc.reason}"))
+            except (urllib.error.URLError, ValueError, KeyError) as exc:
+                result = FetchResult(status=PlatformStatus(
+                    "gsc", "unverifiable", f"取数失败：{exc}"))
+            if result.status.status == "observed" or not self.csv_path:
+                return result
+            fallback = self._from_csv()
+            fallback.status = PlatformStatus(
+                "gsc",
+                fallback.status.status,
+                f"API 没取到（{result.status.detail}），改用导出文件："
+                f"{fallback.status.detail}",
+                fallback.status.signal_count,
+            )
+            return fallback
         if self.csv_path:
             return self._from_csv()
-        if not self.site_url:
-            return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable",
-                "没配 GSC_SITE_URL，也没给导出的文件路径",
-            ))
-        # **OAuth 那条路也算数**：refresh_token 在 → 现场换一张 access_token
-        if not (self.access_token or self._has_refresh_token()):
-            return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable",
-                "没配 GSC_ACCESS_TOKEN / GSC_REFRESH_TOKEN，也没给导出的文件路径",
-            ))
-        try:
-            return self._from_api(window_days)
-        except urllib.error.HTTPError as exc:
-            return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable", f"HTTP {exc.code}：{exc.reason}"))
-        except (urllib.error.URLError, ValueError, KeyError) as exc:
-            return FetchResult(status=PlatformStatus(
-                "gsc", "unverifiable", f"取数失败：{exc}"))
+        return FetchResult(status=PlatformStatus(
+            "gsc", "unverifiable",
+            "没配 GSC_SITE_URL / 访问令牌，也没给导出的文件路径",
+        ))
+
+    def _api_ready(self) -> bool:
+        """**API 这条路准备好了吗**——
+        refresh_token 在也算数（配一次，之后每轮自动换 token）
+        """
+        return bool(self.site_url) and (
+            bool(self.access_token) or self._has_refresh_token()
+        )
 
     def _has_refresh_token(self) -> bool:
         return bool(self.refresh_token and self.client_id and self.client_secret)
@@ -314,6 +374,9 @@ class GscClient:
                 "platform": "gsc",
                 "path": _url_to_path(url),
                 "url": url,
+                # **CSV 路没有「词 × 页」**——导出没有这个维度
+                "query": "",
+                "queries": [],
                 "impressions": (
                     _safe_int(row[i_col]) if i_col is not None and len(row) > i_col else None
                 ),
@@ -353,7 +416,7 @@ class GscClient:
             "client_id": self.client_id,
             "client_secret": self.client_secret,
         }).encode("utf-8")
-        payload = _http_json(
+        payload = _http_json_retry(
             self.TOKEN_URL,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data=body,
@@ -382,6 +445,8 @@ class GscClient:
         #    而它才是「选页不用猜」的关键。
         queries = self._api_query(
             site, token, start, end, ["query"], row_limit=250)
+        pages = self._api_query(
+            site, token, start, end, ["page"], row_limit=500)
         pairs = self._api_query(
             site, token, start, end, ["query", "page"], row_limit=1000)
 
@@ -415,7 +480,7 @@ class GscClient:
             sig.pop("_demand", None)
             sig.pop("_clicks", None)
 
-        page_signals = self._page_signals_from_pairs(pairs, captured)
+        page_signals = self._page_signals_from_api(pages, pairs, captured)
         return FetchResult(
             signals=signals,
             page_signals=page_signals,
@@ -441,7 +506,7 @@ class GscClient:
             "dimensions": dimensions,
             "rowLimit": row_limit,
         }).encode("utf-8")
-        payload = _http_json(
+        payload = _http_json_retry(
             self.API_URL.format(site=site),
             headers={
                 "Authorization": f"Bearer {token}",
@@ -449,32 +514,65 @@ class GscClient:
             },
             data=body,
             method="POST",
+            # **GSC 偶尔很慢**——30 秒会把它误判成失败（实测第一次调用超时）
+            timeout=GSC_API_TIMEOUT,
         )
         rows = payload.get("rows") or []
-        return [dict(r) for r in rows if isinstance(r, dict)]
-
-    def _page_signals_from_pairs(
-        self, pairs: list[dict[str, Any]], captured: str
-    ) -> list[dict[str, Any]]:
-        """**词 × 页**→ 页面信号（每个词 × 每个页面一条）
-
-        **为什么要按词分开**：同一页可能为好几个词排名，
-        而「哪个词把它摆在第 15 位」正是我们要写进标题的那句话。
-        """
         out: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item = {k: v for k, v in row.items() if k != "keys"}
+            # **维度值在 `keys` 里**（GSC 的形状）：
+            # {"keys": ["crystal music box"], "clicks": 0, "impressions": 27, ...}
+            # 之前按 row["query"] 读 → **一行都没读到，却报「observed」**
+            # （「取不到」被写成了「观测值」）。
+            for name, value in zip(dimensions, row.get("keys") or []):
+                item[name] = value
+            out.append(item)
+        return out
+
+    def _page_signals_from_api(
+        self,
+        pages: list[dict[str, Any]],
+        pairs: list[dict[str, Any]],
+        captured: str,
+    ) -> list[dict[str, Any]]:
+        """**页面信号**——每一页一条，带上「是哪些词把它排在那儿的」
+
+        **为什么要这个**：**词 × 页**是 Google 自己的语义匹配——
+        买家搜「globe lamp」、Google 知道是那个「3d lamp」页在排。
+        我们的词面规则接不住这种同物异名，**但 Google 接得住**。
+
+        页的总量取 `dimensions=["page"]`（权威），
+        「哪些词排它」取 `dimensions=["query","page"]`（配对）。
+        """
+        # 先把配对按页归拢：哪几个词在排这一页，各自多少曝光
+        by_page: dict[str, list[tuple[str, int]]] = {}
         for row in pairs:
+            page = str(row.get("page") or "").strip()
+            query = str(row.get("query") or "").strip()
+            if not page or not query:
+                continue
+            by_page.setdefault(page, []).append(
+                (query, _safe_int(row.get("impressions")) or 0)
+            )
+
+        out: list[dict[str, Any]] = []
+        for row in pages:
             page = str(row.get("page") or "").strip()
             if not page:
                 continue
-            clicks = _safe_int(row.get("clicks"))
-            impressions = _safe_int(row.get("impressions"))
+            words = sorted(by_page.get(page, []), key=lambda x: -x[1])[:5]
             out.append({
                 "platform": "gsc",
                 "path": _url_to_path(page),
                 "url": page,
-                "query": str(row.get("query") or "").strip(),
-                "impressions": impressions,
-                "clicks": clicks,
+                # **是哪个词把它摆在那儿的**（Google 自己的匹配）
+                "query": words[0][0] if words else "",
+                "queries": [w for w, _ in words],
+                "impressions": _safe_int(row.get("impressions")),
+                "clicks": _safe_int(row.get("clicks")),
                 "position": _safe_float(row.get("position")),
                 "ctr_percent": _safe_float(row.get("ctr")),
                 "captured_at": captured,
@@ -861,6 +959,9 @@ _PAGE_FIRST_COLUMNS = {
 
 #: **页面信号最多留多少条**（我们自己站的数据，不算抓站，但也要有上限）
 MAX_PAGE_SIGNALS = 50
+
+#: **GSC API 的超时**（秒）——它偶尔很慢，30 秒会把它误判成失败
+GSC_API_TIMEOUT = 120.0
 
 
 def _read_tables(path: str) -> list[list[list[str]]]:

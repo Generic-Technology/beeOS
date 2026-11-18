@@ -393,6 +393,35 @@ def _demand_matched_page(
     return best
 
 
+def _proven_queries(snapshot: dict[str, Any], handle: str) -> list[str]:
+    """**Google 说这一页是为哪些词排的**——不用我们猜
+
+    「词 × 页」是 **Google 自己的语义匹配**：
+    买家搜「globe lamp」、Google 知道是那个「3d lamp」页在排。
+    我们的词面规则接不住这种**同物异名**，**但 Google 接得住**。
+
+    所以：页面信号里带着的词，**直接采信**（不再过词面门槛）。
+    """
+    if not handle:
+        return []
+    path = f"/products/{handle}"
+    for signal in snapshot.get("market_page_signals") or []:
+        signal_path = str(signal.get("path") or "").strip().rstrip("/")
+        if signal_path != path:
+            continue
+        words = [str(q).strip() for q in (signal.get("queries") or []) if str(q).strip()]
+        if not words:
+            single = str(signal.get("query") or "").strip()
+            words = [single] if single else []
+        return words
+    return []
+
+
+def _content_tokens(text: str) -> set[str]:
+    """**内容词**——去掉通用修饰词的那些"""
+    return _tokens(text) - _GENERIC_TOKENS
+
+
 def _demand_keywords(snapshot: dict[str, Any], handle: str) -> dict[str, Any]:
     """**这一轮要接住的买家用词**
 
@@ -413,6 +442,18 @@ def _demand_keywords(snapshot: dict[str, Any], handle: str) -> dict[str, Any]:
     """
     if not handle:
         return {}
+    # **Google 自己排的那个词**——采信它，不再过词面门槛
+    # （同物异名只能靠它：买家搜 globe lamp，页面写 3d lamp）
+    proven = _proven_queries(snapshot, handle)
+    if proven:
+        query = proven[0]
+        page_words = _content_tokens(handle)
+        keep = sorted(_content_tokens(query) & page_words)
+        return {
+            "query": query,
+            "keywords": keep or sorted(_content_tokens(query)),
+            "source": "站外（Google 把你排在这儿的）",
+        }
     best: tuple[int, str, set[str], str] | None = None
     best_key: tuple[int, int, int] = (-1, -1, -1)
     for query, source, demand in _demand_terms(snapshot):
@@ -460,6 +501,9 @@ def _page_fact(snapshot: dict[str, Any], handle: str) -> str:
     position = best.get("position")
     if position is not None:
         parts.append(f"平均排名 {position}")
+    query = str(best.get("query") or "").strip()
+    if query:
+        parts.append(f"排在它前面的词是「{query}」")
     return "站外 " + "、".join(parts) if parts else ""
 
 

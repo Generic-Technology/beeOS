@@ -24,8 +24,10 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -100,6 +102,15 @@ def handle_of(store_domain: str) -> str:
     return domain
 
 
+#: **瞬时故障重试几次**——换 token / 取数都会 SSL EOF
+#:
+#: 一次断连不该打死整轮（实测：换 token 时抖一下，整轮就没了）。
+TRANSPORT_RETRIES = 3
+
+#: 退避秒数（逐次变长）——别把店面打得更狠
+TRANSPORT_BACKOFF = (1.0, 3.0, 8.0)
+
+
 def mint_client_credentials_token(
     handle: str,
     client_id: str,
@@ -119,19 +130,30 @@ def mint_client_credentials_token(
         "grant_type": "client_credentials",
     }).encode("utf-8")
     request = urllib.request.Request(url, data=body, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise ShopifyAuthError(
-            f"HTTP {exc.code}：换 token 失败——"
-            "client_credentials 要求应用**已安装**在这家店里、"
-            "且应用与店属于同一个 Shopify 组织。"
-            f"\n  详情：{detail[:300]}"
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise ShopifyAuthError(f"连不上店铺：{exc.reason}") from exc
+    # **瞬时故障退避重试**——
+    # 换 token 是**整轮的第一步**，它抖一下，整轮就没了
+    # （实测：一次 SSL EOF 直接把一轮打在第一步）。
+    last: Exception | None = None
+    for attempt in range(TRANSPORT_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ShopifyAuthError(
+                f"HTTP {exc.code}：换 token 失败——"
+                "client_credentials 要求应用**已安装**在这家店里、"
+                "且应用与店属于同一个 Shopify 组织。"
+                f"\n  详情：{detail[:300]}"
+            ) from exc
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+            last = exc
+            if attempt >= TRANSPORT_RETRIES:
+                break
+            time.sleep(TRANSPORT_BACKOFF[min(attempt, len(TRANSPORT_BACKOFF) - 1)])
+    raise ShopifyAuthError(
+        f"连不上店铺（重试 {TRANSPORT_RETRIES} 次后）：{last}"
+    ) from last
 
 
 def resolve_token(store_domain: str, *, timeout: float = 30.0) -> tuple[str, str]:
