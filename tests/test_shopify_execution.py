@@ -774,6 +774,47 @@ class TestTheWriteDoesNotDamageWhatItDidNotMeanToTouch:
         )
 
 
+class TestTheSeoDescriptionLength:
+    """**超一点点不该葬送一整轮**"""
+
+    def test_a_slightly_long_description_is_trimmed(self):
+        """162 字符 → 按词边界剪到 160（Google 本来就在那儿截断）"""
+        long_text = (
+            "Personalized glitter compact mirror with a rhinestone name. "
+            "Choose 5 colors and 3 shapes; $32.90. Christmas shipping order by December 1. "
+            "Ships free over $70. Now."
+        )
+        assert len(long_text) == 163, len(long_text)   # 超 3 个字符
+        draft, problems = exp_runner._validate_draft({
+            "title": "Personalized Glitter Compact Mirror",
+            "descriptionHtml": "<p>正文</p>",
+            "seoTitle": "Glitter Compact Mirror",
+            "seoDescription": long_text,
+            "tags": ["mirror"],
+        })
+        assert problems == [], problems
+        assert len(draft["seo.description"]) <= 160
+        # **剪的是尾巴**（前面是重点）
+        assert draft["seo.description"].startswith("Personalized glitter compact mirror")
+
+    def test_a_much_longer_description_is_still_refused(self):
+        """**超很多才算不合格**——那不是「差一点」，是写歪了"""
+        draft, problems = exp_runner._validate_draft({
+            "title": "T",
+            "descriptionHtml": "<p>正文</p>",
+            "seoTitle": "S",
+            "seoDescription": "字" * 400,
+            "tags": ["t"],
+        })
+        assert problems
+        assert any("SEO 描述" in p for p in problems), problems
+
+    def test_the_trim_does_not_cut_a_word_in_half(self):
+        trimmed = exp_runner._trim_to("Personalized glitter compact mirror with a name", 20)
+        assert len(trimmed) <= 21
+        assert "Personalized" in trimmed
+
+
 class TestTheTitleMayNotDropTheWordsItRanksFor:
     """**丢掉买家在搜的词 = 把攒下来的排名扔了**
 

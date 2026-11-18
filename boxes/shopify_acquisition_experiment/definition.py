@@ -42,14 +42,11 @@ from fulfillment_scopes.shopify.vocabulary import ATTRIBUTION_METHODS
 #:
 #: 「没要求落笔」（干跑）不是要人做决定——那是这一轮本来就不交付，
 #: 走 `no_deliver`：**明确的不交付，不是跑挂了**。
-ESCALATION_RULES = [
-    {"trigger": "diagnosis_ref_present == false", "action": "escalate_to_human"},
-    {"trigger": "cost_cap_present == false", "action": "escalate_to_human"},
-    {
-        "trigger": "apply_requested == true and applied == false",
-        "action": "escalate_to_human",
-    },
-]
+#: **没有一条需要升级给人**——
+#:
+#: 「模型起草不合格」不是「要人拍板」的事（见下面的 exceptions 说明）：
+#: 没有草稿可放行，人能做的只是再跑一遍。
+ESCALATION_RULES: list[dict[str, str]] = []
 
 DECLARATION = BoxDeclaration(
     id="shopify_acquisition_experiment_box",
@@ -108,14 +105,22 @@ DECLARATION = BoxDeclaration(
     exceptions=[
         # **干跑**：没要求落笔 → 明确的不交付（不是失败，也不是等人放行）
         ExceptionRule(condition="apply_requested == false", action="no_deliver"),
-        # **真出事**：要求落笔却没写成 → 要人看
+        # **要求落笔却没写成** → **明确的不交付**（no_deliver）。
+        #
+        # 为什么不是 escalate（升级给人判定）：
+        # 「这次交付要不要放行？」——**没有东西可放行**。
+        # 模型起草不合格（超字数、丢了事实、丢了买家在搜的词）时，
+        # 产出里是**空的**草稿；人能做的只是「再跑一遍」，
+        # 不是「判一下」。挂一条等人判定的账，
+        # 只会让看板上攒下**没人答得了**的票，
+        # 而真正的原因（哪条不合格）写在产出里没人看。
         ExceptionRule(
             condition="apply_requested == true and applied == false",
-            action="escalate",
+            action="no_deliver",
         ),
-        ExceptionRule(condition="diagnosis_ref_present == false", action="escalate"),
-        ExceptionRule(condition="cost_cap_present == false", action="escalate"),
-        ExceptionRule(condition="stopping_condition_present == false", action="escalate"),
+        ExceptionRule(condition="diagnosis_ref_present == false", action="no_deliver"),
+        ExceptionRule(condition="cost_cap_present == false", action="no_deliver"),
+        ExceptionRule(condition="stopping_condition_present == false", action="no_deliver"),
     ],
 
     # ---- 作业路线（Procedure）----

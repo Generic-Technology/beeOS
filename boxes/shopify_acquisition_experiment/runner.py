@@ -417,6 +417,29 @@ def _fact_numbers(html: str) -> set[str]:
     return out
 
 
+#: **SEO 标题/描述的字符上限**（Google 搜索结果会截断）
+MAX_SEO_DESCRIPTION = 160
+
+#: **超这么多以内就修剪，不算不合格**——
+#: 模型数不准是常态（实测 162 字符），为 2 个字符葬送一整轮不划算。
+SEO_DESCRIPTION_SLACK = 10
+
+
+def _trim_to(text: str, limit: int) -> str:
+    """**按词边界剪到 limit 以内**——不把句子剪成半句
+
+    剪掉的正是 Google 本来就会截掉的那一段。
+    """
+    trimmed = str(text or "").strip()
+    if len(trimmed) <= limit:
+        return trimmed
+    cut = trimmed[:limit]
+    space = cut.rfind(" ")
+    if space > limit * 0.6:      # 别剪掉大半句
+        cut = cut[:space]
+    return cut.rstrip(" ,;:-") + "…"
+
+
 def _missing_title_words(
     baseline_title: str, draft: dict[str, Any], demand_keywords: list[str]
 ) -> list[str]:
@@ -528,8 +551,19 @@ def _validate_draft(raw: Any) -> tuple[dict[str, Any], list[str]]:
     seo_description = str(raw.get("seoDescription") or "").strip()
     if not seo_description:
         problems.append("SEO 描述是空的")
-    elif len(seo_description) > 160:
-        problems.append(f"SEO 描述 {len(seo_description)} 字符，超过 160")
+    elif len(seo_description) > MAX_SEO_DESCRIPTION:
+        # **超一点点就修剪，超很多才算不合格**——
+        # 模型数字符不精确，实测超 2 个字符（162）就把整轮打死了。
+        # 而 Google 本来就在 160 字符左右截断——
+        # **按词边界剪到 160 = 剪出「Google 实际会显示的那一段」**，
+        # 不是把内容删掉。
+        if len(seo_description) <= MAX_SEO_DESCRIPTION + SEO_DESCRIPTION_SLACK:
+            seo_description = _trim_to(seo_description, MAX_SEO_DESCRIPTION)
+        else:
+            problems.append(
+                f"SEO 描述 {len(seo_description)} 字符，超过 {MAX_SEO_DESCRIPTION}"
+                "（重写一版更短的，别只删两个字）"
+            )
 
     tags = [str(t).strip() for t in (raw.get("tags") or []) if str(t).strip()]
     if not tags:
