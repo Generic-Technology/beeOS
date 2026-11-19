@@ -151,7 +151,12 @@ def register_runtime_extension_points() -> None:
             # 插件得自己看得见「这一跳有没有副作用」：
             # 判「超时了就算失败」这种事，只有在**没有副作用**时才成立
             # （有副作用时，说它「没成」是撒谎 → 下游重跑 → 副作用做两遍）。
-            view_keys=("input", "call", "op"),
+            #
+            # **第四个键 `observe` = 记一条观测**——
+            # 包裹层能看见「这一跳太慢」，但它**不许改产出**，
+            # 也不许在有副作用时判失败 → 那条观测怎么回到宿主？
+            # 就靠这个口子：**只加事实，不改产出、不改状态**。
+            view_keys=("input", "call", "op", "observe"),
             return_contract="around",
             granularity="per_call",
             summary="包住这一跳的执行：拿得到 call()，也拿得到产出",
@@ -413,16 +418,27 @@ def call_plugins(
 def _same_value(a: Any, b: Any) -> bool:
     """两个值「是不是同一个东西」
 
-    **类型也要一样**：`True == 1` 在 Python 里成立，
-    而「产出被换成了别的东西」正是 around 要防的事——
-    只比值不比类型，就会放过这种替换。
+    **逐层递归比，类型也要一样**：
+    - 顶层一样不够：`{"ok": True}` 换成 `{"ok": 1}` 在 Python 里 `==` 成立
+      （`True == 1`），只比顶层会放过这种**换类型**；
+    - **类型要比**（`bool` 与 `int` 是两个类型）：值相等但类型换了，
+      交出去的东西就不是声明过的那个形状了。
+
+    **为什么不能就地比**：插件拿到的就是 `call()` 的返回值本体，
+    它就地改完再返回，两边是**同一个对象** → 比出来「一样」✗。
+    所以比的是**快照**（见 `_make_around_layer`）。
     """
     if type(a) is not type(b):
         return False
-    try:
-        return bool(a == b)
-    except Exception:
-        return False
+    if isinstance(a, dict):
+        if a.keys() != b.keys():
+            return False
+        return all(_same_value(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)):
+        if len(a) != len(b):
+            return False
+        return all(_same_value(x, y) for x, y in zip(a, b))
+    return a == b
 
 
 def _make_around_layer(
@@ -458,7 +474,10 @@ def _make_around_layer(
         except BaseException:
             state["raised"] = True
             raise
-        state["value"] = value
+        # **存的是快照**，不是那个对象本身——
+        # 插件拿到的就是 `value` 本体，它就地改完再返回，
+        # 两边是同一个对象 → 直接比会「一样」✗（就地改产出就漏过去了）。
+        state["value"] = copy.deepcopy(value)
         return value
 
     def run_layer() -> Any:
@@ -683,10 +702,15 @@ def merge_patch(
         return output
     merged = dict(output)
     for field, items in (patch.get("append") or {}).items():
-        if allowed_targets and field not in allowed_targets:
+        # **空白名单 = 一个都不许追加**（不是「都不限制」）——
+        # 「没声明范围」和「范围是全部」差着一整个世界：
+        # 前者是「这类插件不许改产出」，后者是「这类插件能改任何字段」。
+        # 插件类型没声明 `append_targets` 却返回了补丁 → 契约违反 ✓
+        if field not in allowed_targets:
             raise PluginContractError(
                 f"补丁想追加到「{field}」，但这类插件只许追加到 "
-                f"{list(allowed_targets)}——越界了"
+                f"{list(allowed_targets) or '（一个都没有——这类插件不许改产出）'}"
+                "——越界了"
             )
         current = merged.get(field)
         if current is None:

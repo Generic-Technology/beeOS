@@ -1731,9 +1731,14 @@ def trigger_task(
     # **把插件上下文交给执行器**——
     # op 上的插件声明要有人执行，否则就是「声明了却一次都没跑过」。
     # 用的是该盒装配时冻结的快照 ✓（装配期验过的那份 = 运行时跑的那份）。
+    #
+    # **业务 schema 也一起给**——补丁合并后的产出要当场过形状闸，
+    # 而形状闸要 schema。判不了形状就不许把未校验的产出往下游送
+    # （补丁是唯一能改产出内容的东西，它必须先过闸）。
     executor = BeelineExecutor(
         runner,
         plugin_context=PLUGIN_CONTEXT_REGISTRY.get(box_id),
+        schemas=definition.schemas,
     )
     task_run = executor.execute(task_run, beeline, payload)
 

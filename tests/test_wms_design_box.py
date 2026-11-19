@@ -13,9 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from boxes.wms_design import ASSEMBLED as DESIGN_ASSEMBLED
 from boxes.wms_design import WMS_DESIGN_BOX, get_definition
 from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
 from boxes.wms_design.measure import COMPUTERS as MODEL_COMPUTERS
+from boxes.wms_design.schemas import ALL_SCHEMAS as DESIGN_SCHEMAS
 from boxes.wms_design.schemas import REQUIREMENT_TYPES
 from boxes.wms_design import WMS_DESIGN_BEELINE, get_beeline
 from core import metrics as m
@@ -28,6 +30,11 @@ from runtime import (
     evaluate_acceptance,
 )
 from runtime.contract import validate_payload
+
+#: **盒子的插件上下文**——设计盒的打包腿挂了准入闸，
+#: 跑它就得带上这个上下文（**没有上下文 = 那道闸不会跑** =
+#: 「声明了却一次都没执行过」）。
+DESIGN_CONTEXT = DESIGN_ASSEMBLED.plugin_context
 
 # 设计盒的 WMS 绑定走 LLM → 这组测试要桩（分流桩：抽取腿 / 绑定腿都认）
 pytestmark = pytest.mark.usefixtures("stub_llm")
@@ -272,7 +279,7 @@ class TestModelingEndToEnd:
         )
 
         # 执行 beeline
-        task_run = BeelineExecutor(DESIGN_RUNNER).execute(task_run, beeline, input_data)
+        task_run = BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_CONTEXT, schemas=DESIGN_SCHEMAS).execute(task_run, beeline, input_data)
 
         # 验证：task run COMPLETED
         assert task_run.status == TaskRunStatus.COMPLETED
@@ -321,7 +328,7 @@ class TestModelingEndToEnd:
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        BeelineExecutor(DESIGN_RUNNER).execute(task_run, beeline, _sample_requirement_set())
+        BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_CONTEXT, schemas=DESIGN_SCHEMAS).execute(task_run, beeline, _sample_requirement_set())
 
         events = [e.event for e in task_run.event_log.entries]
         # 必须包含 status_change + op_start + op_finish
@@ -370,7 +377,7 @@ class TestModelingEndToEnd:
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        task_run = BeelineExecutor(DESIGN_RUNNER).execute(task_run, beeline, minimal)
+        task_run = BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_CONTEXT, schemas=DESIGN_SCHEMAS).execute(task_run, beeline, minimal)
         assert task_run.status == TaskRunStatus.COMPLETED
         assert task_run.result["requirement_coverage"] == 100.0
 
@@ -389,7 +396,7 @@ class TestModelingMockSemantics:
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        return BeelineExecutor(DESIGN_RUNNER).execute(
+        return BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_CONTEXT, schemas=DESIGN_SCHEMAS).execute(
             task_run, beeline,
             {"set_id": set_id, "business_goal": "g", "requirements": requirements},
         )
@@ -528,7 +535,7 @@ class TestModelingMockSemantics:
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        run = BeelineExecutor(DESIGN_RUNNER).execute(
+        run = BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_CONTEXT, schemas=DESIGN_SCHEMAS).execute(
             task_run, beeline,
             {
                 "set_id": "req_ctx",
@@ -566,7 +573,7 @@ class TestModelingMockSemantics:
             f"{box.id}@v{box.version}", beeline.id, beeline.version,
             "rt", "in",
         )
-        run = BeelineExecutor(DESIGN_RUNNER).execute(
+        run = BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_CONTEXT, schemas=DESIGN_SCHEMAS).execute(
             task_run, beeline,
             {
                 "set_id": "req_noctx",
@@ -675,7 +682,7 @@ class TestWmsDomainIsRealNotJustTheName:
             "pm", "handle_design_request", box.result.result_schema,
             f"{box.id}@v{box.version}", beeline.id, beeline.version, "rt", "in",
         )
-        return BeelineExecutor(DESIGN_RUNNER).execute(
+        return BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_CONTEXT, schemas=DESIGN_SCHEMAS).execute(
             task_run, beeline,
             {"set_id": set_id, "business_goal": "g", "requirements": requirements},
         )

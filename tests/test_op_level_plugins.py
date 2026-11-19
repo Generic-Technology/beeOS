@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 
 from core.beeline_models import Bee, Beeline, NextRef, Operation
+from core.models import FieldDef, SchemaDef
 from core.plugins import (
     ExtensionPoint,
     PluginBinding,
@@ -82,6 +83,33 @@ def _binding(point_id: str) -> PluginBinding:
 
 def _task_run() -> "object":
     return create_task_run("t", "i", "c", "r", "b_op", 1, "rt", "in")
+
+
+def _runner(handler) -> HandlerRunner:
+    return HandlerRunner({"w": handler}, owner="t")
+
+
+#: **业务 schema**（补丁合并后要当场过形状闸，闸要 schema）
+#:
+#: **为什么执行器要 schema**：补丁是唯一能改产出内容的东西，
+#: 它合并完必须重新过形状闸——而闸要 schema。
+#: 判不了形状就不能把未校验的产出往下游送（fail closed）。
+_SCHEMAS = [
+    SchemaDef(
+        id="s_in",
+        fields=[FieldDef(name="x", type="number")],
+    ),
+    SchemaDef(
+        id="s_out",
+        fields=[
+            FieldDef(name="ok", type="boolean"),
+            FieldDef(
+                name="notes", type="array",
+                items=FieldDef(name="note", type="string"),
+            ),
+        ],
+    ),
+]
 
 
 def _context(*, impls: dict, point_overrides: dict | None = None) -> PluginContext:
@@ -302,6 +330,21 @@ class TestPatches:
                 allowed_targets=("total",),
             )
 
+    def test_an_empty_whitelist_forbids_every_target(self):
+        """**空白名单 = 一个都不许追加**（不是「都不限制」）
+
+        「没声明范围」和「范围是全部」差着一整个世界：
+        前者是「这类插件不许改产出」，后者是「这类插件能改任何字段」。
+        """
+        from runtime.plugins import PluginContractError
+
+        with pytest.raises(PluginContractError, match="越界"):
+            merge_patch(
+                {"items": ["real"]},
+                {"append": {"items": ["injected"]}},
+                allowed_targets=(),
+            )
+
     def test_the_after_hook_patch_reaches_the_next_component(self):
         """**执行后钩子追加的内容，下一跳看得见**"""
         def impl(view, params):
@@ -325,12 +368,125 @@ class TestPatches:
 
         runner = HandlerRunner({"w": handler}, owner="t")
         task_run = _task_run()
-        BeelineExecutor(runner, plugin_context=ctx).execute(
+        BeelineExecutor(runner, plugin_context=ctx, schemas=_SCHEMAS).execute(
             task_run,
             _beeline(plugins=[_binding(EXTENSION_OP_AFTER)]),
             {"x": 1},
         )
         assert seen[1].get("notes") == ["来自钩子"], seen[1]
+
+
+# ============================================================
+# 三之二、声明了却没人执行 / 崩了要落盘
+# ============================================================
+
+
+class TestTheGateIsNeverSilentlySkipped:
+    def test_a_missing_context_does_not_bypass_the_admission_gate(self):
+        """**没有插件上下文 → 不许悄悄跳过那道闸**（fail closed）
+
+        声明了准入闸却因为「没给上下文」而不跑，
+        链看起来是通的，而**守着它的那道闸一次都没执行过**。
+        """
+        calls: list[int] = []
+        run = _task_run()
+        BeelineExecutor(_runner(lambda p: (calls.append(1), {"ok": True})[1])).execute(
+            run, _beeline(plugins=[_binding(EXTENSION_OP_BEFORE)]), {"x": 1}
+        )
+        assert calls == [], (run.status, calls)
+        assert run.status == TaskRunStatus.FAILED
+
+    def test_a_crashing_admission_plugin_is_recorded_as_a_plugin_failure(self):
+        """**插件崩了 → 记 plugin_failure**（不是混成「准入没过」）"""
+        def impl(view, params):
+            raise RuntimeError("admission plugin crashed")
+
+        ctx = _context(impls={"op.impl": impl})
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx
+        ).execute(run, _beeline(plugins=[_binding(EXTENSION_OP_BEFORE)]), {"x": 1})
+
+        failures = [e for e in run.event_log.entries if e.event == "plugin_failure"]
+        assert failures, [(e.event, e.detail) for e in run.event_log.entries]
+
+    def test_an_out_of_range_patch_is_recorded_as_a_plugin_failure(self):
+        """**补丁越界 → 记 plugin_failure**（不是混成「这一跳失败」）"""
+        ctx = _context(
+            impls={"op.impl": lambda view, params: {"append": {"other": ["x"]}}}
+        )
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx, schemas=_SCHEMAS
+        ).execute(run, _beeline(plugins=[_binding(EXTENSION_OP_AFTER)]), {"x": 1})
+
+        failures = [e for e in run.event_log.entries if e.event == "plugin_failure"]
+        assert failures, [(e.event, e.detail) for e in run.event_log.entries]
+
+    def test_a_bad_patch_never_reaches_the_next_component(self, plugin_registry):
+        """**坏补丁不许直达有副作用的那一跳**
+
+        补丁是唯一能改产出内容的东西；它合并完必须重新过形状闸，
+        而且**要赶在下游之前**——盒级形状闸在整条链跑完之后才验，
+        那时副作用已经发生了。
+        """
+        from core.models import (
+            AcceptanceRule,
+            ExceptionRule,
+            FieldDef,
+            SchemaDef,
+        )
+        from core.plugins import PluginSpec, PluginType
+        from core.scaffold import BoxDeclaration, Component, assemble
+
+        seen: list[dict] = []
+        schemas = [
+            SchemaDef(id="cr_in", fields=[FieldDef(name="text", type="string")]),
+            SchemaDef(
+                id="cr_mid",
+                fields=[FieldDef(name="notes", type="array",
+                                 items=FieldDef(name="note", type="string"))],
+            ),
+            SchemaDef(id="cr_out", fields=[FieldDef(name="ok", type="boolean")]),
+        ]
+        plugin_registry.register_plugin_type(PluginType(
+            id="cr_bad_patch", allowed_hosts=("op",),
+            extension_points=(EXTENSION_OP_AFTER,),
+            implementation_key="cr.bad_patch", append_targets=("notes",),
+        ))
+        plugin_registry.register_implementation(
+            "cr.bad_patch", lambda view, params: {"append": {"notes": [123]}}
+        )
+        box = assemble(
+            BoxDeclaration(
+                id="cr_box", task_type="cr", task_schema="cr_in",
+                result_type="cr_result", result_schema="cr_out",
+                display_name="CR box", value_stream="CR", beeline_id="cr_beeline",
+                acceptance=[AcceptanceRule(metric="ok", op="eq", value=True)],
+                exceptions=[ExceptionRule(condition="ok == false", action="no_deliver")],
+            ),
+            [
+                Component(
+                    op_id="a", input="cr_in", output="cr_mid", next=["b"],
+                    handler=lambda p: {"notes": []},
+                    plugins=[PluginSpec(id="cr_bad_patch",
+                                        extension_point=EXTENSION_OP_AFTER)],
+                ),
+                Component(
+                    op_id="b", input_from="a", input="cr_mid", output="cr_out",
+                    leaves_artifact=True,
+                    handler=lambda p: (seen.append(p["notes"]) or {"ok": True}),
+                ),
+            ],
+            schemas=schemas,
+        )
+        run = _task_run()
+        BeelineExecutor(
+            HandlerRunner(box.handlers, owner="cr"),
+            plugin_context=box.plugin_context,
+            schemas=schemas,
+        ).execute(run, box.beeline, {"text": "go"})
+        assert not seen, (seen, run.status, run.result)
 
 
 # ============================================================

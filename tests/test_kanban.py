@@ -27,6 +27,7 @@ from tests.fixtures.sample_box import get_definition as get_sample_def
 from tests.fixtures.sample_box.beeline import get_beeline as get_sample_beeline
 from tests.fixtures.sample_box.runner import RUNNER as SAMPLE_RUNNER
 from boxes.wms_design.runner import RUNNER as DESIGN_RUNNER
+from boxes.wms_design import ASSEMBLED as DESIGN_ASSEMBLED
 from boxes.wms_design import get_definition as get_mod_def
 from boxes.wms_design import get_beeline as get_mod_beeline
 from kanban.cli import render_dashboard
@@ -167,7 +168,7 @@ class TestTaskRunStore:
             "pm", "i", mod_def.result.result_schema, f"{mod_def.id}@v{mod_def.version}",
             mod_beeline.id, mod_beeline.version, "rt", "in",
         )
-        BeelineExecutor(DESIGN_RUNNER).execute(tr, mod_beeline, {
+        BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_ASSEMBLED.plugin_context).execute(tr, mod_beeline, {
             "set_id": "s1", "business_goal": "x",
             "requirements": [{"requirement_id": "r1", "description": "x", "requirement_type": "object", "priority": "must_have"}],
         })
@@ -230,7 +231,7 @@ class TestTaskRunStore:
                 "o", intent, box.result.result_schema, f"{box.id}@v{box.version}",
                 beeline.id, beeline.version, "rt", "in",
             )
-            BeelineExecutor(DESIGN_RUNNER).execute(tr, beeline, input_data)
+            BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_ASSEMBLED.plugin_context).execute(tr, beeline, input_data)
             store.append(tr, box_id=box.id)
 
         assert set(store.list_boxes()) == {inv_def.id, mod_def.id}
@@ -253,7 +254,7 @@ class TestTaskRunStore:
             "pm", "i", mod_def.result.result_schema, f"{mod_def.id}@v{mod_def.version}",
             mod_beeline.id, mod_beeline.version, "rt", "in",
         )
-        BeelineExecutor(DESIGN_RUNNER).execute(tr, mod_beeline, {
+        BeelineExecutor(DESIGN_RUNNER, plugin_context=DESIGN_ASSEMBLED.plugin_context).execute(tr, mod_beeline, {
             "set_id": "s1", "business_goal": "x",
             "requirements": [{"requirement_id": "r1", "description": "x", "requirement_type": "object", "priority": "must_have"}],
         })

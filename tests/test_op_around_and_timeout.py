@@ -257,6 +257,48 @@ class TestTheThreeLocks:
         assert failures, "插件契约违反没有落盘"
         assert "产出" in str(failures[0].detail)
 
+    def test_it_may_not_mutate_the_output_in_place(self):
+        """**锁②（就地改）：`call()` 的返回值本体被改掉，也算改了产出**
+
+        **为什么这条要单独守**：插件拿到的就是那个对象本身。
+        它就地改完再返回，两边是**同一个对象** → 直接比会「一样」✗。
+        所以比的是**快照**。
+        """
+        def impl(view, params):
+            result = view["call"]()
+            result["ok"] = False
+            return result
+
+        ctx, bindings = _around_context(("mutator", impl))
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx
+        ).execute(run, _beeline(plugins=bindings), {"x": 1})
+
+        assert run.status == TaskRunStatus.FAILED
+        assert run.result is None
+
+    def test_it_may_not_substitute_a_nested_type(self):
+        """**锁②（换类型）：`True` 换成 `1` 也是改了产出**
+
+        `True == 1` 在 Python 里成立 → 只比值会放过这种替换。
+        """
+        from copy import deepcopy
+
+        def impl(view, params):
+            result = deepcopy(view["call"]())
+            result["ok"] = 1
+            return result
+
+        ctx, bindings = _around_context(("type_mutator", impl))
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx
+        ).execute(run, _beeline(plugins=bindings), {"x": 1})
+
+        assert run.status == TaskRunStatus.FAILED
+        assert run.result is None
+
     def test_it_must_call(self):
         """**锁③：不许跳过执行**"""
         ran: list[int] = []
@@ -426,6 +468,33 @@ class TestTimeout:
         assert over, "超预算没有留下痕迹——那件事就看不见了"
         assert over[0].detail["budget_seconds"] == 0.01
 
+    def test_the_time_spent_after_the_call_counts_too(self, monkeypatch):
+        """**包裹层自己花的时间也算这一跳花的**（它在 `call()` 返回后还要做事）
+
+        预算判在**整次调用之后**——只判在尝试循环里的话，
+        包裹层尾巴上那段时间就漏出去了。
+        """
+        clock = [0.0]
+        monkeypatch.setattr(
+            "runtime.executor.time.monotonic", lambda: clock[0]
+        )
+
+        def impl(view, params):
+            result = view["call"]()
+            clock[0] = 2.0  # 包裹层在 call() 之后又花了 2 秒
+            return result
+
+        ctx, bindings = _around_context(("slow_after", impl))
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx
+        ).execute(run, _beeline(plugins=bindings, timeout_seconds=1.0), {"x": 1})
+
+        assert run.status == TaskRunStatus.COMPLETED
+        assert _events(run, "op_budget_exceeded"), [
+            (e.event, e.detail) for e in run.event_log.entries
+        ]
+
     def test_no_budget_means_no_budget_event(self):
         """**没设预算 → 不该冒出预算事件**"""
         run = _task_run()
@@ -527,4 +596,4 @@ class TestAssembly:
         assert point is not None, "runtime 没留 around 这个钩子"
         assert point.host_kinds == ("op",)
         assert point.granularity == "per_call"
-        assert point.view_keys == ("input", "call", "op")
+        assert point.view_keys == ("input", "call", "op", "observe")

@@ -131,6 +131,35 @@ class TestWatchdogFailsASlowOp:
         assert run.result == {"ok": True}
         assert run.operations["op1"].output == {"ok": True}
 
+    def test_a_rejection_shows_up_in_the_operation_record(self, monkeypatch):
+        """**看门狗拒了，这一跳的记录必须写「失败」**
+
+        handler 明明成功了、记录却写着 completed，
+        读者看到的轨迹会跟履约的结论对不上
+        （履约说这一跳没成，记录说它成了）。
+        """
+        clock = [0.0]
+        monkeypatch.setattr("runtime.watchdog.time.monotonic", lambda: clock[0])
+
+        def handler(payload):
+            clock[0] = 2.0
+            return {"ok": True}
+
+        run = _task_run()
+        BeelineExecutor(
+            HandlerRunner({"w": handler}, owner="t"),
+            plugin_context=_context(),
+        ).execute(run, _beeline(plugins=[_binding(1.0)]), {"x": 1})
+
+        assert run.status == TaskRunStatus.FAILED
+        record = run.operations["op1"]
+        assert record.status == "failed", (record.status, record.error)
+        assert record.error, "失败却没有写原因"
+        finishes = _events(run, "op_finish")
+        assert any(
+            (e.detail or {}).get("status") == "failed" for e in finishes
+        ), [(e.event, e.detail) for e in run.event_log.entries]
+
 
 # ============================================================
 # 二、有副作用的跳：不许判它没成
@@ -175,6 +204,35 @@ class TestWatchdogNeverFailsASideEffectingOp:
 
         assert run.status == TaskRunStatus.COMPLETED
         assert run.result == {"ok": True}
+
+    def test_an_overrun_on_a_side_effecting_op_is_still_observed(self, monkeypatch):
+        """**不判失败 ≠ 不留痕**——超限必须看得见
+
+        有副作用的跳上，看门狗不判它失败（说「没成」是撒谎），
+        但**超限这件事必须留下一条观测**——
+        不留痕 = 「算了却看不见」。
+        """
+        clock = [0.0]
+        monkeypatch.setattr("runtime.watchdog.time.monotonic", lambda: clock[0])
+
+        def handler(payload):
+            clock[0] = 2.0
+            return {"ok": True}
+
+        run = _task_run()
+        BeelineExecutor(
+            HandlerRunner({"w": handler}, owner="t"),
+            plugin_context=_context(),
+        ).execute(
+            run,
+            _beeline(plugins=[_binding(1.0)], leaves_artifact=True),
+            {"x": 1},
+        )
+
+        assert run.status == TaskRunStatus.COMPLETED
+        over = _events(run, "op_budget_exceeded")
+        assert over, [(e.event, e.detail) for e in run.event_log.entries]
+        assert (over[0].detail or {}).get("source") == "watchdog", over[0].detail
 
 
 # ============================================================

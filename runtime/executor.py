@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from core.beeline_models import Beeline, NextRef, Operation
+from runtime.contract import validate_payload
 from runtime.llm import LLMError, LLMParseError
 from core.plugins import PluginContext
 from runtime.models import OperationRecord, TaskRun, TaskRunStatus
@@ -39,6 +40,7 @@ from runtime.plugins import (
     EXTENSION_OP_AFTER,
     EXTENSION_OP_AROUND,
     EXTENSION_OP_BEFORE,
+    PluginContractError,
     PluginFailure,
     PluginRejected,
     abort_on_plugin_failure,
@@ -145,6 +147,36 @@ def _budget_exhausted(deadline: Optional[float]) -> bool:
     return time.monotonic() >= deadline
 
 
+def _mark_op_failed(
+    task_run: TaskRun,
+    op: Operation,
+    error: str,
+    *,
+    error_kind: str = "op_error",
+) -> None:
+    """把某一跳的记录改成**失败**（并补一条 op_finish）
+
+    **为什么需要**：handler 可能已经成功了（产出都出来了），
+    但**这一跳**被外层拒绝了（看门狗说太慢、契约被违反）。
+    那时记录若还写着 `completed`，读者看到的轨迹就跟履约的结论对不上：
+    「履约说这一跳没成，记录说它成了」。
+    """
+    record = task_run.operations.get(op.op_id)
+    if record is None:
+        return
+    if record.status == "failed":
+        return  # 已经记过了
+    record.status = "failed"
+    record.finished_at = datetime.now(timezone.utc)
+    record.error = error
+    record.error_kind = error_kind
+    task_run.event_log.append(
+        event="op_finish",
+        op_id=op.op_id,
+        detail={"status": "failed", "error": error, "error_kind": error_kind},
+    )
+
+
 def _note_budget_exceeded(
     task_run: TaskRun,
     op: Operation,
@@ -166,6 +198,7 @@ def _note_budget_exceeded(
         event="op_budget_exceeded",
         op_id=op.op_id,
         detail={
+            "source": "op_budget",
             "budget_seconds": op.timeout_seconds,
             "elapsed_seconds": round(elapsed, 3),
         },
@@ -307,6 +340,7 @@ class BeelineExecutor:
         self,
         runner: HandlerRunner,
         plugin_context: Optional[PluginContext] = None,
+        schemas: Optional[list[Any]] = None,
     ) -> None:
         if runner is None:
             raise ValueError(
@@ -319,6 +353,24 @@ class BeelineExecutor:
         # 没有它就等于没有插件：op 上的插件声明不会被调用。
         # 「装配期验过的那份 = 运行时跑的那份」✓
         self.plugin_context = plugin_context
+        # **业务 schema（用来校验补丁合并后的产出）**——
+        # 没有它，**有补丁的那一跳就 fail closed**：
+        # 补丁是唯一能改产出内容的东西，它合并完必须重新过形状闸，
+        # 而形状闸要 schema。判不了就不许把未校验的产出喂给下游 ✓
+        # （「判不了就放过」= 坏补丁直达副作用那一跳）。
+        self.schemas = list(schemas) if schemas is not None else None
+        self._schema_by_id = (
+            {s.id: s for s in self.schemas} if self.schemas is not None else {}
+        )
+
+    def _missing_plugin_context(self, op: Operation) -> bool:
+        """这一跳声明了插件，却没有插件上下文 → **闸不会跑** → fail closed
+
+        **为什么必须这样**：声明了准入闸却因为「没给上下文」而悄悄跳过，
+        那是最坏的一种——链看起来是通的，而**守着它的那道闸一次都没跑过**
+        （总稿 I14「能挂上去 ≠ 会被调用」的运行时版本）。
+        """
+        return bool(op.plugins) and self.plugin_context is None
 
     def _run_op_hooks(
         self,
@@ -359,6 +411,7 @@ class BeelineExecutor:
 
     def _run_around(
         self,
+        task_run: TaskRun,
         op: Operation,
         source: dict[str, Any],
         execute: Callable[[], Any],
@@ -370,6 +423,9 @@ class BeelineExecutor:
 
         **包住的是整次调用**（含它内部的所有尝试）：
         包裹层看到的是「这一跳总共跑了多久」，不是「一次尝试多久」。
+
+        **视图里的 `observe`**：包裹层用它把观测记进事件流
+        （它不许改产出、不许改状态 → 观测总得有条回去的路）。
         """
         if self.plugin_context is None:
             return execute()
@@ -378,11 +434,18 @@ class BeelineExecutor:
         ]
         if not bindings:
             return execute()
+
+        def observe(event: str, detail: dict[str, Any]) -> None:
+            """包裹层记一条观测（**只加事实，不改产出、不改状态**）"""
+            task_run.event_log.append(
+                event=event, op_id=op.op_id, detail=dict(detail or {})
+            )
+
         return call_around_plugins(
             self.plugin_context,
             bindings,
             extension_point=EXTENSION_OP_AROUND,
-            source={**source, "op": _host_view(op)},
+            source={**source, "op": _host_view(op), "observe": observe},
             execute=execute,
         )
 
@@ -396,6 +459,15 @@ class BeelineExecutor:
 
         **只许往 list 尾部追加**（`runtime/plugins.py::merge_patch` 守着 ✓），
         追加到哪些字段由**插件类型自己声明**（`append_targets` ✓）。
+
+        **合并完必须重新过形状闸，而且要赶在下游之前**——
+        补丁是唯一能改产出内容的东西；
+        不校验就往下游送，等于让坏数据直达**有副作用的那一跳**。
+        盒级形状闸（`runtime/finalize.py`）在整条链跑完之后才验，
+        那时副作用已经发生了 → 这里必须先验一道 ✓。
+
+        **判不了就 fail closed**：没有 schema 就没法验，
+        那就不许把未校验的产出往下游送（这一跳失败）。
         """
         if self.plugin_context is None or not results:
             return output
@@ -404,8 +476,48 @@ class BeelineExecutor:
         for binding, patch in zip(bindings, results):
             ptype = self.plugin_context.types.get(binding.id)
             allowed = ptype.append_targets if ptype is not None else ()
-            merged = merge_patch(merged, patch, allowed_targets=allowed)
+            try:
+                merged = merge_patch(merged, patch, allowed_targets=allowed)
+            except PluginContractError as e:
+                # **契约违反 = 插件坏了**（不是这一跳的业务问题）
+                raise PluginFailure(binding.id, EXTENSION_OP_AFTER, e) from e
+        self._check_patched_output(op, merged)
         return merged
+
+    def _check_patched_output(self, op: Operation, merged: dict[str, Any]) -> None:
+        """补丁合并后的产出**还合不合这一跳声明的形状**
+
+        **不合 = 契约违反**（插件往产出里塞了声明之外的东西）→ 插件失败。
+        """
+        if self.schemas is None:
+            raise PluginFailure(
+                "补丁",
+                EXTENSION_OP_AFTER,
+                RuntimeError(
+                    f"op {op.op_id!r} 有补丁要合并，但没有业务 schema 可供校验——"
+                    "判不了形状就不能把未校验的产出往下游送（fail closed）"
+                ),
+            )
+        schema = self._schema_by_id.get(op.output)
+        if schema is None:
+            raise PluginFailure(
+                "补丁",
+                EXTENSION_OP_AFTER,
+                RuntimeError(
+                    f"op {op.op_id!r} 声明的产出 schema {op.output!r} 不在 schema 表里"
+                    "——补丁合并后的产出没法校验"
+                ),
+            )
+        problems = validate_payload(merged, schema, schemas=self.schemas)
+        if problems:
+            raise PluginFailure(
+                "补丁",
+                EXTENSION_OP_AFTER,
+                RuntimeError(
+                    f"补丁合并后的产出不合 op {op.op_id!r} 声明的形状 "
+                    f"{op.output!r}：" + "；".join(problems)
+                ),
+            )
 
     def execute(
         self,
@@ -481,6 +593,16 @@ class BeelineExecutor:
                     """这一跳的真正执行（around 链包住的就是它）"""
                     nonlocal step_count
 
+                    # ---- 声明了插件却没有上下文 → fail closed ----
+                    #
+                    # **不许悄悄跳过那道闸**：声明了准入闸却因为「没给上下文」
+                    # 而不跑，链看起来是通的，而守着它的那道闸一次都没执行过。
+                    if self._missing_plugin_context(current_op):
+                        raise _OpCallFailed(
+                            f"op '{current_op.op_id}' 声明了插件，但执行器没有插件上下文"
+                            "（装配快照）——声明的闸不会跑，不静默跳过"
+                        )
+
                     # ---- 执行前（准入）：不通过就别跑 ----
                     try:
                         self._run_op_hooks(
@@ -490,6 +612,10 @@ class BeelineExecutor:
                             {"input": dict(op_input)},
                             granularity="per_call",
                         )
+                    except PluginFailure:
+                        # **插件坏了**（崩了 / 契约违反）→ 走插件失败那条路，
+                        # 不许跟「准入拒绝」混成一条
+                        raise
                     except Exception as e:
                         # **准入没过 → 履约中止**（不进重试：
                         # 准入拒绝不是「传输失败」，重试它只会再拒一次）
@@ -621,15 +747,11 @@ class BeelineExecutor:
                     )
                     op_output = self._apply_patches(current_op, op_output, call_patches)
                     record.output = op_output
-
-                    # **超预算但成功**：接受产出，但要**看得见**
-                    _note_budget_exceeded(
-                        task_run, current_op, call_started, deadline
-                    )
                     return op_output
 
                 try:
                     op_output = self._run_around(
+                        task_run,
                         current_op,
                         {"input": dict(op_input)},
                         execute_call,
@@ -637,6 +759,9 @@ class BeelineExecutor:
                 except PluginFailure as failure:
                     # **插件坏了**（契约违反：改了产出 / 没调 call / 调了两次 /
                     # 把失败变成成功）→ 按 §4.6.7 中止履约（不降级）。
+                    _mark_op_failed(
+                        task_run, current_op, str(failure), error_kind="op_error"
+                    )
                     abort_on_plugin_failure(
                         task_run,
                         failure,
@@ -650,11 +775,25 @@ class BeelineExecutor:
                     # **包裹层自己抛了异常** → 这一跳不行。
                     # （不是「插件坏了」：包裹层抛异常是在说「这一跳不行」，
                     #  那是**对执行的判断**，不是机制故障。）
+                    #
+                    # **但这一跳的记录必须跟着改成失败**——
+                    # handler 明明成功了、记录却写着 completed，
+                    # 读者看到的轨迹会跟履约的结论对不上
+                    # （「哪一跳没成、为什么」必须能从记录里看出来）。
+                    _mark_op_failed(
+                        task_run, current_op, str(e), error_kind=_classify_error(e)
+                    )
                     _end_unfinished(
                         task_run, beeline,
                         reason=f"op '{current_op.op_id}' 的执行外层插件失败：{e}",
                     )
                     return task_run
+
+                # **超预算但成功**：接受产出，但要**看得见**
+                #
+                # **在 around 链之后判**——包裹层自己花的时间也算这一跳的
+                # （它在 `call()` 返回之后还要做事，那段时间是这一跳花的）。
+                _note_budget_exceeded(task_run, current_op, call_started, deadline)
 
                 # 选 next
                 next_ref = _pick_next(current_op, op_output)

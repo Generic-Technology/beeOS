@@ -10,14 +10,27 @@ runtime.watchdog - 通用插件：执行外层看门狗
 挂在 `op.around` 上，**包住这一跳的整次执行**（含内部所有尝试），
 量一下花了多久：超过 `seconds` → **抛错** → 这一跳失败。
 
+## 它**不是**一个「到点就掐」的闸
+
+**同进程杀不掉线程**（`threading.Thread` 没有安全的强制终止），
+也没有能掐死的子进程可杀 → 所以它是**返回之后判慢**：
+`call()` 一直不返回，它就永远报不了。
+
+**这是它跟「中断」的区别，必须说在前面**：
+- 它能判的是「这一跳**最终**花了多久」；
+- 它不能保证「第 N 秒就结束等待」。
+
+要防「一直不返回」，得靠 handler 自己的 I/O 超时
+（LLM 腿有默认超时）。
+
 ## 它**不**做什么
 
 **不判有副作用的跳失败**。
 
 那一跳可能已经提交了代码、部署了服务、落了库。
 说它「没成」而实际上它成了 → 下游重跑它 → **副作用做两遍**。
-所以那种跳上它只**看着**（不判失败），超时这件事由执行器的
-`op_budget_exceeded` 记下来（docs/component-plugin-model.md §4.6.9）。
+所以那种跳上它只**记一条观测**（`observe` 口子），
+不判失败。
 
 **它凭什么知道有没有副作用**：around 的视图里有宿主那一跳的声明
 （`view["op"]`）——插件得自己看得见这件事，不能靠约定。
@@ -78,8 +91,16 @@ def _watchdog(view: Mapping[str, Any], params: Mapping[str, Any]) -> Any:
     if elapsed <= limit:
         return output
 
-    # **有副作用 → 不判失败**（理由见模块头）
+    detail = {
+        "source": "watchdog",
+        "threshold_seconds": limit,
+        "elapsed_seconds": round(elapsed, 3),
+    }
+
+    # **有副作用 → 不判失败**，但**必须留下观测**
+    # （理由见模块头）。观测走 `observe` 口子：只加事实，不改产出、不改状态。
     if host.get("leaves_artifact") or host.get("idempotency_mode") == "forbidden":
+        view["observe"]("op_budget_exceeded", detail)
         return output
 
     raise TimeoutError(
