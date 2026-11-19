@@ -77,7 +77,8 @@ def _context(
     kind: str = "decision",
     max_per_host: int = 1,
     required_fields: tuple = (),
-    decision_values: tuple = (),
+    # **决策钩子必须声明合法词表**（空白词表 = 没法判这个词认不认识）
+    decision_values: tuple = ("human_review", "auto_resolve"),
 ) -> PluginContext:
     """登记一套东西，冻结成装配快照"""
     plugin_registry.register_extension_point(
@@ -223,7 +224,10 @@ class TestReturnContract:
         def impl(view, params):
             return "human_review"  # ← 光一个词，不行
 
-        ctx = _context(plugin_registry, impl=impl, return_contract="decision")
+        ctx = _context(
+            plugin_registry, impl=impl, return_contract="decision",
+            decision_values=("human_review", "auto_resolve"),
+        )
         with pytest.raises(PluginFailure) as e:
             call_plugins(
                 ctx, [_binding()],
@@ -231,6 +235,32 @@ class TestReturnContract:
                 source={"result": {}},
             )
         assert "收到的是 str" in str(e.value)
+
+    def test_a_decision_hook_without_a_word_list_is_refused(self, plugin_registry):
+        """**决策钩子没声明词表 → 契约错误**（runtime 不猜它是什么意思）
+
+        空白词表**不是**「任何词都行」——
+        那是同一个坑：**没声明**被翻译成了**全允许**。
+        """
+        def impl(view, params):
+            return {
+                "decision": "human_review",
+                "reason": "验收没过",
+                "triggered_rule": "count > 0",
+                "unusable_rules": [],
+            }
+
+        ctx = _context(
+            plugin_registry, impl=impl, return_contract="decision",
+            decision_values=(),
+        )
+        with pytest.raises(PluginFailure) as e:
+            call_plugins(
+                ctx, [_binding()],
+                extension_point="test.point",
+                source={"result": {}},
+            )
+        assert "词表" in str(e.value)
 
     def test_a_none_hook_refuses_a_value(self, plugin_registry):
         def impl(view, params):
@@ -256,7 +286,10 @@ class TestReturnContract:
         def impl(view, params):
             return decision
 
-        ctx = _context(plugin_registry, impl=impl, return_contract="decision")
+        ctx = _context(
+            plugin_registry, impl=impl, return_contract="decision",
+            decision_values=("human_review", "auto_resolve"),
+        )
         out = call_plugins(
             ctx, [_binding()],
             extension_point="test.point",

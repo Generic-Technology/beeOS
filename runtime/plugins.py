@@ -281,7 +281,15 @@ def check_return(point: ExtensionPoint, value: Any) -> Any:
                 f"（收到 {value!r}）——缺一项读者就看不到发生了什么"
             )
         allowed = point.decision_values
-        if allowed and value.get("decision") not in allowed:
+        if not allowed:
+            # **词表为空 = 没法判这个词是不是认识的**——
+            # runtime 不猜它是什么意思（那正是这条校验存在的理由）。
+            # 空白词表不是「任何词都行」，是**这个钩子还没配好** ✓
+            raise PluginContractError(
+                f"扩展点 {point.id!r} 是决策钩子，却没声明合法词表——"
+                "不认识的词没法判，runtime 不猜它是什么意思"
+            )
+        if value.get("decision") not in allowed:
             raise PluginContractError(
                 f"扩展点 {point.id!r} 的决策词 {value.get('decision')!r} 不在合法词表里："
                 f"{list(allowed)}——runtime 不猜它是什么意思"
