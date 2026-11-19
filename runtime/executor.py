@@ -116,6 +116,24 @@ def _any_leaves_artifact(task_run: TaskRun, beeline: Beeline) -> bool:
     )
 
 
+def _host_view(op: Operation) -> dict[str, Any]:
+    """宿主那一跳的声明（递给 around 插件看的那一份）
+
+    **为什么插件要看得见这个**：它得自己判断「这一跳有没有副作用」——
+    「超时了就算失败」这种事，只在**没有副作用**时才成立。
+    有副作用时说它「没成」是撒谎（下游重跑 → 副作用做两遍）。
+
+    **只给与判断有关的几项**：不把整份声明倒出去。
+    """
+    return {
+        "op_id": op.op_id,
+        "type": op.type,
+        "idempotency_mode": op.idempotency.mode if op.idempotency else None,
+        "leaves_artifact": op.leaves_artifact,
+        "timeout_seconds": op.timeout_seconds,
+    }
+
+
 def _budget_exhausted(deadline: Optional[float]) -> bool:
     """这一跳的时间预算用完了吗
 
@@ -364,7 +382,7 @@ class BeelineExecutor:
             self.plugin_context,
             bindings,
             extension_point=EXTENSION_OP_AROUND,
-            source=source,
+            source={**source, "op": _host_view(op)},
             execute=execute,
         )
 

@@ -147,7 +147,11 @@ def register_runtime_extension_points() -> None:
             # 叠层之间不冲突（它们是**套着**的，不是**并排**的）。
             # 但不许无限叠：4 层足够表达「计时 + 留痕 + 看门狗」这类组合。
             max_bindings_per_host=4,
-            view_keys=("input", "call"),
+            # **第三个键 `op` = 宿主那一跳的声明**——
+            # 插件得自己看得见「这一跳有没有副作用」：
+            # 判「超时了就算失败」这种事，只有在**没有副作用**时才成立
+            # （有副作用时，说它「没成」是撒谎 → 下游重跑 → 副作用做两遍）。
+            view_keys=("input", "call", "op"),
             return_contract="around",
             granularity="per_call",
             summary="包住这一跳的执行：拿得到 call()，也拿得到产出",

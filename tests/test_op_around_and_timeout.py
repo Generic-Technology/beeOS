@@ -527,4 +527,4 @@ class TestAssembly:
         assert point is not None, "runtime 没留 around 这个钩子"
         assert point.host_kinds == ("op",)
         assert point.granularity == "per_call"
-        assert point.view_keys == ("input", "call")
+        assert point.view_keys == ("input", "call", "op")

@@ -23,6 +23,29 @@ beeline 跟盒子是 **1:1 且不可分割** 的：它引用的 schema id 全部
 from __future__ import annotations
 
 from core.scaffold import Component
+from runtime.watchdog import watchdog_spec
+
+
+#: **这一跳的时间预算**（秒，含它内部的所有尝试）
+#:
+#: **为什么要有**：LLM 客户端自己管**一次调用**（单次 120s，传输层重试 3 次），
+#: 但**整跳**（读图 + 修正，可能两轮）加上执行器的整跳重试，最坏能到几十分钟。
+#: 预算是「不再开新的整跳重试」的闸——不是打断已经在跑的那次尝试
+#: （同进程杀不掉线程，docs/component-plugin-model.md §4.6.9）。
+#:
+#: **300s 的来由**：一次 LLM 调用的最坏时间 = 120s × 4 次传输尝试 = 480s；
+#: 预算取在它下面 → 「慢成这样就别整跳重试了」，
+#: 而**快的失败照旧重试**（传输错误几秒就返回，预算根本用不到）。
+READ_RECEIPT_BUDGET_SECONDS = 300
+
+#: **看门狗**：整跳超过 180s 就当这张票没读出来
+#:
+#: **为什么要有**：一张小票读 3 分钟还没读出来，
+#: 多半是照片不行或模型卡住了——**人可以去重拍**。
+#: 与其把一个 3 分钟前的答案当新鲜的交下去，不如当场说「没读出来」。
+#:
+#: **只对没有副作用的跳有效**（看门狗自己看得见宿主声明，见 runtime/watchdog.py）。
+READ_RECEIPT_WATCHDOG_SECONDS = 180
 
 
 COMPONENTS: list[Component] = [
@@ -34,6 +57,8 @@ COMPONENTS: list[Component] = [
         output="schema_receipt_parsed",
         next=["verify_receipt"],
         bee_type="receipt_reader",
+        timeout_seconds=READ_RECEIPT_BUDGET_SECONDS,
+        plugins=[watchdog_spec(READ_RECEIPT_WATCHDOG_SECONDS)],
     ),
     Component(
         op_id="verify_receipt",
