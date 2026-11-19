@@ -337,16 +337,40 @@ def _measure(args: argparse.Namespace, store: TaskRunStore, domain: str) -> int:
         print("[measure] 那次实验没记下改的是哪一页", file=sys.stderr)
         return 2
 
-    # 基线 = 那一轮的快照产出
+    # 基线 = **落笔之前最近的那次快照**
+    #
+    # **不能只按 round_id 找**：一轮的号是按窗口推的
+    # （同一周的几轮共用一个号）→ 找到的会是**最新那次**快照，
+    # 也就是「改动之后」的数据 → 基线变成了改动后的数，对比没意义。
+    # 所以按**落笔时间**取：observed_at ≤ 落笔时刻，取最近的那次。
     baseline_snapshot: dict[str, Any] = {}
-    for record in store.list_recent(limit=60):
+    wrote_at = str(artifact.get("observed_at") or "")
+    for record in store.list_recent(limit=200):
         if record.get("box_id") != "shopify_snapshot_box":
             continue
         art = record.get("artifact") or {}
-        if str(art.get("round_id") or "") == round_id:
-            baseline_snapshot = art
-            break
+        if str(art.get("round_id") or "") != round_id:
+            continue
+        seen_at = str(art.get("observed_at") or "")
+        if wrote_at and seen_at and seen_at > wrote_at:
+            continue          # 比落笔还新 → 不是基线
+        baseline_snapshot = art
+        break
     baseline = _funnel_row(baseline_snapshot, handle) if baseline_snapshot else None
+
+    # **策略从那一轮的诊断产出里取**——
+    # 实验产出里没有这个字段（实验盒不管「打哪种仗」），
+    # 传空串会被快照盒的准入直接拒（策略是枚举）。
+    strategy = ""
+    for record in store.list_recent(limit=60):
+        if record.get("box_id") != "shopify_traffic_diagnosis_box":
+            continue
+        art = record.get("artifact") or {}
+        if str(art.get("round_id") or "") == round_id:
+            strategy = str(art.get("strategy") or "")
+            break
+    if not strategy:
+        strategy = "conversion_lift"
 
     # 改动之后 → 昨天（当天的数会一直涨，不算）
     wrote_on = str(artifact.get("observed_at") or "")[:10]
@@ -358,13 +382,58 @@ def _measure(args: argparse.Namespace, store: TaskRunStore, domain: str) -> int:
     print(f"         改动那一轮：{round_id}"
           f"｜落笔日：{wrote_on or '（没记）'}", file=sys.stderr)
 
+    # ---- 站外对照：改过的这一页，在 Google 那边有没有动 ----
+    #
+    # **Shopify 的 session 量不出这种页**（它一天也就 1-2 个 session），
+    # 真正会动的是**排名 / 曝光 / 点击**——所以复测要再取一次站外数据。
+    #
+    # **这一段在「还没有完整的一天」时也要跑**：
+    # 站外数据是**滚动窗口**（过去 28 天），
+    # 改动才一天也能看出「有没有开始动」——
+    # 而它恰恰是今天刚改的页唯一能看的东西。
+    keywords, platforms, gsc_csv = (
+        _market_keywords(""),
+        *_market_platforms("", ""),
+    )
+    market = trigger_task(
+        "shopify_market_signal_box", "capture_market_signals",
+        {
+            "round_id": f"{round_id}+复测",
+            "keywords": keywords,
+            "platforms": platforms,
+            "gsc_csv_path": gsc_csv,
+            "window_days": args.days,
+        },
+        store,
+        chain_ref=round_id, chain_kind="operating_round",
+    )
+    market_handoff = {}
+    if market.get("status") == "completed" and market.get("acceptance_status") == "accepted":
+        market_handoff = handoff_payload(
+            SCOPE_ID, SNAPSHOT, {"shopify_market_signal_box": market["task_run_id"]}
+        )
+    else:
+        print("[measure] 站外数据这次没取到——只量店里的数",
+              file=sys.stderr)
+    now_market = _artifact(market)
+
     if days <= 0:
         print(f"[measure] 改动之后还没有**完整的一天**"
-              f"（{post_start}..{post_end}）——现在量不到效果。",
+              f"（{post_start}..{post_end}）——店里的数现在量不到效果。",
               file=sys.stderr)
         print(f"         明天之后再来量：改动当天之后的 session 才有意义。",
               file=sys.stderr)
         _print_measure_row("改动前（那一轮的窗口）", baseline_snapshot, handle, baseline)
+        print("         —— 站外（Google）那边 ——", file=sys.stderr)
+        _print_measure_page_row(
+            f"改动前（{baseline_snapshot.get('window_start')}.."
+            f"{baseline_snapshot.get('window_end')}）",
+            baseline_snapshot, handle,
+        )
+        _print_measure_page_row("现在（滚动 28 天）", now_market, handle)
+        print("         注意：GSC 的数据有 2-3 天延迟，"
+              "刚改的页这里大概还看不出变化——**这里只摆数，不下结论**",
+              file=sys.stderr)
         return 0
 
     post = trigger_task(
@@ -374,9 +443,10 @@ def _measure(args: argparse.Namespace, store: TaskRunStore, domain: str) -> int:
             "store_domain": domain,
             "window_start": post_start,
             "window_end": post_end,
-            "strategy": str(artifact.get("strategy") or ""),
+            "strategy": strategy,
         },
         store,
+        handoff=market_handoff,
         chain_ref=round_id, chain_kind="operating_round",
     )
     post_snapshot = _artifact(post)
@@ -393,7 +463,53 @@ def _measure(args: argparse.Namespace, store: TaskRunStore, domain: str) -> int:
     )
     _print_measure_row(f"改动后（{post_start}..{post_end}）",
                        post_snapshot, handle, _funnel_row(post_snapshot, handle))
+
+    # **站外对照**（这一页在 Google 那边有没有动）
+    print(f"         —— 站外（Google）那边 ——", file=sys.stderr)
+    _print_measure_page_row(
+        f"改动前（{baseline_snapshot.get('window_start')}.."
+        f"{baseline_snapshot.get('window_end')}）",
+        baseline_snapshot, handle,
+    )
+    _print_measure_page_row(f"改动后（{post_start}..{post_end}）",
+                            post_snapshot, handle)
+    print("         注意：GSC 的数据有 2-3 天延迟，"
+          "而且两边的窗口长度不一样——**这里只摆数，不下结论**",
+          file=sys.stderr)
     return 0
+
+
+def _page_row(snapshot: dict[str, Any], handle: str) -> dict[str, Any] | None:
+    """**这一页在站外（Google）的那一行**——曝光 / 点击 / 排名
+
+    快照里叫 `market_page_signals`，市场信号盒的产出里叫 `page_signals`
+    ——两个地方都要看（复测会直接用市场信号的产出）。
+    """
+    signals = list(snapshot.get("market_page_signals") or []) + list(
+        snapshot.get("page_signals") or []
+    )
+    for signal in signals:
+        path = str(signal.get("path") or "").strip().rstrip("/")
+        if path == f"/products/{handle}":
+            return signal
+    return None
+
+
+def _print_measure_page_row(
+    label: str,
+    snapshot: dict[str, Any],
+    handle: str,
+) -> None:
+    row = _page_row(snapshot, handle)
+    if row is None:
+        print(f"    {label}: 这一页的站外数据没量到（快照里没有它的页面信号）",
+              file=sys.stderr)
+        return
+    query = str(row.get("query") or "")
+    extra = f"｜排在它前面的词「{query}」" if query else ""
+    print(f"    {label}: 站外曝光 {row.get('impressions')}｜"
+          f"点击 {row.get('clicks')}｜平均排名 {row.get('position')}"
+          f"{extra}", file=sys.stderr)
 
 
 def _days_between(start: str, end: str) -> int:

@@ -345,6 +345,11 @@ def snapshot_query_handler(input_data: dict[str, Any]) -> dict[str, Any]:
     return {
         "round_id": input_data["round_id"],
         "strategy": str(input_data.get("strategy") or ""),
+        # **窗口要一路带到产出**——
+        # 少了它，产出里的数就不知道覆盖哪段时间
+        # （复测时基线窗口显示成空的「..」）。
+        "window_start": str(input_data.get("window_start") or ""),
+        "window_end": str(input_data.get("window_end") or ""),
         "market_signal_ref": input_data.get("market_signal_ref"),
         "source": totals.source,
         "api_version": totals.api_version,
