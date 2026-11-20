@@ -316,7 +316,17 @@ M8 的实现取**更严的一条**：
 
 两种情形**声明一模一样**（`leaves_artifact=True`），
 但结论**完全相反** ✗ → 所以判据必须是**本次的执行记录**：
-**已跑完（`completed`）且声明了会留东西的后代**。
+**handler 真的跑成了**（`handler_succeeded`）**且**声明了会留东西的后代。
+
+**「结论」与「事实」要分开记**（M7.3 修出来的）：
+`status` 说的是**这一跳的结论**（completed / failed），
+`handler_succeeded` 说的是**handler 跑成了没有**（= 副作用的事实）。
+两者会分开：handler 成功了，但**这一跳被外层拒了**
+（看门狗说太慢、补丁校验没过）→ 结论是 failed，
+可 handler 已经写库了 → **现场有残留** ✓。
+只数 completed 的话，那一跳从计数里消失 →
+履约落 `failed` 而不是 `partially_completed` ✗
+（读者以为什么都没留下，而库里已经多了一条）。
 
 **现有的 runtime 已经是这么判的** ✓：
 `_end_unfinished` 数的是「**已完成的跳**里有没有声明了留产物的」

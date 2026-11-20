@@ -27,6 +27,7 @@ PoC 2 范围：
 
 from __future__ import annotations
 
+import copy
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -64,9 +65,17 @@ from runtime.runner import HandlerRunner
 MAX_OP_ATTEMPTS = 3
 
 
-def _completed_ops(task_run: TaskRun) -> list[OperationRecord]:
-    """已经成功完成的 op"""
-    return [r for r in task_run.operations.values() if r.status == "completed"]
+def _succeeded_handlers(task_run: TaskRun) -> list[OperationRecord]:
+    """**handler 真的跑成了**的 op（与「这一跳的结论」分开）
+
+    **为什么不能只看 status == "completed"**：
+    handler 成功了、但**这一跳被外层拒了**（看门狗说太慢、补丁校验没过）
+    → 结论是 `failed`，可 handler 已经写库了 → **现场有残留**。
+    只数 completed 的话，那一跳从计数里消失 →
+    履约落 `failed` 而不是 `partially_completed` ✗
+    （读者以为什么都没留下，而库里已经多了一条）。
+    """
+    return [r for r in task_run.operations.values() if r.handler_succeeded]
 
 
 def _end_unfinished(
@@ -85,9 +94,14 @@ def _end_unfinished(
     runtime 分不出这两者——**只有盒子知道**（`Operation.leaves_artifact`）。
 
     所以这里问的是：**有没有哪一跳声明了「我留下了东西」，而且它成功了**。
+
+    **「成功了」按 handler 说，不按这一跳的结论说**——
+    handler 跑成了（副作用已经发生），而这一跳后来被外层拒了
+    （看门狗说太慢、补丁校验没过）→ 结论是 failed，
+    可**现场确实有残留** ✓（见 `_succeeded_handlers`）。
     """
     left = [
-        r for r in _completed_ops(task_run)
+        r for r in _succeeded_handlers(task_run)
         if _leaves_artifact(beeline, r.op_id)
     ]
     if left:
@@ -111,10 +125,11 @@ def _leaves_artifact(beeline: Beeline, op_id: str) -> bool:
 def _any_leaves_artifact(task_run: TaskRun, beeline: Beeline) -> bool:
     """已经跑完的跳里，有没有哪一跳声明了「留下了东西」
 
-    **判的是声明，不是事实**（与 `_end_unfinished` 同一口径）。
+    **判的是声明，不是事实**（与 `_end_unfinished` 同一口径），
+    而且按 **handler 跑成了没有**判（不是按这一跳的结论）✓。
     """
     return any(
-        _leaves_artifact(beeline, r.op_id) for r in _completed_ops(task_run)
+        _leaves_artifact(beeline, r.op_id) for r in _succeeded_handlers(task_run)
     )
 
 
@@ -436,9 +451,16 @@ class BeelineExecutor:
             return execute()
 
         def observe(event: str, detail: dict[str, Any]) -> None:
-            """包裹层记一条观测（**只加事实，不改产出、不改状态**）"""
+            """包裹层记一条观测（**只加事实，不改产出、不改状态**）
+
+            **深拷贝**：观测记下之后，插件还能改它自己那份
+            （浅拷贝的话，插件改一下列表，已记的事件也跟着变
+            → **记录被追改了** → 「算过了却没见过证据」）。
+            """
             task_run.event_log.append(
-                event=event, op_id=op.op_id, detail=dict(detail or {})
+                event=event,
+                op_id=op.op_id,
+                detail=copy.deepcopy(dict(detail or {})),
             )
 
         return call_around_plugins(
@@ -473,7 +495,14 @@ class BeelineExecutor:
             return output
         bindings = [b for b in op.plugins if b.extension_point == EXTENSION_OP_AFTER]
         merged = output
+        patched = False
         for binding, patch in zip(bindings, results):
+            if not patch:
+                # **插件没要改产出**（返回 None）→ 不合并、不校验。
+                # 「results 非空」不等于「有补丁」——
+                # 无条件校验会让「什么都没改」也要求 schema，
+                # 于是没给 schema 的执行器白白中止 ✗
+                continue
             ptype = self.plugin_context.types.get(binding.id)
             allowed = ptype.append_targets if ptype is not None else ()
             try:
@@ -481,7 +510,10 @@ class BeelineExecutor:
             except PluginContractError as e:
                 # **契约违反 = 插件坏了**（不是这一跳的业务问题）
                 raise PluginFailure(binding.id, EXTENSION_OP_AFTER, e) from e
-        self._check_patched_output(op, merged)
+            patched = True
+        if patched:
+            # **只有真的合并了补丁才校验形状** ✓
+            self._check_patched_output(op, merged)
         return merged
 
     def _check_patched_output(self, op: Operation, merged: dict[str, Any]) -> None:
@@ -657,6 +689,11 @@ class BeelineExecutor:
                                 granularity="per_attempt",
                             )
                             op_output = self.runner.run(current_op.type, op_input)
+                        except PluginFailure:
+                            # **插件坏了**（崩了 / 契约违反）→ 走插件失败那条路。
+                            # 与 per_call 同一条口径：**不许混进普通 op 失败**
+                            # （读者要能分开「闸说不行」与「闸自己坏了」）✓
+                            raise
                         except Exception as e:
                             record.status = "failed"
                             record.finished_at = datetime.now(timezone.utc)
@@ -727,6 +764,10 @@ class BeelineExecutor:
                         break  # 这一跳成功了 → 退出「尝试」循环
 
                     # op 成功
+                    # **handler 跑成了 —— 这个事实单独记着**
+                    # （后面这一跳可能被外层拒掉：看门狗说太慢、补丁校验没过。
+                    #  可 handler 已经动了真实世界 → 现场有残留 ✓）
+                    record.handler_succeeded = True
                     record.status = "completed"
                     record.finished_at = datetime.now(timezone.utc)
                     record.output = op_output

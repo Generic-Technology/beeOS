@@ -490,6 +490,115 @@ class TestTheGateIsNeverSilentlySkipped:
 
 
 # ============================================================
+# 三之三、**结论**与**事实**要分开记
+# ============================================================
+
+
+class TestTheConclusionAndTheFactAreSeparate:
+    """**「这一跳的结论」与「handler 跑成了没有」是两个事实**
+
+    handler 成功了、但这一跳后来被外层拒了（看门狗说太慢、补丁校验没过）
+    → **结论**是 failed，可 **handler 已经动了真实世界** → 现场有残留。
+
+    只数「completed 的跳」的话，那一跳被改成 failed 就从计数里消失了 →
+    履约落 `failed` 而不是 `partially_completed` ✗
+    （读者以为什么都没留下，而库里已经多了一条）。
+    """
+
+    def test_a_side_effect_survives_a_later_contract_failure(self):
+        """**写库成功了，后面校验没过 → 落 partially_completed**"""
+        writes: list[str] = []
+
+        def handler(payload):
+            writes.append("committed")
+            return {"ok": True}
+
+        def broken_around(view, params):
+            view["call"]()
+            return {"ok": "changed"}  # 改了产出 → 契约违反
+
+        from tests.test_op_around_and_timeout import _around_context
+
+        ctx, bindings = _around_context(("cr_after_write", broken_around))
+        run = _task_run()
+        route = _beeline(plugins=bindings)
+        route.operations = route.operations[:1]
+        route.operations[0].next = []
+        route.operations[0].leaves_artifact = True
+        BeelineExecutor(_runner(handler), plugin_context=ctx).execute(run, route, {})
+
+        assert writes == ["committed"]
+        assert run.status == TaskRunStatus.PARTIALLY_COMPLETED, (
+            run.status, run.operations["op1"].status
+        )
+
+    def test_a_side_effect_survives_a_bad_patch(self):
+        """**写库成功了，补丁越界 → 落 partially_completed**"""
+        writes: list[str] = []
+
+        def handler(payload):
+            writes.append("committed")
+            return {"ok": True, "notes": []}
+
+        ctx = _context(
+            impls={"op.impl": lambda view, params: {"append": {"other": ["x"]}}}
+        )
+        run = _task_run()
+        route = _beeline(plugins=[_binding(EXTENSION_OP_AFTER)])
+        route.operations = route.operations[:1]
+        route.operations[0].next = []
+        route.operations[0].leaves_artifact = True
+        BeelineExecutor(
+            _runner(handler), plugin_context=ctx, schemas=_SCHEMAS
+        ).execute(run, route, {})
+
+        assert writes == ["committed"]
+        assert run.status == TaskRunStatus.PARTIALLY_COMPLETED, (
+            run.status, run.operations["op1"].status
+        )
+
+    def test_a_per_attempt_admission_crash_is_a_plugin_failure(self):
+        """**逐次准入的插件崩了 → 记 plugin_failure**（与 per_call 同一条口径）"""
+        def crashed(view, params):
+            raise RuntimeError("per_attempt plugin crashed")
+
+        ctx = _context(
+            impls={"op.impl": crashed},
+            point_overrides={
+                EXTENSION_OP_BEFORE: {
+                    "view_keys": ("input",),
+                    "return_contract": "verdict",
+                    "granularity": "per_attempt",
+                }
+            },
+        )
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx
+        ).execute(run, _beeline(plugins=[_binding(EXTENSION_OP_BEFORE)]), {"x": 1})
+
+        assert run.status == TaskRunStatus.FAILED
+        failures = [e for e in run.event_log.entries if e.event == "plugin_failure"]
+        assert failures, [(e.event, e.detail) for e in run.event_log.entries]
+
+    def test_an_after_hook_that_changes_nothing_needs_no_schema(self):
+        """**插件没要改产出 → 不校验形状**（也就不会因为没给 schema 而中止）
+
+        「results 非空」不等于「有补丁」——
+        无条件校验会让「什么都没改」也要求 schema。
+        """
+        ctx = _context(impls={"op.impl": lambda view, params: None})
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx
+        ).execute(run, _beeline(plugins=[_binding(EXTENSION_OP_AFTER)]), {"x": 1})
+
+        assert run.status == TaskRunStatus.COMPLETED, [
+            (e.event, e.detail) for e in run.event_log.entries
+        ]
+
+
+# ============================================================
 # 四、业务侧真的在用（设计盒的打包闸）
 # ============================================================
 

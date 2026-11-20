@@ -519,6 +519,30 @@ class TestTimeout:
             )
 
 
+    def test_the_observation_is_a_snapshot(self):
+        """**观测记下之后，插件改自己那份改不动已记的事件**
+
+        浅拷贝的话，插件改一下列表，已记的事件也跟着变
+        → **记录被追改了** → 「算过了却没见过证据」。
+        """
+        def reporter(view, params):
+            detail = {"readings": [1]}
+            view["observe"]("cr_measurement", detail)
+            detail["readings"].append(2)
+            return view["call"]()
+
+        ctx, bindings = _around_context(("cr_observer", reporter))
+        run = _task_run()
+        BeelineExecutor(
+            _runner(lambda p: {"ok": True}), plugin_context=ctx
+        ).execute(run, _beeline(plugins=bindings), {"x": 1})
+
+        assert run.status == TaskRunStatus.COMPLETED
+        recorded = _events(run, "cr_measurement")
+        assert recorded, [(e.event, e.detail) for e in run.event_log.entries]
+        assert recorded[0].detail == {"readings": [1]}, recorded[0].detail
+
+
 # ============================================================
 # 五、装配期
 # ============================================================
