@@ -1033,10 +1033,14 @@ class TestRadialLayoutIsDerived:
 
     @staticmethod
     def _js_const(name):
-        """抠出页面上的一个 JS 常量（数组/对象原样带过来）"""
-        m = re.search(rf"^const {name} = (.+);$", HTML_PAGE, re.M)
+        """抠出页面上的一个 JS 常量（数组/对象原样带过来）
+
+        值取到**第一个分号**为止：常量后面可以跟注释，
+        `(.+);$` 那种写法会被行尾注释挡住。
+        """
+        m = re.search(rf"^const {name} = ([^;]+);", HTML_PAGE, re.M)
         assert m, f"看板前端里找不到常量 {name}"
-        return m.group(1)
+        return m.group(1).strip()
 
     @staticmethod
     def _js_function(name):
@@ -1081,13 +1085,15 @@ class TestRadialLayoutIsDerived:
                 "RADIAL_CHORD_SLACK", "RADIAL_CENTER_CLEAR", "RADIAL_ARC_SLACK",
                 "RADIAL_SHORTCUT_ARC_H", "ROUTE_OFFSETS", "ROUTE_ANGLE_STEPS",
                 "RADIAL_CENTER_CARD_W", "RADIAL_CENTER_CARD_H",
+                "HOP_OFFSET", "HOP_HALF", "HOP_MAX_HALF",
             )
         )
         funcs = "\n".join(
             TestRadialLayoutIsDerived._js_function(f)
             for f in (
-                "polar", "rectExit", "segCrosses", "polyHitsCard",
-                "polyCrossesOther", "routePolyline", "handoffCurve",
+                "polar", "rectExit", "segCrosses", "segIntersection",
+                "polyHitsCard", "polyCrossesOther", "routePolyline",
+                "handoffCurve", "insertHop", "edgePoints", "resolveCrossings",
                 "routeHandoffEdges",
             )
         )

@@ -3250,11 +3250,128 @@ function polyCrossesOther(poly, others) {{
   return false;
 }}
 
+// ===== 交叉处画「跳线」 =====
+//
+// 两条线交叉，**不一定要绕开**——加个小折线跳过就行，
+// 像电路图里的跳线：线还是直的，交叉处标清楚「这两条不相连」。
+//
+// **为什么要这么小**：为了让整条线绕开一次交叉而兜半个图，
+// 那条线看起来就像在乱窜；小跳线只在交叉点那一小段动一下，
+// 线的**直**保住了 —— 直线的读法最清楚。
+//
+// 跳线要跨过另一条线，所以半长按**夹角**放大：夹得越平，跳得越长
+// （夹角小的时候，短跳线跨不过去，会变成「碰了一下又交叉」）。
+const HOP_OFFSET = 22;    // 跳线偏离原线的距离
+const HOP_HALF = 22;      // 跳线的半长（不够时按夹角放大）
+const HOP_MAX_HALF = 130; // 再大就跳不动了（那处交叉留着，宁可交叉也不画一根乱线）
+
+function segIntersection(p1, p2, p3, p4) {{
+  // 两条线段的交点；端点相接不算交叉（那是汇聚）
+  const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
+  if (Math.abs(d) < 1e-9) return null;
+  const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
+  const u = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
+  if (t <= 0.02 || t >= 0.98 || u <= 0.02 || u >= 0.98) return null;
+  return {{
+    point: {{ x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t }},
+    // **两条线各自的方向**：跳线要知道「另一条线」朝哪走，
+    // 才能算出跳多长——拿被跳那条自己的方向算，夹角会算成 0°。
+    dirA: {{ x: p2.x - p1.x, y: p2.y - p1.y }},
+    dirB: {{ x: p4.x - p3.x, y: p4.y - p3.y }},
+  }};
+}}
+
+function insertHop(poly, segIdx, hit, otherDir, otherPoly, cards, skipIds) {{
+  // 在 poly 的第 segIdx 段上插一个跳线；插不进去就返回 null（那处交叉留着）。
+  //
+  // **跳线的几何**：桥（a→b）平行于原线，偏离原线 off；
+  // 半长 half 必须 **小于 off/tanθ**（θ 是两条线的夹角）——
+  // 夹角越小（两条线越平），另一条线爬到桥的高度所需的路程越短，
+  // 桥就越要短，否则桥自己会跟它交叉。
+  //
+  // **不靠手算**：每种摆法都**用真实的交叉检测验一遍**，
+  // 验不过就换（换偏移量、换方向）。跳线是「让两条线别相交」，
+  // 它的正确性就该由同一个交叉检测说了算。
+  const p1 = poly[segIdx], p2 = poly[segIdx + 1];
+  const dx = p2.x - p1.x, dy = p2.y - p1.y, L = Math.hypot(dx, dy) || 1;
+  const ux = dx / L, uy = dy / L;
+  const vx = otherDir.x, vy = otherDir.y;
+  const vL = Math.hypot(vx, vy) || 1;
+  const cosang = Math.abs((ux * vx + uy * vy) / vL);
+  const sinang = Math.max(Math.sqrt(Math.max(0, 1 - cosang * cosang)), 0.02);
+  const tanang = Math.max(sinang / Math.max(cosang, 0.02), 0.05);
+  const nx = -uy, ny = ux;
+  const c = hit.point;
+  for (const off of [HOP_OFFSET, HOP_OFFSET * 1.7, HOP_OFFSET * 2.6]) {{
+    const half = Math.min(HOP_MAX_HALF, (off / tanang) * 0.85);
+    if (half < 4) continue;
+    // 两个方向都试：跳线不能压到卡片上，也不能跟另一条线交叉
+    for (const side of [1, -1]) {{
+      const a = {{ x: c.x - ux * half + nx * side * off,
+                  y: c.y - uy * half + ny * side * off }};
+      const b = {{ x: c.x + ux * half + nx * side * off,
+                  y: c.y + uy * half + ny * side * off }};
+      const cand = poly.slice(0, segIdx + 1).concat([a, b], poly.slice(segIdx + 1));
+      if (polyHitsCard(cand, cards, skipIds)) continue;
+      if (otherPoly && polyCrossesOther(cand, [otherPoly])) continue;
+      return cand;
+    }}
+  }}
+  return null;
+}}
+
+function edgePoints(line) {{
+  // 这条边实际画出来的点列：折线走 poly，直线走两端。
+  // **直线边的 poly 是 null**（那是「两点 = 直线」的省法），
+  // 直接读 poly 会把直线边整个漏掉——交叉就检测不到了。
+  return line.poly || [line.a, line.b];
+}}
+
+function resolveCrossings(lines, cards) {{
+  // 每处交叉加一个跳线。**两条线都试**：跳线对「陡的那条」常常不成立
+  // （它的斜边必然撞上另一条线），所以谁跳得成就谁跳。
+  // 改完几何要重扫（跳线本身可能带来新的交叉），所以循环几轮。
+  for (let round = 0; round < 6; round++) {{
+    let changed = false;
+    for (let i = 0; i < lines.length && !changed; i++) {{
+      for (let j = i + 1; j < lines.length && !changed; j++) {{
+        const A = edgePoints(lines[i]);
+        const B = edgePoints(lines[j]);
+        for (let a = 0; a < A.length - 1 && !changed; a++) {{
+          for (let b = 0; b < B.length - 1; b++) {{
+            const hit = segIntersection(A[a], A[a + 1], B[b], B[b + 1]);
+            if (!hit) continue;
+            // 先试跳 B（后定线的那条），不行再试跳 A。
+            let hopped = insertHop(B, b, hit, hit.dirA, A, cards,
+                                   [lines[j].from, lines[j].to]);
+            if (hopped) {{
+              lines[j].poly = hopped;
+              changed = true;
+              break;
+            }}
+            hopped = insertHop(A, a, hit, hit.dirB, B, cards,
+                               [lines[i].from, lines[i].to]);
+            if (hopped) {{
+              lines[i].poly = hopped;
+              changed = true;
+              break;
+            }}
+          }}
+        }}
+      }}
+    }}
+    if (!changed) break;
+  }}
+  return lines;
+}}
+
 function routePolyline(a, b, cards, others, skipIds) {{
   // 先试直线：能直就直。
-  if (!polyHitsCard([a, b], cards, skipIds) && !polyCrossesOther([a, b], others)) {{
-    return [a, b];
-  }}
+  //
+  // **只避卡片，不避别的边**：跟别的边交叉，回头用**跳线**处理
+  // （见 resolveCrossings）——为了躲开一次交叉而让整条线兜半个图，
+  // 那条线看起来像在乱窜，而直线的读法最清楚。
+  if (!polyHitsCard([a, b], cards, skipIds)) return [a, b];
   // 再扫单拐点：离弦中点越近越优先（绕得越少越好）。
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
   for (const d of ROUTE_OFFSETS) {{
@@ -3262,28 +3379,6 @@ function routePolyline(a, b, cards, others, skipIds) {{
       const ang = (k * 2 * Math.PI) / ROUTE_ANGLE_STEPS;
       const poly = [a, {{ x: mx + d * Math.cos(ang), y: my + d * Math.sin(ang) }}, b];
       if (polyHitsCard(poly, cards, skipIds)) continue;
-      if (polyCrossesOther(poly, others)) continue;
-      return poly;
-    }}
-  }}
-  // 还不行：两端**各让一步**（两个拐点）。
-  //
-  // 什么时候需要它：这条边要跳过的盒子**正好在它俩中间**
-  // （比如「开发→运维」要跨过正下方的测试盒）——
-  // 单拐点怎么摆都在那只盒子上，两端各让一步才绕得过去。
-  const nx = -(b.y - a.y), ny = b.x - a.x;
-  const nl = Math.hypot(nx, ny) || 1;
-  for (const d of ROUTE_OFFSETS) {{
-    for (const dir of [1, -1]) {{
-      const ux = (nx / nl) * dir * d, uy = (ny / nl) * dir * d;
-      const poly = [
-        a,
-        {{ x: a.x + ux, y: a.y + uy }},
-        {{ x: b.x + ux, y: b.y + uy }},
-        b,
-      ];
-      if (polyHitsCard(poly, cards, skipIds)) continue;
-      if (polyCrossesOther(poly, others)) continue;
       return poly;
     }}
   }}
@@ -3337,7 +3432,12 @@ function routeHandoffEdges(layout, pos, cpos, center) {{
     lines.push(line);
     routed.push(line.poly || [line.a, line.b]);
   }}
-  return lines;
+  // 交叉处理放在最后：先把每条边**按自己的需要**定线（只避卡片），
+  // 再统一给交叉处加跳线。
+  //
+  // **为什么不在定线时就躲别的边**：为了让躲开一次交叉，
+  // 一条线能兜掉半个图——那条线看起来像在乱窜，而直线的读法最清楚。
+  return resolveCrossings(lines, cardRects);
 }}
 
 function renderRadial(layout, stats) {{
