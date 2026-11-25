@@ -782,8 +782,8 @@ HTML_PAGE = f"""<!DOCTYPE html>
   }}
   .radial .radial-center .cube-caption {{ margin-top: 2px; }}
   .radial-legend {{
-    display: flex; gap: 20px; justify-content: center; align-items: center;
-    font-size: 11px; color: #475569; margin: 4px 0 10px;
+    display: flex; gap: 14px; justify-content: center; align-items: center;
+    font-size: 11px; color: #475569; margin: 2px 0 6px;
     flex-wrap: wrap;   /* 容器变窄时换行，别把图例挤成一条 */
   }}
   .radial-legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
@@ -2584,7 +2584,16 @@ function fitRadial() {{
   const H = parseFloat(radial.style.height) || 0;
   if (!W || !H) return;
   const avail = host.clientWidth;
-  const k = Math.max(0.6, Math.min(1, avail / W));
+  // **高度也要照顾**：只按宽度缩的话，画布比一屏高 →
+  // 图看不全，读者得滚。高度从**滚动容器**取（它的高度由外层 flex 布局定，
+  // 不由内容定，所以不是循环依赖）：`.content-scroll` 在总览页是
+  // `flex:1 1 auto; min-height:0`，高度 = 外层分给它的那份，跟画布多高无关。
+  const box = radial.closest('.content-scroll');
+  const availH = box ? box.clientHeight : 0;
+  let k = Math.max(0.6, Math.min(1, avail / W));
+  // 高度那条的下限松一点（0.45）：宁可小一点，也要**一屏看全整个环**——
+  // 看一半的图比看一张小图更让人以为「就这些了」。
+  if (availH > 0) k = Math.max(0.45, Math.min(k, availH / H));
   if (k < 1) {{
     // **缩放加在画布上，不是加在这一层上**。
     // 这一层已经按 W*k / H*k 收窄了，再对它做 scale 就等于缩两次：
@@ -3128,7 +3137,9 @@ const RADIAL_GAP = 50;
 const STAR_GAP = 70;
 // 环半径要比卡高大一倍多，虚线才有地方站：中心卡边框到环卡边框的距离
 // 就是 R − 卡高。贴着卡走等于没有连线。
-const RADIAL_R_FACTOR = 1.9;
+// **1.7 而不是 1.9**：R − 卡高 = 289 − 170 = 119px，辐条站得住；
+// 而画布矮了 68px——一屏放不下整个环时，这 68px 就是「要不要滚动」的差别。
+const RADIAL_R_FACTOR = 1.7;
 // 弦长算够之后再加这么一点富余，免得两张卡刚好贴上
 const RADIAL_CHORD_SLACK = 26;
 // **交接边离圆心的最小净空**。
@@ -3478,8 +3489,8 @@ function renderRadial(layout, stats) {{
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-handoff"/></svg>交接：交出去让下一只验</span>
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-feed"/></svg>累积：产出并进系统档案</span>
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-feedback"/></svg>反馈：上一轮结论变成新一轮输入</span>
-      <span class="muted">环序 = 生命周期顺序，箭头顺着环走</span>
-      <span class="muted">跳过中间那只的交接写在盒子上（也交给 X），不画线</span>
+      <span class="muted">环序 = 生命周期顺序</span>
+      <span class="muted">跨位的交接写在盒子上</span>
     </div>`;
 
   return `${{legend}}
