@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import ast
-import math
+import json
 import pathlib
 import re
 
@@ -31,6 +31,7 @@ from kanban.trigger import (
     resolve_text_intake,
     trigger_task,
 )
+from kanban.trigger import fulfillment_scope_layout
 from kanban.web import HTML_PAGE
 from runtime.box_health import STATUS_FAIL, STATUS_PASS, inspect_box
 from runtime.store import TaskRunStore
@@ -38,29 +39,6 @@ from tests.conftest import stub_compliant_llm
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 KANBAN_DIR = REPO / "kanban"
-
-
-def _arc_min_distance(gap: float, h: float, length: float) -> float:
-    """一条「朝外鼓的二次贝塞尔弧」离圆心最近有多远
-
-    前端 `handoffCurve` 画的弧：端点 a、b 的中点是 m（离圆心 `gap`），
-    控制点在 m 的法线方向再往外 2h 处。
-
-    弧上一点可写成 `m + length·(t-1/2)·u + 4h·t(1-t)·n`
-    （u 是弦的方向，n 是朝外的法线）。它的模平方是
-
-        f(s) = (gap + h - 4h·s)² + length²·s,   s = (t-1/2)² ∈ [0, 1/4]
-
-    这是**关于 s 的凸二次**，最小值能解析地算出来——
-    **不是拿样例采样出来的**（采样只能证明「存在」一个点离得远）。
-    """
-    a = gap + h
-    s_star = (8 * h * a - length * length) / (32 * h * h)
-    if s_star <= 0:
-        return a
-    if s_star >= 0.25:
-        return math.hypot(gap, length / 2)
-    return math.sqrt(a * a - (length * length - 8 * h * a) ** 2 / (64 * h * h))
 
 
 CAPTURE = "wms_requirement_box"
@@ -1050,201 +1028,174 @@ class TestRadialLayoutIsDerived:
     @staticmethod
     def _page_const(name):
         m = re.search(rf"const {name} = ([0-9.]+);", HTML_PAGE)
-        assert m, f"看板前端里找不到常量 {name}——净空守卫跟着它一起瞎了"
+        assert m, f"看板前端里找不到常量 {name}——几何守卫跟着它一起瞎了"
         return float(m.group(1))
 
     @staticmethod
-    def _radial_edges(lay):
-        """复刻前端的环上几何，逐条交接边算出它离圆心最近有多远
+    def _js_const(name):
+        """抠出页面上的一个 JS 常量（数组/对象原样带过来）"""
+        m = re.search(rf"^const {name} = (.+);$", HTML_PAGE, re.M)
+        assert m, f"看板前端里找不到常量 {name}"
+        return m.group(1)
 
-        **必须跟前端同一套几何**（环上位置、卡片出口点、弧的鼓法）——
-        守卫自己抄一份形状比较，那就会是第二份事实：前端改了弧的算法，
+    @staticmethod
+    def _js_function(name):
+        """抠出页面上的一个 JS 函数（按花括号配平）"""
+        start = HTML_PAGE.index(f"\nfunction {name}(") + 1
+        i = HTML_PAGE.index("{", start)
+        depth = 0
+        for j in range(i, len(HTML_PAGE)):
+            if HTML_PAGE[j] == "{":
+                depth += 1
+            elif HTML_PAGE[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    return HTML_PAGE[start : j + 1]
+        raise AssertionError(f"{name} 的花括号没配平")
+
+    @staticmethod
+    def _radial_routing(domain):
+        """用页面上的**真路由代码**跑一遍这个协作边界，返回定线结果
+
+        **守卫自己抄一份几何比较 = 第二份事实**：前端改了算法，
         守卫还在按老算法算，**绿着说明不了任何事**。
+        所以这里把页面上的真源码抠出来丢给 node 跑。
 
-        返回 `[(from, to, 净空, 折线点)]`。
+        返回 `{"lines": [{"from","to","kind","points"}], "crosses": [...],
+        "card_hits": [...]}`。
         """
-        ring = lay["ring"]
-        n = len(ring)
-        if n < 2:
-            return []
+        import shutil
+        import subprocess
 
-        card_w = TestRadialLayoutIsDerived._page_const("RADIAL_CARD_W")
-        card_h = TestRadialLayoutIsDerived._page_const("RADIAL_CARD_H")
-        gap = TestRadialLayoutIsDerived._page_const("RADIAL_GAP")
-        slack = TestRadialLayoutIsDerived._page_const("RADIAL_CHORD_SLACK")
-        r_factor = TestRadialLayoutIsDerived._page_const("RADIAL_R_FACTOR")
-        need = TestRadialLayoutIsDerived._page_const("RADIAL_CENTER_CLEAR")
-        arc_slack = TestRadialLayoutIsDerived._page_const("RADIAL_ARC_SLACK")
-        shortcut_h = TestRadialLayoutIsDerived._page_const("RADIAL_SHORTCUT_ARC_H")
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("没有 node，跳过接线几何守卫")
 
-        # 前端：R = max(横向弦长下限, 卡高 × RADIAL_R_FACTOR)
-        R = max((card_w + gap) / 2 / math.sin(math.pi / n) + slack,
-                card_h * r_factor)
-        step = 2 * math.pi / n
-        pos = {}
-        for i, bid in enumerate(ring):
-            ang = -math.pi / 2 + i * step
-            pos[bid] = (R * math.cos(ang), R * math.sin(ang))
-
-        # 「抄近路」的边 = 环上**不相邻**的交接边（前端 renderRadial 同样一份口径）
-        ring_adjacent = {ring[i] + ">" + ring[(i + 1) % n] for i in range(n)}
-
-        def rect_exit(p, u):
-            tx = math.inf if abs(u[0]) < 1e-6 else (card_w / 2) / abs(u[0])
-            ty = math.inf if abs(u[1]) < 1e-6 else (card_h / 2) / abs(u[1])
-            t = min(tx, ty)
-            return (p[0] + u[0] * t, p[1] + u[1] * t)
-
-        def sample(a, b, curve, n_points=120):
-            """把一条边采样成折线（直线两点，弧按二次贝塞尔采样）"""
-            if curve is None:
-                return [a, b]
-            (cx, cy), (mx, my) = curve
-            pts = []
-            for i in range(n_points + 1):
-                t = i / n_points
-                u = 1 - t
-                pts.append((
-                    u * u * a[0] + 2 * u * t * cx + t * t * b[0],
-                    u * u * a[1] + 2 * u * t * cy + t * t * b[1],
-                ))
-            return pts
-
-        out = []
-        for (s, d) in lay["handoffs"]:
-            p1, p2 = pos[s], pos[d]
-            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            L = math.hypot(dx, dy) or 1
-            u = (dx / L, dy / L)
-            a = rect_exit(p1, u)
-            b = rect_exit(p2, (-u[0], -u[1]))
-            mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
-            chord_gap = math.hypot(mx, my)      # 弦到圆心的距离
-            seg_len = math.hypot(b[0] - a[0], b[1] - a[1])
-            is_shortcut = (s + ">" + d) not in ring_adjacent
-            need_h = max(arc_slack, need - chord_gap + arc_slack)
-            curve = None
-            if is_shortcut:
-                # 抄近路的边**一律鼓**（哪怕净空够）——画直线会跟另一条
-                # 端点交替的抄近路边交叉
-                h = max(need_h, shortcut_h)
-                nx, ny = -dy / L, dx / L
-                if mx * nx + my * ny < 0:
-                    nx, ny = -nx, -ny
-                curve = ((mx + 2 * h * nx, my + 2 * h * ny), (mx, my))
-                clearance = _arc_min_distance(chord_gap, h, seg_len)
-            elif chord_gap >= need:
-                # 直线：最近点就在弦的中点（垂足落在弦上）
-                clearance = chord_gap
-            else:
-                # 弧：朝外鼓 h
-                h = need_h
-                nx, ny = -dy / L, dx / L
-                if mx * nx + my * ny < 0:
-                    nx, ny = -nx, -ny
-                curve = ((mx + 2 * h * nx, my + 2 * h * ny), (mx, my))
-                clearance = _arc_min_distance(chord_gap, h, seg_len)
-            out.append((s, d, clearance, sample(a, b, curve)))
-        return out
-
-    def test_a_handoff_chord_always_clears_the_centre_card(self):
-        """交接边（直线或弧）离圆心要够远，不能从中心那张卡上斜穿过去
-
-        鼓出去的弧碰不到中心是显然的，直线不是：弦到圆心的距离
-        随两只盒子在环上差多少角度而变，哪天真出现一条差半圈的交接边，
-        它就会从中心卡的角上斜穿过去——看板上只是一条线压住了汇点的名字，
-        不会有任何东西会报错。
-
-        这是可证的，所以不靠盯：净空能算出来，
-        必须大于中心卡的半对角线（那是中心卡伸出去最远的那个角）。
-        """
         from kanban.trigger import fulfillment_scope_layout
 
-        # 立方体尺寸必须从 compactCubeHtml 里取，不能在整页里正则第一个 --cw：
-        # 单盒视图用的是另一只更大的立方体，抓错了就变成拿错尺寸在算净空，
-        # 而算错的那只恰好更大——错得还挺安全，纯属运气。
-        m = re.search(r"function compactCubeHtml\(box\) \{(.*?)\n\}", HTML_PAGE, re.S)
-        assert m, "看板前端里找不到 compactCubeHtml——净空守卫没尺寸可算"
-        assert "compactCubeHtml(s)" in HTML_PAGE, (
-            "环形视图不再用紧凑立方体渲染卡片——净空守卫量的还是那只紧凑的，"
-            "于是量到的尺寸跟实际画出来的不一样"
+        lay = fulfillment_scope_layout(domain)
+        consts = "\n".join(
+            f"const {c} = {TestRadialLayoutIsDerived._js_const(c)};"
+            for c in (
+                "RADIAL_CARD_W", "RADIAL_CARD_H", "RADIAL_GAP", "RADIAL_R_FACTOR",
+                "RADIAL_CHORD_SLACK", "RADIAL_CENTER_CLEAR", "RADIAL_ARC_SLACK",
+                "RADIAL_SHORTCUT_ARC_H", "ROUTE_OFFSETS", "ROUTE_ANGLE_STEPS",
+                "RADIAL_CENTER_CARD_W", "RADIAL_CENTER_CARD_H",
+            )
         )
-        cube_w = float(re.search(r"--cw:([0-9.]+)px", m.group(1)).group(1))
-        cube_h = float(re.search(r"--ch:([0-9.]+)px", m.group(1)).group(1))
-        center_scale = float(
-            re.search(r"radial-center \.cube-scene \{ transform: scale\(([0-9.]+)\)",
-                      HTML_PAGE).group(1)
+        funcs = "\n".join(
+            TestRadialLayoutIsDerived._js_function(f)
+            for f in (
+                "polar", "rectExit", "segCrosses", "polyHitsCard",
+                "polyCrossesOther", "routePolyline", "handoffCurve",
+                "routeHandoffEdges",
+            )
         )
-        half_diag = math.hypot(cube_w * center_scale / 2, cube_h * center_scale / 2)
+        probe = """
+const layout = LAYOUT, n = layout.ring.length;
+const R = Math.max((RADIAL_CARD_W + RADIAL_GAP) / 2 / Math.sin(Math.PI / n)
+                    + RADIAL_CHORD_SLACK, RADIAL_CARD_H * RADIAL_R_FACTOR);
+const step = 2 * Math.PI / n, pos = {};
+layout.ring.forEach((id, i) => { pos[id] = polar(0, 0, R, -Math.PI / 2 + i * step); });
+const cpos = { x: 0, y: 0 };
+const lines = routeHandoffEdges(layout, pos, cpos, layout.center);
+const cardRects = [];
+for (const id in pos) cardRects.push({ id: id, x: pos[id].x, y: pos[id].y,
+                                     hw: RADIAL_CARD_W / 2, hh: RADIAL_CARD_H / 2 });
+if (layout.center) cardRects.push({ id: '__center__', x: 0, y: 0,
+                                    hw: RADIAL_CENTER_CARD_W / 2, hh: RADIAL_CENTER_CARD_H / 2 });
+const out = { lines: [], crosses: [], card_hits: [] };
+for (const l of lines) {
+  const pts = l.poly || [l.a, l.b];
+  out.lines.push({ from: l.from, to: l.to,
+                   kind: l.poly ? 'poly' : (l.curve ? 'arc' : 'line'),
+                   points: pts.map(p => [Math.round(p.x), Math.round(p.y)]) });
+  const hit = polyHitsCard(pts, cardRects, [l.from, l.to]);
+  if (hit) out.card_hits.push([l.from, l.to, hit]);
+}
+for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+  const A = lines[i].poly || [lines[i].a, lines[i].b];
+  const B = lines[j].poly || [lines[j].a, lines[j].b];
+  for (let x = 0; x < A.length - 1; x++) for (let y = 0; y < B.length - 1; y++)
+    if (segCrosses(A[x], A[x + 1], B[y], B[y + 1]))
+      out.crosses.push([lines[i].from, lines[i].to, lines[j].from, lines[j].to]);
+}
+console.log(JSON.stringify(out));
+"""
+        src = "\n".join([
+            consts, funcs,
+            "const LAYOUT = " + json.dumps(
+                {"ring": list(lay["ring"]), "handoffs": [list(e) for e in lay["handoffs"]],
+                 "center": lay.get("center")}, ensure_ascii=False) + ";",
+            probe,
+        ])
+        proc = subprocess.run([node, "-e", src], capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 0, f"node 跑接线几何失败：\n{proc.stderr}"
+        return json.loads(proc.stdout.strip())
 
-        checked = 0
-        for domain in self._domains():
-            lay = fulfillment_scope_layout(domain)
-            if lay["layout"] != "radial":
-                continue
-            for (s, d, clearance, _pts) in self._radial_edges(lay):
-                checked += 1
-                assert clearance > half_diag + 24, (
-                    f"{domain!r}: 交接边 {s} → {d} 离圆心只剩 {clearance:.0f}px，"
-                    f"中心卡半对角线 {half_diag:.0f}px——那条线会斜穿过汇点那张卡。"
-                    f"要么把环撑大（RADIAL_R_FACTOR / RADIAL_GAP），"
-                    f"要么把中心卡缩小（radial-center 的 scale），"
-                    f"要么让那条边改画朝外鼓的弧（handoffCurve）"
-                )
-        assert checked, "一个协作边界的交接边都没算到——这条守卫没在守任何东西"
-
-    def test_no_two_handoff_edges_cross_each_other(self):
+    def test_handoff_edges_never_cross_each_other(self):
         """交接边之间**不许交叉**
 
         交叉的线在图上是**乱**的：读者顺着一条线走，走到一半被另一条劈开，
         读不出「谁交给谁」——而这张图的全部意义就是「谁交给谁」。
 
         **为什么会交叉**：环上「抄近路」的边（不相邻的交接边），
-        如果有两条的端点**交替**（a < c < b < d），它们的弦必然相交。
-        直线画出来就是交叉；**各自朝外鼓成弧就分开了**——
-        所以前端的规矩是「抄近路的边一律画弧」（handoffCurve 的
-        `isShortcut`），鼓高由 `RADIAL_SHORTCUT_ARC_H` 定。
-
-        这条守卫跟净空那条是**两回事**：
-        净空守的是「别压到汇点那张卡」，这条守的是「别自己跟自己打结」。
+        如果有两条的端点**交替**（a < c < b < d），它们的弦必然相交——
+        这是拓扑事实，不是画法能绕开的。
+        所以前端的做法是：**直线优先**，直线会撞卡片或跟别的边交叉时，
+        插拐点绕开（`routePolyline`）；全是直线段，读起来像「绕开某样东西」。
         """
-        from kanban.trigger import fulfillment_scope_layout
-
-        def seg_hit(p1, p2, p3, p4):
-            """两段线段是否真交叉（端点相接不算——那是汇聚）"""
-            d = (p2[0] - p1[0]) * (p4[1] - p3[1]) - (p2[1] - p1[1]) * (p4[0] - p3[0])
-            if abs(d) < 1e-9:
-                return False
-            t = ((p3[0] - p1[0]) * (p4[1] - p3[1]) - (p3[1] - p1[1]) * (p4[0] - p3[0])) / d
-            u = ((p3[0] - p1[0]) * (p2[1] - p1[1]) - (p3[1] - p1[1]) * (p2[0] - p1[0])) / d
-            return 0.02 < t < 0.98 and 0.02 < u < 0.98
-
         checked = 0
         for domain in self._domains():
             lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 continue
-            edges = self._radial_edges(lay)
-            for i in range(len(edges)):
-                for j in range(i + 1, len(edges)):
-                    (s1, d1, _c1, pts1) = edges[i]
-                    (s2, d2, _c2, pts2) = edges[j]
-                    hit = False
-                    for a in range(len(pts1) - 1):
-                        if hit:
-                            break
-                        for b in range(len(pts2) - 1):
-                            if seg_hit(pts1[a], pts1[a + 1], pts2[b], pts2[b + 1]):
-                                hit = True
-                                break
-                    assert not hit, (
-                        f"{domain!r}: 交接边 {s1} → {d1} 和 {s2} → {d2} 交叉了——"
-                        f"图上是乱线，读不出谁交给谁。"
-                        f"抄近路的边要各自朝外鼓成弧（handoffCurve 的 isShortcut），"
-                        f"别让它们画成互相穿过去的直线"
-                    )
-                    checked += 1
-        assert checked, "一个协作边界的交接边对都没算到——这条守卫没在守任何东西"
+            routed = self._radial_routing(domain)
+            for a, b, c, d in routed["crosses"]:
+                assert False, (
+                    f"{domain!r}: 交接边 {a} → {b} 和 {c} → {d} 交叉了——"
+                    f"图上是乱线，读不出谁交给谁"
+                )
+            checked += len(routed["lines"])
+        assert checked, "一个协作边界的交接边都没算到——这条守卫没在守任何东西"
+
+    def test_handoff_edges_never_run_through_a_card(self):
+        """交接边不许从卡片上穿过去
+
+        穿过去的那一段，图上就是「这条线压住了那只盒子的名字」——
+        没有报错，也没有别的提示，只有读的人一头雾水。
+        """
+        checked = 0
+        for domain in self._domains():
+            lay = fulfillment_scope_layout(domain)
+            if lay["layout"] != "radial":
+                continue
+            routed = self._radial_routing(domain)
+            for a, b, card in routed["card_hits"]:
+                assert False, (
+                    f"{domain!r}: 交接边 {a} → {b} 从卡片 {card} 上穿过去了——"
+                    f"要么让它绕开，要么换个走法"
+                )
+            checked += len(routed["lines"])
+        assert checked, "一个协作边界的交接边都没算到——这条守卫没在守任何东西"
+
+    def test_straight_lines_are_the_default_and_only_detours_when_needed(self):
+        """**能用直线就别用弧/折线**——绕行是例外，不是常态
+
+        抄近路的边确实得绕（端点交替时弦必然相交），但绕之前
+        一定先试过直线：只有直线撞卡片或撞别的边时才拐弯。
+        """
+        for domain in self._domains():
+            lay = fulfillment_scope_layout(domain)
+            if lay["layout"] != "radial":
+                continue
+            routed = self._radial_routing(domain)
+            for line in routed["lines"]:
+                assert line["kind"] != "arc", (
+                    f"{domain!r}: 交接边 {line['from']} → {line['to']} 画成了弧——"
+                    f"弧是贝塞尔曲线，读起来像随手一撇；"
+                    f"折线（全直线段）读起来像「绕开某样东西」"
+                )
 
     def test_the_main_chain_is_never_cyclic(self):
         """协作边界声明的交接边组成的**主干必须无环**——有环就是有人把闭环声明错了
