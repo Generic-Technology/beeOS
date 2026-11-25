@@ -55,6 +55,9 @@ packages = [
     "boxes.shopify_acquisition_experiment",
     "boxes.shopify_archive",
     "runtime",
+    # **access 也要装**：接入面（对外调用门面）已经是独立的一层，
+    # 漏了 → 装出来的环境里没有接入面，外部调用方 import 不到。
+    "access",
     "kanban",
     "fulfillment_scopes",
     "fulfillment_scopes.wms",

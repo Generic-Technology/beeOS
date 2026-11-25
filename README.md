@@ -171,6 +171,7 @@ python -m kanban.web
 | 作业路线与执行 | [beeline](docs/beeline.md)、[运行时说明](runtime/README.md) |
 | 盒子装配与协作边界 | [脚手架协议](docs/architecture-upgrade.md)、[协作边界声明](docs/fulfillment-scope.md) |
 | 观察任务与检查声明 | [Kanban](kanban/README.md)、[Workshop](workshop/README.md) |
+| 外部 agent 怎么接进来 | [对外接入面设计](docs/agent-integration.md) |
 | WMS 链路的验证依据 | [闭环计划与实测记录](docs/wms-closure-plan.md) |
 | 产品与商业方向 | [GTM 草稿](docs/beeos-gtm.md) |
 
@@ -213,6 +214,7 @@ python scripts/new_box.py --help
   - `recursive-composition.md` — **递归组合**的设计：复合组件怎么嵌套、怎么装配、怎么跑（模型与不变式在上一份里）
   - `fulfillment-scope.md` — **协作边界声明**设计与实现边界：盒子之间关系的唯一事实源
   - `stability-plan.md` — 按 SOLID 分批加固组件的顺序与验收标准
+  - `agent-integration.md` — **对外接入面**的设计稿：链路分层、对外契约、身份 / 幂等 / 链级编排与分期
   - `beebox-design.md` — 主设计稿（架构宣言 / 核心契约 / 执行语义 / 实现设计）
   - `beebox-definition-schema.md` — beeBox Definition 数据形状
   - `beebox-beeline-schema.md` — beeline / Operation 数据形状
@@ -302,6 +304,12 @@ python scripts/new_box.py --help
   - `web.py` — Web 看板（`python -m kanban.web`，HTTP server + HTML + JS）
   - `trigger.py` — 投料口（`BOX_REGISTRY` + `trigger_task`：校验 → 执行 → 验收 → 落盘）
   - `catalog.py` — 把注册表里的材料攒成「一只盒子」（体检台的数据源）
+
+- **`access/`** — 对外接入面（与 `kanban/` / `workshop/` 平级）：
+  谁调 beeOS、凭什么调、调完怎么算。**当前是骨架，实现未落地**——
+  对外契约（动作清单、请求 / 响应形状）先定，再填实现。
+  - `__init__.py` — 接入面包入口（边界声明：它和看板 / 工作台的区别）
+  - `README.md` — 接入面说明（装什么不装什么、对外动作清单、六条纪律、当前状态）
 
 - **`workshop/`** — BeeBox Workshop：做 BeeBox 的工作台（与 `kanban/` 平级，
   同一个服务、同一个端口，路径 `/workshop`）。第一版只做**体检台**：
