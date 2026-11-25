@@ -1243,6 +1243,12 @@ def list_task_entries(box_id: str) -> list[dict[str, Any]]:
             "sample_payload": sample,
             "beeline_ops": beeline_ops,
             "payload_kind": _payload_kind(schema),
+            # **这个 task 吃不吃自然语言**——盒子自己声明的，不是推的
+            # （跟 `box_manifest()` 里那个字段同源：一个声明，两处读）。
+            #
+            # 总览页的「任务描述」输入框靠它找得到投给谁：
+            # 按**能力**找盒子，不按 id 硬编码（跟 resolve_text_intake 同一口径）。
+            "accepts_free_text": bool(task.accepts_free_text),
             # media 形态时投料口要知道收哪个字段、要不要多张
             "media_fields": [
                 {

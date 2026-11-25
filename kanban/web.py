@@ -1040,6 +1040,107 @@ HTML_PAGE = f"""<!DOCTYPE html>
     background: #eef2f7; border-radius: 7px;
   }}
 
+  /* ===== 总览页：整页不滚，三栏各自滚 =====
+     以前总览页让**整页**滚：中栏的地图很长，滚一次就到底。
+     但整页一滚，左栏的任务列表和右栏的轨迹跟着一起动——
+     读者想盯着某只盒子的轨迹看 op 顺序，一滚就没了。
+     改成：**整页锁高**，左栏 / 中栏 / 右栏各自内部滚。
+
+     跟单盒详情页是同一套结构（那边早就这么做了）：
+     body 锁成一屏 → .page-body 填满剩下的高度 → 三栏等高 → 各栏自己滚。
+
+     **宽屏才这么做**：窄屏（≤760px）三栏叠成一行，
+     再锁高就变成三个小滚动条挤在一屏，手机上没法用。
+  */
+  @media (min-width: 761px) {{
+    body:not(.single-box) {{
+      height: 100vh; overflow: hidden;
+      display: flex; flex-direction: column;
+    }}
+    /* 头部占它自己那份，剩下的高度全给 .page-body */
+    body:not(.single-box) .page-body {{
+      flex: 1 1 auto; min-height: 0;
+      align-items: stretch;
+    }}
+    /* 两侧栏：跟中栏一样高，三栏才是一屏。
+       页面不滚了，吸顶就没有意义——留着 sticky 只会让偏移量
+       在某些浏览器里把栏拉下来一点。 */
+    body:not(.single-box) .sidebar,
+    body:not(.single-box) .rail {{
+      position: static;
+      max-height: 100%;
+      min-height: 0;
+    }}
+    /* 左栏：段标题留在上面，任务列表自己滚 */
+    body:not(.single-box) .side-group {{
+      display: flex; flex-direction: column;
+      flex: 1 1 auto; min-height: 0;
+    }}
+    body:not(.single-box) .side-list {{
+      flex: 1 1 auto; min-height: 0;
+      overflow-y: auto; padding-right: 2px;
+    }}
+    /* 中栏 = 固定头 + 可滚画面 + 固定输入框 */
+    body:not(.single-box) #content {{
+      display: flex; flex-direction: column;
+      overflow: hidden; min-height: 0;
+    }}
+    body:not(.single-box) .content-head {{ flex: 0 0 auto; }}
+    body:not(.single-box) .content-scroll {{
+      flex: 1 1 auto; min-height: 0;
+      overflow-y: auto; padding-right: 4px;
+    }}
+    body:not(.single-box) .composer {{ flex: 0 0 auto; }}
+  }}
+
+  /* ===== 任务描述输入框（总览页中栏底部）=====
+     它是总览页的**自然语言投料口**：写一句业务需求，
+     投给当前范围里「吃自然语言」的那只盒。
+
+     为什么放中栏底部：它要对着**画面**用——读者看着地图上的接线，
+     写下这件活儿的话，顺手就投了。
+
+     固定在底部（不随画面滚）：「我现在要干一件事」这句话不该被滚走。
+  */
+  .composer {{
+    margin-top: 14px; padding-top: 12px;
+    border-top: 1px solid #e6ecf3;
+  }}
+  .composer-head {{
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 8px; flex-wrap: wrap;
+  }}
+  .composer-label {{
+    font-size: 10px; color: #94a3b8; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 600;
+  }}
+  .composer-target {{ font-size: 12px; color: #475569; }}
+  .composer-target-sub {{ color: #94a3b8; font-size: 11px; }}
+  .composer-row {{ display: flex; gap: 8px; align-items: stretch; }}
+  .composer-text {{
+    flex: 1 1 auto; min-width: 0;
+    font-family: inherit; font-size: 13px; line-height: 1.6;
+    color: #0f172a;
+    padding: 8px 10px; border: 1px solid #dbe3ec; border-radius: 8px;
+    background: #fff; resize: vertical;
+  }}
+  .composer-text:focus {{ outline: 2px solid #0f766e; outline-offset: 1px; }}
+  .composer-text:disabled {{ background: #f8fafc; color: #94a3b8; }}
+  .composer-send {{
+    flex: 0 0 auto; align-self: stretch;
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    padding: 0 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #0f766e; background: #0f766e; color: #fff;
+  }}
+  .composer-send:hover:enabled {{ background: #115e59; }}
+  .composer-send:disabled {{ opacity: 0.45; cursor: not-allowed; }}
+  .composer-note {{
+    margin-top: 7px; font-size: 11.5px; line-height: 1.55; color: #64748b;
+  }}
+  .composer-note.ok {{ color: #15803d; }}
+  .composer-note.err {{ color: #b91c1c; }}
+  .composer-note.warn {{ color: #b45309; }}
+
   /* ===== Tables ===== */
   table {{
     width: 100%; border-collapse: collapse; background: white;
@@ -2273,6 +2374,171 @@ function ensureRail(el, data) {{
   if (el.dataset.sig !== sig) {{
     el.innerHTML = renderRail(data);
     el.dataset.sig = sig;
+  }}
+}}
+
+// ===== 总览页中栏：固定头 + 可滚画面 + 固定输入框 =====
+//
+// 中栏自己滚，不整页滚。三段各有各的理由：
+//   固定头 = 视图 / 范围的选择器——它控制的就是下面那块画面，
+//            画面滚下去时选择器也得看得见；
+//   可滚   =  BeeBox Map（画面可能很高）；
+//   固定底 =  任务描述输入框——「我现在要干一件事」这句话不该被滚走。
+//
+// **中间那段要自己记住滚动位置**：页面每 2 秒重画一次
+// （setInterval(tick, 2000) → render → innerHTML = html），
+// 重建会把 scrollTop 弹回 0——读者正翻到一半的拓扑图，两秒后被拉回顶部。
+// 轨迹面板早就有同样的毛病，用「结构没变就不重建」治（ensureRail）；
+// 中栏的画面每轮都在变（RUNS / ACCEPTANCE 数字一直在动），那个办法用不上，
+// 所以这里**记下位置再放回去**。
+function ensureContentShell() {{
+  let scroll = document.getElementById('content-scroll');
+  if (!scroll) {{
+    const content = document.getElementById('content');
+    content.innerHTML = '<div id="content-head" class="content-head"></div>'
+      + '<div id="content-scroll" class="content-scroll"></div>'
+      + '<div id="composer" class="composer"></div>';
+    scroll = document.getElementById('content-scroll');
+  }}
+  return scroll;
+}}
+
+// ===== 任务描述输入框 =====
+//
+// 它是总览页的**自然语言投料口**：写一句业务需求，投给当前范围里
+// 「吃自然语言」的那只盒——**按能力找，不按 id 硬编码**
+// （跟服务端 resolve_text_intake 同一口径）。
+//
+// 当前范围里没有这种盒子时，**框灰掉并写明原因**：
+// 一个灰掉的框配一句「这个范围里没有能接自然语言的盒子」，
+// 比一个能写却不知道会投去哪的框强。
+function composerTargets(data) {{
+  const scope = scopeBoxIds(data);
+  const out = [];
+  for (const b of (data.box_stats || [])) {{
+    if (scope && !scope.has(b.box_id)) continue;
+    for (const e of (b.task_entries || [])) {{
+      if (!e.accepts_free_text) continue;
+      out.push({{
+        box_id: b.box_id,
+        task_type: e.task_type,
+        name: (b.meta && b.meta.display_name) || b.box_id,
+      }});
+    }}
+  }}
+  return out;
+}}
+
+function composerNote(text, kind) {{
+  const el = document.getElementById('composer-note');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'composer-note' + (kind ? ' ' + kind : '');
+}}
+
+function renderComposer(data) {{
+  const el = document.getElementById('composer');
+  if (!el) return;
+  const targets = composerTargets(data);
+  // **结构没变就不重建**：重建会清掉读者已经写下的那半句话
+  // （页面每 2 秒重画一次）。
+  const sig = JSON.stringify(targets);
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+
+  const none = targets.length === 0;
+  const many = targets.length > 1;
+  let head;
+  if (none) {{
+    head = '这个范围里没有能接自然语言的盒子'
+      + '（每只盒的投料口在它自己的详情页里）';
+  }} else if (many) {{
+    head = '投给：<select id="composer-box">'
+      + targets.map(t => '<option value="' + esc(t.box_id + '|' + t.task_type) + '">'
+          + esc(t.name) + '</option>').join('')
+      + '</select>';
+  }} else {{
+    head = '投给：<b>' + esc(targets[0].name) + '</b>'
+      + '<span class="composer-target-sub">（' + esc(targets[0].task_type) + '）</span>';
+  }}
+
+  el.innerHTML = '<div class="composer-head">'
+    + '<span class="composer-label">任务描述</span>'
+    + '<span class="composer-target">' + head + '</span>'
+    + '</div>'
+    + '<div class="composer-row">'
+    + '<textarea id="composer-text" class="composer-text" rows="2"'
+    + (none ? ' disabled' : '')
+    + ' placeholder="' + (none
+        ? '当前范围里没有能接自然语言的盒子'
+        : '写一句业务需求……（Enter 投递，Shift+Enter 换行）')
+    + '"></textarea>'
+    + '<button type="button" id="composer-send" class="composer-send"'
+    + (none ? ' disabled' : '') + '>投递</button>'
+    + '</div>'
+    + '<div class="composer-note" id="composer-note"></div>';
+
+  const ta = document.getElementById('composer-text');
+  const btn = document.getElementById('composer-send');
+  if (btn) btn.addEventListener('click', composerSubmit);
+  if (ta) {{
+    ta.addEventListener('keydown', (ev) => {{
+      if (ev.key === 'Enter' && !ev.shiftKey) {{
+        ev.preventDefault();
+        composerSubmit();
+      }}
+    }});
+  }}
+}}
+
+async function composerSubmit() {{
+  const ta = document.getElementById('composer-text');
+  if (!ta) return;
+  const text = (ta.value || '').trim();
+  if (!text) {{
+    composerNote('先写一句再投递。', 'warn');
+    return;
+  }}
+  const targets = composerTargets(_lastData);
+  if (!targets.length) {{
+    composerNote('这个范围里没有能接自然语言的盒子——投不了。', 'err');
+    return;
+  }}
+  let target = targets[0];
+  const sel = document.getElementById('composer-box');
+  if (sel && sel.selectedIndex >= 0) {{
+    const parts = String(sel.value || '').split('|');
+    const hit = targets.find(t => t.box_id === parts[0] && t.task_type === parts[1]);
+    if (hit) target = hit;
+  }}
+  composerNote('投递中……');
+  try {{
+    const resp = await fetch('/api/structure', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        text: text,
+        box_id: target.box_id,
+        task_type: target.task_type,
+      }}),
+    }});
+    const data = await resp.json();
+    if (!resp.ok) {{
+      composerNote('没投进去：' + (data.error || resp.status), 'err');
+      return;
+    }}
+    ta.value = '';
+    const note = document.getElementById('composer-note');
+    if (note) {{
+      note.className = 'composer-note ok';
+      note.innerHTML = '已投给 <b>' + esc(target.name) + '</b>：'
+        + esc(data.status || '') + ' · 验收 '
+        + esc(data.acceptance_status || '')
+        + ' · <a href="' + esc(boxHref(target.box_id)) + '">看产出</a>';
+    }}
+    tick();   // 让左栏立刻出现这件任务
+  }} catch (e) {{
+    composerNote('投递失败：' + (e && e.message ? e.message : e), 'err');
   }}
 }}
 
@@ -4760,10 +5026,17 @@ function render(data) {{
   // 数字又会变成说不清来源的数。
   // 作用域提到 if 外面：下面渲染网格之后还要用它决定要不要做 DOM 过滤。
   const {{ lay, canRadial }} = currentScopeLayout(data.scope_layouts);
+  // 中栏的外壳先搭好：**固定头**（筛选条）+ **可滚画面** + **固定输入框**。
+  // 单盒详情页不搭——那边是另一套结构（buildShell 自己写 #content）。
+  const scrollEl = ensureContentShell();
+  const prevScrollTop = scrollEl.scrollTop;
   if (data.box_stats && data.box_stats.length > 0) {{
     // 顶部筛选条贴在内容正上方——它俩（视图 / 范围）控制的就是下面这块画面。
     // 单盒详情页不画：那里没有「摆哪些盒子」「怎么摆」的选择，筛选条是纯噪音。
-    html += renderFilters(data);
+    // 筛选条住在**固定头**里——它俩（视图 / 范围）控制的就是下面那块画面，
+    // 画面滚下去时选择器也得看得见。
+    const headEl = document.getElementById('content-head');
+    if (headEl) headEl.innerHTML = renderFilters(data);
     // **视图由读者选，范围由接线决定能不能画**——两个轴独立。
     // 以前这里是 `lay.layout === 'radial' ? 环形 : 平铺`：点范围 chip 顺手
     // 换掉整页布局，读者以为在筛选、实际在换页面，URL 里也看不出视图变了。
@@ -4828,7 +5101,9 @@ function render(data) {{
   }} else {{
     html += `<div class="empty">(no beeBoxes registered)</div>`;
   }}
-  document.getElementById('content').innerHTML = html;
+  // 画面写进**可滚段**（不是整个 #content）：
+  // 固定头和固定输入框不在里面，它们才不会被画面滚走。
+  scrollEl.innerHTML = html;
   // **必须在 innerHTML 之后**。放前面的话它过滤的是上一轮的旧 DOM，
   // 新插进来的卡片一个都没过滤——于是每 2 秒刷新一次，范围选择就被悄悄清掉，
   // 而看板上菜单还亮着「WMS」，看着像选了没反应。
@@ -4841,6 +5116,12 @@ function render(data) {{
   // 画布要在 DOM 落地**之后**才能量宽度（容器宽度这时才是真的）。
   // 右侧多了一条轨迹栏，内容列会变窄 —— 画布不缩就溢出。
   fitRadial();
+  // **滚动位置放回去**（放在 fitRadial 之后：缩放会改画布高度，
+  // 早放会被夹到一个错的范围里）。理由见 ensureContentShell 的注释：
+  // 页面每 2 秒重画一次，不放回去读者正翻的那张图就被拉回顶部。
+  scrollEl.scrollTop = prevScrollTop;
+  // 输入框：结构没变就不重建（重建会清掉读者已经写下的那半句话）。
+  renderComposer(data);
 }}
 
 async function tick() {{
@@ -4848,8 +5129,14 @@ async function tick() {{
     const data = await fetchData();
     render(data);
   }} catch (e) {{
-    document.getElementById('content').innerHTML =
-      `<div class="empty">Failed to fetch: ${{e.message}}</div>`;
+    // 报错也写进可滚段——别把固定头和输入框一起抹掉
+    // （抹了的话，读者正写着的那半句话会跟着消失）。
+    const scroll = document.getElementById('content-scroll');
+    const target = scroll || document.getElementById('content');
+    if (target) {{
+      target.innerHTML =
+        `<div class="empty">Failed to fetch: ${{e.message}}</div>`;
+    }}
   }}
 }}
 

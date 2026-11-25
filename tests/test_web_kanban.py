@@ -1267,7 +1267,15 @@ def _extract_js_function(name: str) -> str:
     用抠出来的**真源码**去 node 里跑，不是抄一份逻辑到 Python 里再测——
     抄的那份和页面上的那份是两份代码，改了页面上的那份，测试照样绿。
     """
-    start = HTML_PAGE.index(f"\nfunction {name}(") + 1
+    # `async function` 也是函数（await 在里面）——两种前缀都认。
+    start = None
+    for prefix in (f"\nfunction {name}(", f"\nasync function {name}("):
+        idx = HTML_PAGE.find(prefix)
+        if idx >= 0:
+            start = idx + 1
+            break
+    if start is None:
+        raise AssertionError(f"HTML_PAGE 里找不到函数 {name}")
     i = HTML_PAGE.index("{", start)
     depth = 0
     for j in range(i, len(HTML_PAGE)):
