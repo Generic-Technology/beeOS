@@ -1061,7 +1061,7 @@ class TestRadialLayoutIsDerived:
         守卫自己抄一份形状比较，那就会是第二份事实：前端改了弧的算法，
         守卫还在按老算法算，**绿着说明不了任何事**。
 
-        返回 `[(from, to, 净空)]`。
+        返回 `[(from, to, 净空, 折线点)]`。
         """
         ring = lay["ring"]
         n = len(ring)
@@ -1075,6 +1075,7 @@ class TestRadialLayoutIsDerived:
         r_factor = TestRadialLayoutIsDerived._page_const("RADIAL_R_FACTOR")
         need = TestRadialLayoutIsDerived._page_const("RADIAL_CENTER_CLEAR")
         arc_slack = TestRadialLayoutIsDerived._page_const("RADIAL_ARC_SLACK")
+        shortcut_h = TestRadialLayoutIsDerived._page_const("RADIAL_SHORTCUT_ARC_H")
 
         # 前端：R = max(横向弦长下限, 卡高 × RADIAL_R_FACTOR)
         R = max((card_w + gap) / 2 / math.sin(math.pi / n) + slack,
@@ -1085,11 +1086,29 @@ class TestRadialLayoutIsDerived:
             ang = -math.pi / 2 + i * step
             pos[bid] = (R * math.cos(ang), R * math.sin(ang))
 
+        # 「抄近路」的边 = 环上**不相邻**的交接边（前端 renderRadial 同样一份口径）
+        ring_adjacent = {ring[i] + ">" + ring[(i + 1) % n] for i in range(n)}
+
         def rect_exit(p, u):
             tx = math.inf if abs(u[0]) < 1e-6 else (card_w / 2) / abs(u[0])
             ty = math.inf if abs(u[1]) < 1e-6 else (card_h / 2) / abs(u[1])
             t = min(tx, ty)
             return (p[0] + u[0] * t, p[1] + u[1] * t)
+
+        def sample(a, b, curve, n_points=120):
+            """把一条边采样成折线（直线两点，弧按二次贝塞尔采样）"""
+            if curve is None:
+                return [a, b]
+            (cx, cy), (mx, my) = curve
+            pts = []
+            for i in range(n_points + 1):
+                t = i / n_points
+                u = 1 - t
+                pts.append((
+                    u * u * a[0] + 2 * u * t * cx + t * t * b[0],
+                    u * u * a[1] + 2 * u * t * cy + t * t * b[1],
+                ))
+            return pts
 
         out = []
         for (s, d) in lay["handoffs"]:
@@ -1102,13 +1121,30 @@ class TestRadialLayoutIsDerived:
             mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
             chord_gap = math.hypot(mx, my)      # 弦到圆心的距离
             seg_len = math.hypot(b[0] - a[0], b[1] - a[1])
-            if chord_gap >= need:
+            is_shortcut = (s + ">" + d) not in ring_adjacent
+            need_h = max(arc_slack, need - chord_gap + arc_slack)
+            curve = None
+            if is_shortcut:
+                # 抄近路的边**一律鼓**（哪怕净空够）——画直线会跟另一条
+                # 端点交替的抄近路边交叉
+                h = max(need_h, shortcut_h)
+                nx, ny = -dy / L, dx / L
+                if mx * nx + my * ny < 0:
+                    nx, ny = -nx, -ny
+                curve = ((mx + 2 * h * nx, my + 2 * h * ny), (mx, my))
+                clearance = _arc_min_distance(chord_gap, h, seg_len)
+            elif chord_gap >= need:
                 # 直线：最近点就在弦的中点（垂足落在弦上）
-                out.append((s, d, chord_gap))
-                continue
-            # 弧：朝外鼓 h
-            h = max(arc_slack, need - chord_gap + arc_slack)
-            out.append((s, d, _arc_min_distance(chord_gap, h, seg_len)))
+                clearance = chord_gap
+            else:
+                # 弧：朝外鼓 h
+                h = need_h
+                nx, ny = -dy / L, dx / L
+                if mx * nx + my * ny < 0:
+                    nx, ny = -nx, -ny
+                curve = ((mx + 2 * h * nx, my + 2 * h * ny), (mx, my))
+                clearance = _arc_min_distance(chord_gap, h, seg_len)
+            out.append((s, d, clearance, sample(a, b, curve)))
         return out
 
     def test_a_handoff_chord_always_clears_the_centre_card(self):
@@ -1146,7 +1182,7 @@ class TestRadialLayoutIsDerived:
             lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 continue
-            for (s, d, clearance) in self._radial_edges(lay):
+            for (s, d, clearance, _pts) in self._radial_edges(lay):
                 checked += 1
                 assert clearance > half_diag + 24, (
                     f"{domain!r}: 交接边 {s} → {d} 离圆心只剩 {clearance:.0f}px，"
@@ -1156,6 +1192,59 @@ class TestRadialLayoutIsDerived:
                     f"要么让那条边改画朝外鼓的弧（handoffCurve）"
                 )
         assert checked, "一个协作边界的交接边都没算到——这条守卫没在守任何东西"
+
+    def test_no_two_handoff_edges_cross_each_other(self):
+        """交接边之间**不许交叉**
+
+        交叉的线在图上是**乱**的：读者顺着一条线走，走到一半被另一条劈开，
+        读不出「谁交给谁」——而这张图的全部意义就是「谁交给谁」。
+
+        **为什么会交叉**：环上「抄近路」的边（不相邻的交接边），
+        如果有两条的端点**交替**（a < c < b < d），它们的弦必然相交。
+        直线画出来就是交叉；**各自朝外鼓成弧就分开了**——
+        所以前端的规矩是「抄近路的边一律画弧」（handoffCurve 的
+        `isShortcut`），鼓高由 `RADIAL_SHORTCUT_ARC_H` 定。
+
+        这条守卫跟净空那条是**两回事**：
+        净空守的是「别压到汇点那张卡」，这条守的是「别自己跟自己打结」。
+        """
+        from kanban.trigger import fulfillment_scope_layout
+
+        def seg_hit(p1, p2, p3, p4):
+            """两段线段是否真交叉（端点相接不算——那是汇聚）"""
+            d = (p2[0] - p1[0]) * (p4[1] - p3[1]) - (p2[1] - p1[1]) * (p4[0] - p3[0])
+            if abs(d) < 1e-9:
+                return False
+            t = ((p3[0] - p1[0]) * (p4[1] - p3[1]) - (p3[1] - p1[1]) * (p4[0] - p3[0])) / d
+            u = ((p3[0] - p1[0]) * (p2[1] - p1[1]) - (p3[1] - p1[1]) * (p2[0] - p1[0])) / d
+            return 0.02 < t < 0.98 and 0.02 < u < 0.98
+
+        checked = 0
+        for domain in self._domains():
+            lay = fulfillment_scope_layout(domain)
+            if lay["layout"] != "radial":
+                continue
+            edges = self._radial_edges(lay)
+            for i in range(len(edges)):
+                for j in range(i + 1, len(edges)):
+                    (s1, d1, _c1, pts1) = edges[i]
+                    (s2, d2, _c2, pts2) = edges[j]
+                    hit = False
+                    for a in range(len(pts1) - 1):
+                        if hit:
+                            break
+                        for b in range(len(pts2) - 1):
+                            if seg_hit(pts1[a], pts1[a + 1], pts2[b], pts2[b + 1]):
+                                hit = True
+                                break
+                    assert not hit, (
+                        f"{domain!r}: 交接边 {s1} → {d1} 和 {s2} → {d2} 交叉了——"
+                        f"图上是乱线，读不出谁交给谁。"
+                        f"抄近路的边要各自朝外鼓成弧（handoffCurve 的 isShortcut），"
+                        f"别让它们画成互相穿过去的直线"
+                    )
+                    checked += 1
+        assert checked, "一个协作边界的交接边对都没算到——这条守卫没在守任何东西"
 
     def test_the_main_chain_is_never_cyclic(self):
         """协作边界声明的交接边组成的**主干必须无环**——有环就是有人把闭环声明错了

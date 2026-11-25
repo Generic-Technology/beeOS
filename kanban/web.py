@@ -3131,6 +3131,20 @@ const RADIAL_CHORD_SLACK = 26;
 const RADIAL_CENTER_CLEAR = 110;
 // 弧鼓出去时额外留的余量
 const RADIAL_ARC_SLACK = 18;
+// 「抄近路」的边（环上**不相邻**的交接边）鼓多高。
+//
+// 为什么不都画直线：两条抄近路的边在环上**端点交替**
+// （「设计→测试」和「开发→运维」：1<2<3<4），**弦必然交叉**——
+// 直线比弧交叉得更早、更难看。
+//
+// 改成各自**朝外鼓**，两条弧就分开了：实测 0 交叉。
+// （抄近路的边改成弧之后，还顺带解决了「需求→测试」那条弧
+//  横穿「开发→运维」直弦的问题——那条弧穿过直弦的中段，
+//  弧再鼓多少都没用，除非直弦也变成弧。）
+//
+// 为什么鼓高是 80：鼓出去的弧最远只到半径 243（环半径 323），
+// **不出圈**；再鼓就飘到环外去了，读起来像「走了远路」。
+const RADIAL_SHORTCUT_ARC_H = 80;
 const RADIAL_PAD = 30;
 // BeeBox Map 边界离卡片多远
 const FIELD_PAD = 26;
@@ -3155,18 +3169,22 @@ function rectExit(cx, cy, ux, uy, hw, hh) {{
 // 鼓多高由「差多少净空」决定，不是拍脑袋定的常数。
 //
 // 返回 null = 画直线；返回一个控制点 = 画二次贝塞尔弧。
-function handoffCurve(a, b) {{
+function handoffCurve(a, b, isShortcut) {{
   const dx = b.x - a.x, dy = b.y - a.y;
   const L = Math.hypot(dx, dy) || 1;
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
   const gap = Math.hypot(mx, my);          // 弦到圆心的距离
-  if (gap >= RADIAL_CENTER_CLEAR) return null;   // 直线够安全
+  if (!isShortcut && gap >= RADIAL_CENTER_CLEAR) return null;   // 直线够安全
   // 垂直于弦、指向远离圆心的那一侧
   let nx = -dy / L, ny = dx / L;
   if (mx * nx + my * ny < 0) {{ nx = -nx; ny = -ny; }}
   // 鼓多高：差多少补多少，再留一点余量
-  const h = Math.max(RADIAL_ARC_SLACK,
+  const need = Math.max(RADIAL_ARC_SLACK,
                      RADIAL_CENTER_CLEAR - gap + RADIAL_ARC_SLACK);
+  // 「抄近路」的边**一律鼓**，哪怕净空够：画直线的话它会跟另一条
+  // 端点交替的抄近路边**交叉**（端点交替 = 弦必然相交），
+  // 而两条各自朝外鼓的弧就分开了。
+  const h = isShortcut ? Math.max(need, RADIAL_SHORTCUT_ARC_H) : need;
   return {{
     cx: mx + 2 * h * nx, cy: my + 2 * h * ny,   // 控制点
     ax: mx + h * nx, ay: my + h * ny,           // 弧最鼓的那一点（画布要装得下）
@@ -3248,6 +3266,13 @@ function renderRadial(layout, stats) {{
   // 弧的净空同样能算（见 handoffCurve）——
   // tests 里有对应守卫：每条交接边到中心的净空必须大于中心卡的半对角线。
   const handoffLines = [];
+  // 「抄近路」的边 = 环上**不相邻**的交接边。
+  // 它们一律画弧（见 handoffCurve）——画直线的话，环上端点交替的两条
+  // 抄近路边必然交叉。
+  const ringAdjacent = new Set();
+  for (let i = 0; i < n; i++) {{
+    ringAdjacent.add(layout.ring[i] + '>' + layout.ring[(i + 1) % n]);
+  }}
   for (const [s, d] of layout.handoffs) {{
     if (!pos[s] || !pos[d]) continue;
     const a = pos[s], b = pos[d];
@@ -3260,8 +3285,8 @@ function renderRadial(layout, stats) {{
     handoffLines.push({{
       from: s, to: d,
       a: p0, b: p1,
-      // 净空不够就改画弧（见 handoffCurve）
-      curve: handoffCurve(p0, p1),
+      // 净空不够就改画弧；抄近路的边一律画弧（见 handoffCurve）
+      curve: handoffCurve(p0, p1, !ringAdjacent.has(s + '>' + d)),
     }});
   }}
   // ---- 累积边：沿射线，两端各裁一次 ----
