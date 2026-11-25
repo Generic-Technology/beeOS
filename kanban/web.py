@@ -792,7 +792,20 @@ HTML_PAGE = f"""<!DOCTYPE html>
      反馈边是第三类：琥珀色点线，跟累积的青色虚线也不同——
      三条线里有两条是虚线，只靠颜色相近就分不出来。 */
   .edge-handoff {{ stroke: #64748b; stroke-width: 2; fill: none; }}
-  .edge-feed {{ stroke: #0d9488; stroke-width: 1.5; stroke-dasharray: 5 4; fill: none; }}
+  /* 跨位的交接不画线，写在盒子上（见 splitHandoffs）。
+     「也交给 X」这句是**额外**的一条交接——主链之外的补充，
+     写成字比画成横穿全图的线更准，也更安静。 */
+  .box-extra {{
+    display: block; width: fit-content; margin: 5px auto 0;
+    padding: 2px 9px; border-radius: 999px;
+    background: #eef2f7; color: #64748b;
+    font-size: 11px; line-height: 1.5; white-space: nowrap;
+  }}
+  /* 累积边（辐条）：**退到背景**。
+     它们是「产出并进档案」这条关系——真实，但次要：
+     主链的交接才是这张图要回答的事。辐条抢眼的时候，
+     中心那一块就成了一团星芒，什么都读不出来。 */
+  .edge-feed {{ stroke: #6ec9bd; stroke-width: 1.3; stroke-dasharray: 5 5; fill: none; }}
   .edge-feedback {{
     stroke: #b45309; stroke-width: 2; stroke-dasharray: 2 5;
     stroke-linecap: round; fill: none;
@@ -3131,19 +3144,6 @@ const RADIAL_CHORD_SLACK = 26;
 const RADIAL_CENTER_CLEAR = 110;
 // 弧鼓出去时额外留的余量
 const RADIAL_ARC_SLACK = 18;
-// 「抄近路」的边（环上**不相邻**的交接边）绕行时用的候选拐点：
-// 离弦中点多远（ROUTE_OFFSETS）、往哪个方向（每 15° 一个候选）。
-//
-// **为什么绕行而不是画弧**：弧是贝塞尔曲线，读起来像随手一撇；
-// 折线（全直线段）读起来像「绕开某样东西」，是**有意的绕行**。
-// 抄近路的边本来就是在说「这一只直接交给那一只，中间的不参与」——
-// 绕一点路是诚实的，随手一撇不是。
-//
-// 兜底用的弧高（**只有绕行找不到解时**才用）：宁可难看，也不能画错。
-const RADIAL_SHORTCUT_ARC_H = 18;
-// 拐点候选：先近后远。越靠前的越「不绕」。
-const ROUTE_OFFSETS = [50, 70, 90, 110, 130, 150, 170, 190, 210, 230, 250, 280, 310, 340];
-const ROUTE_ANGLE_STEPS = 24;
 // 汇点卡（中心那只）的实际占位：compactCubeHtml 的 --cw/--ch
 // × radial-center 的 scale。绕行时它跟别的卡片一样是障碍。
 const RADIAL_CENTER_CARD_W = 108 * 1.14;
@@ -3172,22 +3172,18 @@ function rectExit(cx, cy, ux, uy, hw, hh) {{
 // 鼓多高由「差多少净空」决定，不是拍脑袋定的常数。
 //
 // 返回 null = 画直线；返回一个控制点 = 画二次贝塞尔弧。
-function handoffCurve(a, b, isShortcut) {{
+function handoffCurve(a, b) {{
   const dx = b.x - a.x, dy = b.y - a.y;
   const L = Math.hypot(dx, dy) || 1;
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
   const gap = Math.hypot(mx, my);          // 弦到圆心的距离
-  if (!isShortcut && gap >= RADIAL_CENTER_CLEAR) return null;   // 直线够安全
+  if (gap >= RADIAL_CENTER_CLEAR) return null;   // 直线够安全
   // 垂直于弦、指向远离圆心的那一侧
   let nx = -dy / L, ny = dx / L;
   if (mx * nx + my * ny < 0) {{ nx = -nx; ny = -ny; }}
   // 鼓多高：差多少补多少，再留一点余量
-  const need = Math.max(RADIAL_ARC_SLACK,
+  const h = Math.max(RADIAL_ARC_SLACK,
                      RADIAL_CENTER_CLEAR - gap + RADIAL_ARC_SLACK);
-  // 「抄近路」的边**一律鼓**，哪怕净空够：画直线的话它会跟另一条
-  // 端点交替的抄近路边**交叉**（端点交替 = 弦必然相交），
-  // 而两条各自朝外鼓的弧就分开了。
-  const h = isShortcut ? Math.max(need, RADIAL_SHORTCUT_ARC_H) : need;
   return {{
     cx: mx + 2 * h * nx, cy: my + 2 * h * ny,   // 控制点
     ax: mx + h * nx, ay: my + h * ny,           // 弧最鼓的那一点（画布要装得下）
@@ -3199,245 +3195,34 @@ function polar(cx, cy, r, a) {{
   return {{ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) }};
 }}
 
-// ===== 抄近路的边：折线绕行 =====
+// ===== 哪些交接边画成线，哪些写成盒子上的字 =====
 //
-// **能用直线就别用弧**——弧是贝塞尔曲线，读起来像随手一撇；
-// 折线（全直线段）读起来像「绕开某样东西」，是有意的绕行。
+// **只有环上相邻的那几条画线**（主链，一圈清清楚楚）；
+// 跨位的交接（真实存在，但画出来会横穿整张图）改成源盒上的一行字：
+// 「也交给 WMS Testing」。
 //
-// 拐点**搜出来**，不拍脑袋：从弦中点周围扫一圈候选点，
-// 挑第一个**不撞卡片、不跟别的边交叉、离直线最近**的。
-// 一个都找不到 → 退回弧（宁可难看，也不能画错）。
+// **为什么跨位的边不画线**：环上两条边的端点**交替**时，
+// 它们的弦必然相交——这是拓扑事实，不是画法能绕开的。
+// 而两条交叉的实线在图上是**乱**的：读者顺着一条走会被另一条劈开，
+// 读不出「谁交给谁」——而这张图的全部意义就是「谁交给谁」。
 //
-// 两条边在圆上**端点交替**时，弦必然相交——这是拓扑事实，
-// 不是画法能绕开的。所以「不交叉」只能靠**让其中一条拐弯**，
-// 而拐弯的代价是它得绕开另一条。
-function segCrosses(p1, p2, p3, p4) {{
-  // 真交叉才算；端点相接是**汇聚**，不是交叉。
-  const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
-  if (Math.abs(d) < 1e-9) return false;
-  const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
-  const u = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
-  return t > 0.02 && t < 0.98 && u > 0.02 && u < 0.98;
-}}
-
-function polyHitsCard(poly, cards, skipIds) {{
-  // 折线是否从某张卡上穿过去（卡片是障碍，不是背景）。
-  // 自己这两端的卡不算——线的端点**就在**它们的边上。
-  for (const c of cards) {{
-    if (skipIds.indexOf(c.id) >= 0) continue;
-    for (let i = 0; i < poly.length - 1; i++) {{
-      const p1 = poly[i], p2 = poly[i + 1];
-      const steps = 24;
-      for (let k = 0; k <= steps; k++) {{
-        const t = k / steps;
-        const x = p1.x + (p2.x - p1.x) * t;
-        const y = p1.y + (p2.y - p1.y) * t;
-        if (Math.abs(x - c.x) <= c.hw && Math.abs(y - c.y) <= c.hh) return c.id;
-      }}
-    }}
+// 写成一句话反而更准：跨位的交接是**额外**的一条（不是替代主链），
+// 「也交给 X」这句话就把这层意思说清楚了。
+function splitHandoffs(layout) {{
+  const chainPairs = new Set();
+  for (let i = 0; i + 1 < layout.ring.length; i++) {{
+    chainPairs.add(layout.ring[i] + '>' + layout.ring[i + 1]);
   }}
-  return null;
-}}
-
-function polyCrossesOther(poly, others) {{
-  for (const o of others) {{
-    for (let i = 0; i < poly.length - 1; i++) {{
-      for (let j = 0; j < o.length - 1; j++) {{
-        if (segCrosses(poly[i], poly[i + 1], o[j], o[j + 1])) return true;
-      }}
-    }}
-  }}
-  return false;
-}}
-
-// ===== 交叉处画「跳线」 =====
-//
-// 两条线交叉，**不一定要绕开**——加个小折线跳过就行，
-// 像电路图里的跳线：线还是直的，交叉处标清楚「这两条不相连」。
-//
-// **为什么要这么小**：为了让整条线绕开一次交叉而兜半个图，
-// 那条线看起来就像在乱窜；小跳线只在交叉点那一小段动一下，
-// 线的**直**保住了 —— 直线的读法最清楚。
-//
-// 跳线要跨过另一条线，所以半长按**夹角**放大：夹得越平，跳得越长
-// （夹角小的时候，短跳线跨不过去，会变成「碰了一下又交叉」）。
-const HOP_OFFSET = 22;    // 跳线偏离原线的距离
-const HOP_HALF = 22;      // 跳线的半长（不够时按夹角放大）
-const HOP_MAX_HALF = 130; // 再大就跳不动了（那处交叉留着，宁可交叉也不画一根乱线）
-
-function segIntersection(p1, p2, p3, p4) {{
-  // 两条线段的交点；端点相接不算交叉（那是汇聚）
-  const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
-  if (Math.abs(d) < 1e-9) return null;
-  const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
-  const u = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
-  if (t <= 0.02 || t >= 0.98 || u <= 0.02 || u >= 0.98) return null;
-  return {{
-    point: {{ x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t }},
-    // **两条线各自的方向**：跳线要知道「另一条线」朝哪走，
-    // 才能算出跳多长——拿被跳那条自己的方向算，夹角会算成 0°。
-    dirA: {{ x: p2.x - p1.x, y: p2.y - p1.y }},
-    dirB: {{ x: p4.x - p3.x, y: p4.y - p3.y }},
-  }};
-}}
-
-function insertHop(poly, segIdx, hit, otherDir, otherPoly, cards, skipIds) {{
-  // 在 poly 的第 segIdx 段上插一个跳线；插不进去就返回 null（那处交叉留着）。
-  //
-  // **跳线的几何**：桥（a→b）平行于原线，偏离原线 off；
-  // 半长 half 必须 **小于 off/tanθ**（θ 是两条线的夹角）——
-  // 夹角越小（两条线越平），另一条线爬到桥的高度所需的路程越短，
-  // 桥就越要短，否则桥自己会跟它交叉。
-  //
-  // **不靠手算**：每种摆法都**用真实的交叉检测验一遍**，
-  // 验不过就换（换偏移量、换方向）。跳线是「让两条线别相交」，
-  // 它的正确性就该由同一个交叉检测说了算。
-  const p1 = poly[segIdx], p2 = poly[segIdx + 1];
-  const dx = p2.x - p1.x, dy = p2.y - p1.y, L = Math.hypot(dx, dy) || 1;
-  const ux = dx / L, uy = dy / L;
-  const vx = otherDir.x, vy = otherDir.y;
-  const vL = Math.hypot(vx, vy) || 1;
-  const cosang = Math.abs((ux * vx + uy * vy) / vL);
-  const sinang = Math.max(Math.sqrt(Math.max(0, 1 - cosang * cosang)), 0.02);
-  const tanang = Math.max(sinang / Math.max(cosang, 0.02), 0.05);
-  const nx = -uy, ny = ux;
-  const c = hit.point;
-  for (const off of [HOP_OFFSET, HOP_OFFSET * 1.7, HOP_OFFSET * 2.6]) {{
-    const half = Math.min(HOP_MAX_HALF, (off / tanang) * 0.85);
-    if (half < 4) continue;
-    // 两个方向都试：跳线不能压到卡片上，也不能跟另一条线交叉
-    for (const side of [1, -1]) {{
-      const a = {{ x: c.x - ux * half + nx * side * off,
-                  y: c.y - uy * half + ny * side * off }};
-      const b = {{ x: c.x + ux * half + nx * side * off,
-                  y: c.y + uy * half + ny * side * off }};
-      const cand = poly.slice(0, segIdx + 1).concat([a, b], poly.slice(segIdx + 1));
-      if (polyHitsCard(cand, cards, skipIds)) continue;
-      if (otherPoly && polyCrossesOther(cand, [otherPoly])) continue;
-      return cand;
-    }}
-  }}
-  return null;
-}}
-
-function edgePoints(line) {{
-  // 这条边实际画出来的点列：折线走 poly，直线走两端。
-  // **直线边的 poly 是 null**（那是「两点 = 直线」的省法），
-  // 直接读 poly 会把直线边整个漏掉——交叉就检测不到了。
-  return line.poly || [line.a, line.b];
-}}
-
-function resolveCrossings(lines, cards) {{
-  // 每处交叉加一个跳线。**两条线都试**：跳线对「陡的那条」常常不成立
-  // （它的斜边必然撞上另一条线），所以谁跳得成就谁跳。
-  // 改完几何要重扫（跳线本身可能带来新的交叉），所以循环几轮。
-  for (let round = 0; round < 6; round++) {{
-    let changed = false;
-    for (let i = 0; i < lines.length && !changed; i++) {{
-      for (let j = i + 1; j < lines.length && !changed; j++) {{
-        const A = edgePoints(lines[i]);
-        const B = edgePoints(lines[j]);
-        for (let a = 0; a < A.length - 1 && !changed; a++) {{
-          for (let b = 0; b < B.length - 1; b++) {{
-            const hit = segIntersection(A[a], A[a + 1], B[b], B[b + 1]);
-            if (!hit) continue;
-            // 先试跳 B（后定线的那条），不行再试跳 A。
-            let hopped = insertHop(B, b, hit, hit.dirA, A, cards,
-                                   [lines[j].from, lines[j].to]);
-            if (hopped) {{
-              lines[j].poly = hopped;
-              changed = true;
-              break;
-            }}
-            hopped = insertHop(A, a, hit, hit.dirB, B, cards,
-                               [lines[i].from, lines[i].to]);
-            if (hopped) {{
-              lines[i].poly = hopped;
-              changed = true;
-              break;
-            }}
-          }}
-        }}
-      }}
-    }}
-    if (!changed) break;
-  }}
-  return lines;
-}}
-
-function routePolyline(a, b, cards, others, skipIds) {{
-  // 先试直线：能直就直。
-  //
-  // **只避卡片，不避别的边**：跟别的边交叉，回头用**跳线**处理
-  // （见 resolveCrossings）——为了躲开一次交叉而让整条线兜半个图，
-  // 那条线看起来像在乱窜，而直线的读法最清楚。
-  if (!polyHitsCard([a, b], cards, skipIds)) return [a, b];
-  // 再扫单拐点：离弦中点越近越优先（绕得越少越好）。
-  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-  for (const d of ROUTE_OFFSETS) {{
-    for (let k = 0; k < ROUTE_ANGLE_STEPS; k++) {{
-      const ang = (k * 2 * Math.PI) / ROUTE_ANGLE_STEPS;
-      const poly = [a, {{ x: mx + d * Math.cos(ang), y: my + d * Math.sin(ang) }}, b];
-      if (polyHitsCard(poly, cards, skipIds)) continue;
-      return poly;
-    }}
-  }}
-  return null;   // 绕不开 → 退回弧
-}}
-
-function routeHandoffEdges(layout, pos, cpos, center) {{
-  // 把这个协作边界的交接边**定线**：能用直线就直线，
-  // 直线会撞卡片或跟别的边交叉时，插拐点绕开。
-  //
-  // **单独抽成一个函数**（而不是塞在 renderRadial 里）：
-  // 守卫要**跑页面上的这一段真代码**——抄一份到 Python 里，
-  // 改了这儿测试照样绿，那样的绿说明不了任何事。
-  const n = layout.ring.length;
-  // 「抄近路」的边 = 环上**不相邻**的交接边。
-  const ringAdjacent = new Set();
-  for (let i = 0; i < n; i++) {{
-    ringAdjacent.add(layout.ring[i] + '>' + layout.ring[(i + 1) % n]);
-  }}
-  // 绕行时的**障碍**：环上每只卡 + 中间那只汇点卡。
-  const cardRects = [];
-  for (const id in pos) {{
-    cardRects.push({{ id: id, x: pos[id].x, y: pos[id].y,
-                       hw: RADIAL_CARD_W / 2, hh: RADIAL_CARD_H / 2 }});
-  }}
-  if (center) {{
-    cardRects.push({{ id: '__center__', x: cpos.x, y: cpos.y,
-                       hw: RADIAL_CENTER_CARD_W / 2, hh: RADIAL_CENTER_CARD_H / 2 }});
-  }}
-  const routed = [];   // 已经定下来的线（点列）——后面的边要避开它们
   const lines = [];
+  const badges = {{}};
   for (const [s, d] of layout.handoffs) {{
-    if (!pos[s] || !pos[d]) continue;
-    const a = pos[s], b = pos[d];
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const len = Math.hypot(dx, dy) || 1;
-    // 从这张卡的边框出发，落在那张卡的边框上：不管两张在环上差多少角度，
-    // 读出来都是「这张交出去、那张接进来」，不会悬在半空
-    const p0 = rectExit(a.x, a.y, dx / len, dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2);
-    const p1 = rectExit(b.x, b.y, -dx / len, -dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2);
-    const isShortcut = !ringAdjacent.has(s + '>' + d);
-    const line = {{ from: s, to: d, a: p0, b: p1, curve: null, poly: null }};
-    const poly = routePolyline(p0, p1, cardRects, routed, [s, d]);
-    if (poly && poly.length > 2) {{
-      // 折线绕行：全是直线段，读起来像「绕开某样东西」。
-      line.poly = poly;
-    }} else if (!poly) {{
-      // 绕不开 → 退回弧（宁可难看，也不能画错）。
-      line.curve = handoffCurve(p0, p1, isShortcut);
+    if (chainPairs.has(s + '>' + d)) {{
+      lines.push([s, d]);
+    }} else {{
+      (badges[s] = badges[s] || []).push(d);
     }}
-    lines.push(line);
-    routed.push(line.poly || [line.a, line.b]);
   }}
-  // 交叉处理放在最后：先把每条边**按自己的需要**定线（只避卡片），
-  // 再统一给交叉处加跳线。
-  //
-  // **为什么不在定线时就躲别的边**：为了让躲开一次交叉，
-  // 一条线能兜掉半个图——那条线看起来像在乱窜，而直线的读法最清楚。
-  return resolveCrossings(lines, cardRects);
+  return {{ lines: lines, badges: badges }};
 }}
 
 function renderRadial(layout, stats) {{
@@ -3490,26 +3275,26 @@ function renderRadial(layout, stats) {{
 
   // ---- 先算点，再画线，最后从实际画出来的坐标倒推画布尺寸 ----
   //
-  // 交接边**默认画直线**——但净空不够时改画**朝外鼓的弧**。
+  // 交接边**只画环上相邻的那几条**（主链）；跨位的交接改成源盒上的一行字
+  // （见 splitHandoffs 的理由：端点交替的弦必然相交，画出来是乱线）。
   //
-  // 走过弯路：弧挂在一条估出来的同心圆 ROUT 上，而卡片是**矩形**，
-  // 终点落点跟角度走，角度一变就飘到矩形角外的空处，角度再极端一点
-  // 整段弧还跑出画布被裁掉。改成绕着 ROUT 走之后几何对了，但读起来
-  // 更别扭：一只盒子交出去的东西，凭空在环外兜一大圈才到下一只，
-  // 那段弧会被读成「走了远路」——而交接本来就发生在两只盒子之间，
-  // 这里根本没有远路可走。
-  //
-  // **现在为什么又要弧**：协作边界的交接图**不一定是一条链**。
-  // 真实的数据依赖图里有「抄近路」的那几条（需求→测试、设计→测试、开发→运维），
-  // 其中「需求→测试」在六只盒子的环上正好**隔着半圈**——
-  // 直线画过去会从汇点那张卡上穿过去，看板上就成了
-  // 「需求盒连着测试盒，中间夹着档案盒」，读起来像三只串在一起。
-  //
-  // 直线的好处仍然是**可证**：弦到圆心的距离能算出来，
-  // 所以「会不会斜穿过中心那张卡」是个能算的问题，不用靠眼睛盯。
-  // 弧的净空同样能算（见 handoffCurve）——
-  // tests 里有对应守卫：每条交接边到中心的净空必须大于中心卡的半对角线。
-  const handoffLines = routeHandoffEdges(layout, pos, cpos, center);
+  // 相邻的边画直线；净空不够（弦会从汇点那张卡上穿过去）时改画
+  // **朝外鼓的弧**——净空能算（见 handoffCurve），
+  // tests 里有守卫：每条边的净空必须大于中心卡的半对角线。
+  const split = splitHandoffs(layout);
+  const handoffLines = [];
+  for (const [s, d] of split.lines) {{
+    const a = pos[s], b = pos[d];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    // 从这张卡的边框出发，落在那张卡的边框上：不管两张在环上差多少角度，
+    // 读出来都是「这张交出去、那张接进来」，不会悬在半空
+    const p0 = rectExit(a.x, a.y, dx / len, dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2);
+    const p1 = rectExit(b.x, b.y, -dx / len, -dy / len, RADIAL_CARD_W / 2, RADIAL_CARD_H / 2);
+    handoffLines.push({{ from: s, to: d, a: p0, b: p1, curve: handoffCurve(p0, p1) }});
+  }}
+  // 跨位的交接：源盒 id → 目标盒 id 列表（画成盒子上的一行字）
+  const extraHandoffs = split.badges;
   // ---- 累积边：沿射线，两端各裁一次 ----
   //
   // 以前所有虚线的**终点都是圆心那一点**，五个箭头在同一个像素上叠成一团，
@@ -3562,10 +3347,6 @@ function renderRadial(layout, stats) {{
   // 弧最鼓的那一点也要装进画布——不然它会被裁掉（而且裁得看不出是哪儿错了）
   for (const l of handoffLines) {{
     if (l.curve) fitEdge({{ x: l.curve.ax, y: l.curve.ay }});
-  }}
-  // 折线的拐点同理：它比两端离圆心远，画布要装得下它
-  for (const l of handoffLines) {{
-    if (l.poly) for (const p of l.poly) fitEdge(p);
   }}
   for (const l of feedbackLines) {{ fitEdge(l.a); fitEdge(l.b); }}
   if (center) {{
@@ -3660,6 +3441,12 @@ function renderRadial(layout, stats) {{
     const cls = isCenter
       ? 'box-card radial-center' + (s.maturity === 'skeleton' ? ' is-skeleton' : '')
       : 'box-card';
+    // 跨位的交接：写成盒子上的一行字，不画线（见 splitHandoffs）。
+    // 名字取目标盒的显示名（不取 box_id——那个是内部标识）。
+    const extra = (extraHandoffs[id] || []).map((t) => {{
+      const nm = (byId[t] && byId[t].meta && byId[t].meta.display_name) || t;
+      return '<span class="box-extra">也交给 ' + esc(nm) + '</span>';
+    }}).join('');
     // 纯字符串拼接，不用模板字符串：`${...}` 只有在反引号里才是插值，
     // 裸露出来就是 SyntaxError——而且页面会停在 Loading，看起来像数据没到。
     // 环上和圆心那张都是真链接：环形视图要回答「谁接谁」，
@@ -3669,6 +3456,7 @@ function renderRadial(layout, stats) {{
       + ' style="left:' + (cx + p.x - RADIAL_CARD_W / 2).toFixed(1) + 'px;'
       + 'top:' + (cy + p.y - RADIAL_CARD_H / 2).toFixed(1) + 'px">'
       + compactCubeHtml(s)
+      + extra
       // 汇点标签挂在卡**下面**当铭牌，不当浮在卡上的贴纸：
       // 放卡顶时它正好压在卡片边框上，而那条向心虚线又从同一个方向过来，
       // 三个东西叠在同一行——「汇点」两个字最后谁都看不清。
@@ -3691,6 +3479,7 @@ function renderRadial(layout, stats) {{
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-feed"/></svg>累积：产出并进系统档案</span>
       <span><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="edge edge-feedback"/></svg>反馈：上一轮结论变成新一轮输入</span>
       <span class="muted">环序 = 生命周期顺序，箭头顺着环走</span>
+      <span class="muted">跳过中间那只的交接写在盒子上（也交给 X），不画线</span>
     </div>`;
 
   return `${{legend}}

@@ -1026,23 +1026,6 @@ class TestRadialLayoutIsDerived:
                     )
 
     @staticmethod
-    def _page_const(name):
-        m = re.search(rf"const {name} = ([0-9.]+);", HTML_PAGE)
-        assert m, f"看板前端里找不到常量 {name}——几何守卫跟着它一起瞎了"
-        return float(m.group(1))
-
-    @staticmethod
-    def _js_const(name):
-        """抠出页面上的一个 JS 常量（数组/对象原样带过来）
-
-        值取到**第一个分号**为止：常量后面可以跟注释，
-        `(.+);$` 那种写法会被行尾注释挡住。
-        """
-        m = re.search(rf"^const {name} = ([^;]+);", HTML_PAGE, re.M)
-        assert m, f"看板前端里找不到常量 {name}"
-        return m.group(1).strip()
-
-    @staticmethod
     def _js_function(name):
         """抠出页面上的一个 JS 函数（按花括号配平）"""
         start = HTML_PAGE.index(f"\nfunction {name}(") + 1
@@ -1057,151 +1040,102 @@ class TestRadialLayoutIsDerived:
                     return HTML_PAGE[start : j + 1]
         raise AssertionError(f"{name} 的花括号没配平")
 
-    @staticmethod
-    def _radial_routing(domain):
-        """用页面上的**真路由代码**跑一遍这个协作边界，返回定线结果
+    def _split_handoffs(self, domain):
+        """用页面上的**真代码**跑一遍 splitHandoffs，返回它分出来的两类边
 
-        **守卫自己抄一份几何比较 = 第二份事实**：前端改了算法，
-        守卫还在按老算法算，**绿着说明不了任何事**。
-        所以这里把页面上的真源码抠出来丢给 node 跑。
-
-        返回 `{"lines": [{"from","to","kind","points"}], "crosses": [...],
-        "card_hits": [...]}`。
+        守卫自己抄一份 = 第二份事实：前端改了分法，
+        守卫还在按老算法算，绿着说明不了任何事。
         """
         import shutil
         import subprocess
 
         node = shutil.which("node")
         if not node:
-            pytest.skip("没有 node，跳过接线几何守卫")
+            pytest.skip("没有 node，跳过接线分法守卫")
 
         from kanban.trigger import fulfillment_scope_layout
 
         lay = fulfillment_scope_layout(domain)
-        consts = "\n".join(
-            f"const {c} = {TestRadialLayoutIsDerived._js_const(c)};"
-            for c in (
-                "RADIAL_CARD_W", "RADIAL_CARD_H", "RADIAL_GAP", "RADIAL_R_FACTOR",
-                "RADIAL_CHORD_SLACK", "RADIAL_CENTER_CLEAR", "RADIAL_ARC_SLACK",
-                "RADIAL_SHORTCUT_ARC_H", "ROUTE_OFFSETS", "ROUTE_ANGLE_STEPS",
-                "RADIAL_CENTER_CARD_W", "RADIAL_CENTER_CARD_H",
-                "HOP_OFFSET", "HOP_HALF", "HOP_MAX_HALF",
-            )
-        )
-        funcs = "\n".join(
-            TestRadialLayoutIsDerived._js_function(f)
-            for f in (
-                "polar", "rectExit", "segCrosses", "segIntersection",
-                "polyHitsCard", "polyCrossesOther", "routePolyline",
-                "handoffCurve", "insertHop", "edgePoints", "resolveCrossings",
-                "routeHandoffEdges",
-            )
-        )
-        probe = """
-const layout = LAYOUT, n = layout.ring.length;
-const R = Math.max((RADIAL_CARD_W + RADIAL_GAP) / 2 / Math.sin(Math.PI / n)
-                    + RADIAL_CHORD_SLACK, RADIAL_CARD_H * RADIAL_R_FACTOR);
-const step = 2 * Math.PI / n, pos = {};
-layout.ring.forEach((id, i) => { pos[id] = polar(0, 0, R, -Math.PI / 2 + i * step); });
-const cpos = { x: 0, y: 0 };
-const lines = routeHandoffEdges(layout, pos, cpos, layout.center);
-const cardRects = [];
-for (const id in pos) cardRects.push({ id: id, x: pos[id].x, y: pos[id].y,
-                                     hw: RADIAL_CARD_W / 2, hh: RADIAL_CARD_H / 2 });
-if (layout.center) cardRects.push({ id: '__center__', x: 0, y: 0,
-                                    hw: RADIAL_CENTER_CARD_W / 2, hh: RADIAL_CENTER_CARD_H / 2 });
-const out = { lines: [], crosses: [], card_hits: [] };
-for (const l of lines) {
-  const pts = l.poly || [l.a, l.b];
-  out.lines.push({ from: l.from, to: l.to,
-                   kind: l.poly ? 'poly' : (l.curve ? 'arc' : 'line'),
-                   points: pts.map(p => [Math.round(p.x), Math.round(p.y)]) });
-  const hit = polyHitsCard(pts, cardRects, [l.from, l.to]);
-  if (hit) out.card_hits.push([l.from, l.to, hit]);
-}
-for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
-  const A = lines[i].poly || [lines[i].a, lines[i].b];
-  const B = lines[j].poly || [lines[j].a, lines[j].b];
-  for (let x = 0; x < A.length - 1; x++) for (let y = 0; y < B.length - 1; y++)
-    if (segCrosses(A[x], A[x + 1], B[y], B[y + 1]))
-      out.crosses.push([lines[i].from, lines[i].to, lines[j].from, lines[j].to]);
-}
-console.log(JSON.stringify(out));
-"""
         src = "\n".join([
-            consts, funcs,
+            self._js_function("splitHandoffs"),
             "const LAYOUT = " + json.dumps(
-                {"ring": list(lay["ring"]), "handoffs": [list(e) for e in lay["handoffs"]],
-                 "center": lay.get("center")}, ensure_ascii=False) + ";",
-            probe,
+                {"ring": list(lay["ring"]), "handoffs": [list(e) for e in lay["handoffs"]]},
+                ensure_ascii=False) + ";",
+            "console.log(JSON.stringify(splitHandoffs(LAYOUT)));",
         ])
         proc = subprocess.run([node, "-e", src], capture_output=True, text=True, timeout=60)
-        assert proc.returncode == 0, f"node 跑接线几何失败：\n{proc.stderr}"
+        assert proc.returncode == 0, f"node 跑 splitHandoffs 失败：\n{proc.stderr}"
         return json.loads(proc.stdout.strip())
 
-    def test_handoff_edges_never_cross_each_other(self):
-        """交接边之间**不许交叉**
+    def test_every_handoff_is_either_a_chain_line_or_a_box_note(self):
+        """每条交接边，都得有个交代
 
-        交叉的线在图上是**乱**的：读者顺着一条线走，走到一半被另一条劈开，
-        读不出「谁交给谁」——而这张图的全部意义就是「谁交给谁」。
+        环上相邻的那几条画成线（主链）；**跨位的那几条不画线**，
+        改成源盒上的一行字（「也交给 X」）。
 
-        **为什么会交叉**：环上「抄近路」的边（不相邻的交接边），
-        如果有两条的端点**交替**（a < c < b < d），它们的弦必然相交——
-        这是拓扑事实，不是画法能绕开的。
-        所以前端的做法是：**直线优先**，直线会撞卡片或跟别的边交叉时，
-        插拐点绕开（`routePolyline`）；全是直线段，读起来像「绕开某样东西」。
+        为什么要守这条：**跨位的边不画线，但关系一条都不能少**。
+        悄悄不画 = 看板上「谁跟谁有关系」少了一条，而布局看上去是完整的——
+        这跟漏画一条边一模一样，只是更难发现（图上没有断线可看）。
+
+        所以判据是：**每条交接边，要么在「画成线」那一类，
+        要么在「写在盒子上」那一类**，两类合起来正好是全部。
         """
+        from kanban.trigger import fulfillment_scope_layout
+
         checked = 0
         for domain in self._domains():
             lay = fulfillment_scope_layout(domain)
             if lay["layout"] != "radial":
                 continue
-            routed = self._radial_routing(domain)
-            for a, b, c, d in routed["crosses"]:
-                assert False, (
-                    f"{domain!r}: 交接边 {a} → {b} 和 {c} → {d} 交叉了——"
-                    f"图上是乱线，读不出谁交给谁"
-                )
-            checked += len(routed["lines"])
+            split = self._split_handoffs(domain)
+            lines = {tuple(e) for e in split["lines"]}
+            badges = {(src, dst) for src, dsts in split["badges"].items() for dst in dsts}
+            declared = {tuple(e) for e in lay["handoffs"]}
+
+            # **「跨位」的判据在这里独立算一遍**（不抄前端的），
+            # 否则守卫会变成空守卫：把边全塞进「画成线」那一类，
+            # 「一条都有交代」照样成立——而角标没了，图上就少了几条关系，
+            # 布局看上去还是完整的。
+            chain_pairs = {
+                (lay["ring"][i], lay["ring"][i + 1])
+                for i in range(len(lay["ring"]) - 1)
+            }
+            cross = {e for e in declared if e not in chain_pairs}
+            assert cross <= badges, (
+                f"{domain!r}: 跨位的交接 {sorted(cross)} 没有写在盒子上——"
+                f"它们会被画成横穿整张图的线（端点交替时弦必然相交）"
+            )
+            assert chain_pairs & declared <= lines, (
+                f"{domain!r}: 环上相邻的交接 {sorted(chain_pairs & declared)} "
+                f"没有画成线——主链断了"
+            )
+            assert lines | badges == declared, (
+                f"{domain!r}: 交接边 {len(declared)} 条，"
+                f"画成线的 {len(lines)} 条 + 写在盒子上的 {len(badges)} 条，"
+                f"合起来对不上：多出来 {declared - (lines | badges)}，"
+                f"少了 { (lines | badges) - declared }"
+            )
+            assert not (lines & badges), (
+                f"{domain!r}: 有边既画成线又写在盒子上——那是画了两遍"
+            )
+            checked += len(declared)
         assert checked, "一个协作边界的交接边都没算到——这条守卫没在守任何东西"
 
-    def test_handoff_edges_never_run_through_a_card(self):
-        """交接边不许从卡片上穿过去
+    def test_the_box_note_names_the_target_box(self):
+        """盒子上那行字，要写目标盒的**显示名**（不是内部 id）
 
-        穿过去的那一段，图上就是「这条线压住了那只盒子的名字」——
-        没有报错，也没有别的提示，只有读的人一头雾水。
+        写 box_id 的话，读者看到的是「也交给 wms_testing_box」——
+        那是内部标识，业务方看不懂。
         """
-        checked = 0
-        for domain in self._domains():
-            lay = fulfillment_scope_layout(domain)
-            if lay["layout"] != "radial":
-                continue
-            routed = self._radial_routing(domain)
-            for a, b, card in routed["card_hits"]:
-                assert False, (
-                    f"{domain!r}: 交接边 {a} → {b} 从卡片 {card} 上穿过去了——"
-                    f"要么让它绕开，要么换个走法"
-                )
-            checked += len(routed["lines"])
-        assert checked, "一个协作边界的交接边都没算到——这条守卫没在守任何东西"
+        from tests.test_web_kanban import _strip_js_comments
 
-    def test_straight_lines_are_the_default_and_only_detours_when_needed(self):
-        """**能用直线就别用弧/折线**——绕行是例外，不是常态
-
-        抄近路的边确实得绕（端点交替时弦必然相交），但绕之前
-        一定先试过直线：只有直线撞卡片或撞别的边时才拐弯。
-        """
-        for domain in self._domains():
-            lay = fulfillment_scope_layout(domain)
-            if lay["layout"] != "radial":
-                continue
-            routed = self._radial_routing(domain)
-            for line in routed["lines"]:
-                assert line["kind"] != "arc", (
-                    f"{domain!r}: 交接边 {line['from']} → {line['to']} 画成了弧——"
-                    f"弧是贝塞尔曲线，读起来像随手一撇；"
-                    f"折线（全直线段）读起来像「绕开某样东西」"
-                )
+        code = _strip_js_comments(HTML_PAGE)
+        assert "也交给 " in code, "跨位的交接没写在盒子上"
+        assert "display_name" in code, "盒子上的那行字没取显示名"
+        # 显示名要跟目标盒对上，而不是随便写一个名字
+        assert "byId[t].meta.display_name" in code, (
+            "盒子上的那行字没跟目标盒对上——写的是硬编码的名字"
+        )
 
     def test_the_main_chain_is_never_cyclic(self):
         """协作边界声明的交接边组成的**主干必须无环**——有环就是有人把闭环声明错了
