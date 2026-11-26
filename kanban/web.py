@@ -446,8 +446,14 @@ HTML_PAGE = f"""<!DOCTYPE html>
      两个面板都叫 BeeBox X，读者分不清自己看的是盒子还是平台。
      **盒子的名字一个字不动**：图上那张是「BeeBox Map」（盒子和它们的接线），
      工作台是「BeeBox Workshop」（做盒子的地方）——那两个名字是对的，
-     改了才叫把层级说反。 -->
-<title>beeOS Fulfillment Center</title>
+     改了才叫把层级说反。
+
+     **界面上两个产品名一样大写**（BeeOS / BeeBox）：同一个词两种写法
+     （beeOS 跟 BeeBox Map 并排）看着就像两样东西。
+     文档和代码散文里的小写不算数——那里的「beeBox」说的是
+     「一只盒子」这个概念（core.models - beeBox Definition 顶层数据结构），
+     不是产品名。 -->
+<title>BeeOS Fulfillment Center</title>
 <style>
   /* hidden 属性必须真的藏起来。UA 的 `[hidden] {{display:none}}` 来自
      用户代理样式表，任何作者样式都能压过它——.media-preview 的
@@ -1882,10 +1888,10 @@ HTML_PAGE = f"""<!DOCTYPE html>
            浏览器的前进/后退能回，但那条路看不见——从网格点进一只盒，
            页面整个换掉，读者不知道「刚才那张网格」还在。 -->
       <a id="back-link" class="back-link" href="/" hidden></a>
-      <!-- 抬头 = 平台名（beeOS）+ 这块画面的角色（Fulfillment Center）。
-           不带 "— beeOS Kanban" 后缀：页面上已经写着 beeOS，
+      <!-- 抬头 = 平台名（BeeOS）+ 这块画面的角色（Fulfillment Center）。
+           不带 "— beeOS Kanban" 后缀：页面上已经写着 BeeOS，
            再在标题里重复一遍，读者只会当成两样东西。 -->
-      <h1>beeOS Fulfillment Center</h1>
+      <h1>BeeOS Fulfillment Center</h1>
     </div>
     <div class="head-right">
       <span class="refresh-tag" id="last-refresh">never</span>
@@ -5240,7 +5246,7 @@ function render(data) {{
       html += `</div>`;
     }}
   }} else {{
-    html += `<div class="empty">(no beeBoxes registered)</div>`;
+    html += `<div class="empty">(no BeeBoxes registered)</div>`;
   }}
   // 画面写进**可滚段**（不是整个 #content）：
   // 固定头和固定输入框不在里面，它们才不会被画面滚走。
@@ -5650,7 +5656,7 @@ def _int_param(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="beeOS Kanban Web dashboard")
+    parser = argparse.ArgumentParser(description="BeeOS Kanban Web dashboard")
     parser.add_argument(
         "--host",
         default="127.0.0.1",
@@ -5673,7 +5679,7 @@ def main(argv: list[str] | None = None) -> int:
     KanbanRequestHandler.store = store
 
     server = ThreadingHTTPServer((args.host, args.port), KanbanRequestHandler)
-    print(f"beeOS Kanban Web running at http://{args.host}:{args.port}")
+    print(f"BeeOS Kanban Web running at http://{args.host}:{args.port}")
     print(f"  store: {args.store}")
     print(f"  press Ctrl+C to stop")
 

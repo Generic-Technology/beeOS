@@ -1621,7 +1621,7 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         """
         code = _strip_js_comments(HTML_PAGE)
 
-        assert "<h1>beeOS Fulfillment Center</h1>" in HTML_PAGE
+        assert "<h1>BeeOS Fulfillment Center</h1>" in HTML_PAGE
         assert "BeeBox Fulfillment Overview" not in code, (
             "旧标题还在（<title> 或 h1）"
         )
@@ -1636,11 +1636,11 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         )
 
     def test_the_header_names_the_platform_and_the_box_names_stay(self):
-        """抬头写**平台**的名字（beeOS）；盒子的名字（BeeBox Map）一个字不动
+        """抬头写**平台**的名字（BeeOS）；盒子的名字（BeeBox Map）一个字不动
 
         两个面板是**不同层级**的东西：
         - **BeeBox Workshop**（体检台）——层级在**盒子**：这只盒子声明得对不对
-        - **beeOS Fulfillment Center**（本页面）——层级在**平台**：
+        - **BeeOS Fulfillment Center**（本页面）——层级在**平台**：
           哪个协作范围有哪些盒子、谁交给谁、跑得怎么样
 
         抬头顶着「BeeBox」= 把容器名放在系统的位置上，
@@ -1649,15 +1649,15 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
 
         **反过来也不许改**：图上那张是「BeeBox Map」（盒子和它们的接线），
         工作台是「BeeBox Workshop」（做盒子的地方）——
-        那是**盒子**的名字，层级本来就对，改成 beeOS 才是把层级说反。
+        那是**盒子**的名字，层级本来就对，改成 BeeOS 才是把层级说反。
         """
         code = _strip_js_comments(HTML_PAGE)
 
         # 平台层：抬头 = 平台名 + 画面角色
-        assert "<h1>beeOS Fulfillment Center</h1>" in HTML_PAGE, (
-            "抬头的平台名不对——看板是 beeOS 的履约面，层级在平台"
+        assert "<h1>BeeOS Fulfillment Center</h1>" in HTML_PAGE, (
+            "抬头的平台名不对——看板是 BeeOS 的履约面，层级在平台"
         )
-        assert "<title>beeOS Fulfillment Center</title>" in HTML_PAGE, (
+        assert "<title>BeeOS Fulfillment Center</title>" in HTML_PAGE, (
             "标签页标题也该是平台名（原来还挂着「— beeOS Kanban」，重复）"
         )
         assert "BeeBox Fulfillment" not in code, (
@@ -1668,8 +1668,46 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         assert "BeeBox Map" in code, (
             "图上那张还是「BeeBox Map」——它是盒子和它们的接线，层级在盒子"
         )
-        assert "beeOS Map" not in code, (
-            "别把「BeeBox Map」改成「beeOS Map」——那张图画的是盒子，不是系统"
+        assert "BeeOS Map" not in code, (
+            "别把「BeeBox Map」改成「BeeOS Map」——那张图画的是盒子，不是系统"
+        )
+
+    def test_the_ui_writes_both_product_names_the_same_way(self):
+        """界面上两个产品名**一样大写**：BeeOS（平台）/ BeeBox（盒子）
+
+        同一个词两种写法（`beeOS` 跟 `BeeBox Map` 并排）看着像两样东西——
+        这不是风格问题，是**名字不一致**：读者会以为平台和盒子族是两个厂商的。
+
+        界面上（抬头 / 标签页标题 / 图例标签 / 空状态 / 命令行输出）：
+        BeeOS、BeeBox，一律大写。
+
+        **文档和代码散文里的小写不算**：那里的「beeBox」说的是
+        「一只盒子」这个概念（core.models - beeBox Definition 顶层数据结构），
+        不是产品名——产品名在界面上才大写。
+        """
+        code = _strip_js_comments(HTML_PAGE)
+        # 命令行那两句不在页面里，在模块源码里（CLI 也是看得见的界面）
+        import inspect
+
+        import kanban.web as web_mod
+
+        module_src = inspect.getsource(web_mod)
+
+        # 界面上不许出现小写的产品名
+        for wrong in ("beeOS Fulfillment", "no beeBoxes registered"):
+            assert wrong not in code, (
+                f"界面上的产品名还写着「{wrong}」——界面上统一大写："
+                "BeeOS / BeeBox"
+            )
+        assert "beeOS Kanban Web" not in module_src, (
+            "命令行里的产品名还写着「beeOS」——界面上统一大写：BeeOS / BeeBox"
+        )
+        # 盒子那边的大写不许回退
+        assert "(no BeeBoxes registered)" in code, (
+            "空状态里的产品名也要大写（BeeBoxes）"
+        )
+        assert "BeeOS Kanban Web dashboard" in module_src, (
+            "命令行里的产品名也要大写（BeeOS）"
         )
 
     def test_deleting_markup_also_deletes_its_css(self):
