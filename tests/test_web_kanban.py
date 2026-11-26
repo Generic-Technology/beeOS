@@ -1621,7 +1621,7 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         """
         code = _strip_js_comments(HTML_PAGE)
 
-        assert "<h1>BeeBox Fulfillment Center</h1>" in HTML_PAGE
+        assert "<h1>beeOS Fulfillment Center</h1>" in HTML_PAGE
         assert "BeeBox Fulfillment Overview" not in code, (
             "旧标题还在（<title> 或 h1）"
         )
@@ -1633,6 +1633,43 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         )
         assert "box-count" not in code, (
             "box-count 元素和同步它的死代码都要一起删干净"
+        )
+
+    def test_the_header_names_the_platform_and_the_box_names_stay(self):
+        """抬头写**平台**的名字（beeOS）；盒子的名字（BeeBox Map）一个字不动
+
+        两个面板是**不同层级**的东西：
+        - **BeeBox Workshop**（体检台）——层级在**盒子**：这只盒子声明得对不对
+        - **beeOS Fulfillment Center**（本页面）——层级在**平台**：
+          哪个协作范围有哪些盒子、谁交给谁、跑得怎么样
+
+        抬头顶着「BeeBox」= 把容器名放在系统的位置上，
+        而且跟旁边那个「BeeBox Workshop」撞脸：两个面板都叫 BeeBox X，
+        读者分不清自己看的是盒子还是平台。
+
+        **反过来也不许改**：图上那张是「BeeBox Map」（盒子和它们的接线），
+        工作台是「BeeBox Workshop」（做盒子的地方）——
+        那是**盒子**的名字，层级本来就对，改成 beeOS 才是把层级说反。
+        """
+        code = _strip_js_comments(HTML_PAGE)
+
+        # 平台层：抬头 = 平台名 + 画面角色
+        assert "<h1>beeOS Fulfillment Center</h1>" in HTML_PAGE, (
+            "抬头的平台名不对——看板是 beeOS 的履约面，层级在平台"
+        )
+        assert "<title>beeOS Fulfillment Center</title>" in HTML_PAGE, (
+            "标签页标题也该是平台名（原来还挂着「— beeOS Kanban」，重复）"
+        )
+        assert "BeeBox Fulfillment" not in code, (
+            "旧抬头「BeeBox Fulfillment Center」还在——那是盒子名占了平台的位置"
+        )
+
+        # 盒子层：图上那张图和工作台的名字**不许**跟着改
+        assert "BeeBox Map" in code, (
+            "图上那张还是「BeeBox Map」——它是盒子和它们的接线，层级在盒子"
+        )
+        assert "beeOS Map" not in code, (
+            "别把「BeeBox Map」改成「beeOS Map」——那张图画的是盒子，不是系统"
         )
 
     def test_deleting_markup_also_deletes_its_css(self):

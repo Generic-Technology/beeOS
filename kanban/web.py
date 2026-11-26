@@ -440,7 +440,14 @@ HTML_PAGE = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>BeeBox Fulfillment Center — beeOS Kanban</title>
+<!-- 抬头写的是**平台**的名字：看板是 beeOS 的履约面（协作范围 / 接线 / 跑得怎么样），
+     层级在**平台**，不在盒子。写成「BeeBox …」是把容器名放在系统的位置上，
+     而且跟旁边那个「BeeBox Workshop」（体检台，层级在盒子）撞脸——
+     两个面板都叫 BeeBox X，读者分不清自己看的是盒子还是平台。
+     **盒子的名字一个字不动**：图上那张是「BeeBox Map」（盒子和它们的接线），
+     工作台是「BeeBox Workshop」（做盒子的地方）——那两个名字是对的，
+     改了才叫把层级说反。 -->
+<title>beeOS Fulfillment Center</title>
 <style>
   /* hidden 属性必须真的藏起来。UA 的 `[hidden] {{display:none}}` 来自
      用户代理样式表，任何作者样式都能压过它——.media-preview 的
@@ -1875,7 +1882,10 @@ HTML_PAGE = f"""<!DOCTYPE html>
            浏览器的前进/后退能回，但那条路看不见——从网格点进一只盒，
            页面整个换掉，读者不知道「刚才那张网格」还在。 -->
       <a id="back-link" class="back-link" href="/" hidden></a>
-      <h1>BeeBox Fulfillment Center</h1>
+      <!-- 抬头 = 平台名（beeOS）+ 这块画面的角色（Fulfillment Center）。
+           不带 "— beeOS Kanban" 后缀：页面上已经写着 beeOS，
+           再在标题里重复一遍，读者只会当成两样东西。 -->
+      <h1>beeOS Fulfillment Center</h1>
     </div>
     <div class="head-right">
       <span class="refresh-tag" id="last-refresh">never</span>
