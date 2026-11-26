@@ -16,6 +16,7 @@ import ast
 import json
 import pathlib
 import re
+from html.parser import HTMLParser
 
 import pytest
 
@@ -872,6 +873,134 @@ def _wiring(box_id: str) -> dict[str, list[str]]:
     return box_wiring(box_id)
 
 
+# ============================================================
+# 拓扑图的**摆法**：图例和标题住在图的边上，不横在图上面
+# ============================================================
+
+
+class _ClassParents(HTMLParser):
+    """把一段 HTML 摊成「每个 class 挂在谁底下」
+
+    只看结构（谁是谁的子节点），不看长相。
+    """
+
+    VOID = {"br", "hr", "img", "input", "meta", "link", "source", "path", "line"}
+
+    def __init__(self, html: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parent_of: dict[str, tuple[str, ...]] = {}
+        self._stack: list[tuple[str, str]] = []
+        self.feed(html)
+
+    def _register(self, attrs) -> str:
+        cls = (dict(attrs).get("class") or "").strip()
+        parent = self._stack[-1][1] if self._stack else ""
+        for c in cls.split():
+            self.parent_of.setdefault(c, tuple(parent.split()))
+        return cls
+
+    def handle_starttag(self, tag, attrs):
+        cls = self._register(attrs)
+        if tag not in self.VOID:
+            self._stack.append((tag, cls))
+
+    def handle_startendtag(self, tag, attrs):
+        self._register(attrs)
+
+    def handle_endtag(self, tag):
+        for i in range(len(self._stack) - 1, -1, -1):
+            if self._stack[i][0] == tag:
+                del self._stack[i:]
+                return
+
+
+def _assert_the_legend_sits_beside_the_map(html: str) -> None:
+    """图例和标题必须在图的**边上**，不许横在图上面一整行"""
+    parents = _ClassParents(html)
+    p = parents.parent_of
+
+    assert "radial-side" in p.get("radial-legend", ()), (
+        "图例不在侧栏里（现在挂在 %r 底下）——图例横在图上面会吃掉竖向空间，"
+        "图就得缩一截才塞得下" % (p.get("radial-legend"),)
+    )
+    assert "radial-side" in p.get("radial-side-title", ()), (
+        "标题不在侧栏里（现在挂在 %r 底下）——标题也是竖向空间" % (
+            p.get("radial-side-title"),)
+    )
+    assert "radial-stage" in p.get("radial-side", ()), (
+        "侧栏不在舞台上（现在挂在 %r 底下）" % (p.get("radial-side"),)
+    )
+    assert "radial-stage" in p.get("radial-host", ()), (
+        "画布跟侧栏不是平级（现在挂在 %r 底下）——侧栏会把它挤到下面去" % (
+            p.get("radial-host"),)
+    )
+    assert "radial-host" in p.get("radial-scale", ()), (
+        "缩放层不在画布宿主里（现在挂在 %r 底下）" % (p.get("radial-scale"),)
+    )
+
+
+def _render_radial_html() -> str:
+    """在 node 里真跑页面上的 renderRadial，把它吐出来的 HTML 拿回来
+
+    抄一份渲染逻辑到 Python 里再测 = **第二份事实**：
+    页面改了结构，守卫还在按老结构判，绿着说明不了任何事。
+    """
+    import shutil
+    import subprocess
+
+    from tests.test_web_kanban import _extract_js_function, _js_const
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node，跳过拓扑摆法守卫")
+
+    from kanban.trigger import fulfillment_scope_layout
+
+    lay = fulfillment_scope_layout("WMS")
+    stats = [{"box_id": b, "meta": {"display_name": b}} for b in lay["boxes"]]
+    src = "\n".join(
+        [
+            _js_const(n)
+            for n in (
+                "RADIAL_CARD_W", "RADIAL_CARD_H", "RADIAL_GAP", "RADIAL_R_FACTOR",
+                "RADIAL_CHORD_SLACK", "STAR_GAP", "RADIAL_CENTER_CLEAR",
+                "RADIAL_ARC_SLACK", "RADIAL_CENTER_CARD_W", "RADIAL_CENTER_CARD_H",
+                "RADIAL_PAD", "FIELD_PAD", "CUBE_ALLOW",
+            )
+        ]
+        + [
+            _extract_js_function(n)
+            for n in (
+                "esc", "splitHandoffs", "polar", "rectExit", "handoffCurve",
+                "renderRadial",
+            )
+        ]
+        + [
+            # 立方体和链接只是**长相**，跟「谁挂在谁底下」没关系：
+            # 这里替掉它们，省得把整页 DOM 搬进 node。
+            "function compactCubeHtml(box) { return '<div class=\"cube-scene\"></div>'; }",
+            "function boxHref(id, scope, view) { return '/' + id; }",
+            "let _scopeFilter = 'WMS';",
+            "let _view = 'topology';",
+            "const STATS = " + json.dumps(stats, ensure_ascii=False) + ";",
+            "const LAYOUT = " + json.dumps(
+                {
+                    "ring": lay["ring"],
+                    "center": lay["center"],
+                    "shape": lay["shape"],
+                    "handoffs": [list(e) for e in lay["handoffs"]],
+                    "feeds_center": lay["feeds_center"],
+                    "feedback": [list(e) for e in lay["feedback"]],
+                },
+                ensure_ascii=False) + ";",
+            "console.log(renderRadial(LAYOUT, STATS, '<div>标题</div>'));",
+        ]
+    )
+    proc = subprocess.run([node, "-e", src], capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, f"node 跑 renderRadial 失败：\n{proc.stderr}"
+    return proc.stdout
+
+
 class TestRadialLayoutIsDerived:
     """环形视图：中心、环序、两类边都从接线推导，前端不许自己决定
 
@@ -1136,6 +1265,44 @@ class TestRadialLayoutIsDerived:
         assert "byId[t].meta.display_name" in code, (
             "盒子上的那行字没跟目标盒对上——写的是硬编码的名字"
         )
+
+    def test_the_legend_and_title_sit_beside_the_map(self):
+        """图例和标题必须在图的**边上**，不许横在图上面一整行
+
+        为什么守这条：这张图的宽高接近 1，装它的容器却是宽扁的——
+        **竖向才是瓶颈**。图例横在图上面 = 白吃掉一整行竖向空间，
+        图就得缩一截才塞得下（缩小的图看不清接线）；
+        而「看不完的图」比「小图」更容易让人以为「就这些了」。
+
+        挪到图左边是白拿的：地图居中，左右两边本来就空着一大片。
+
+        判据跑的是**真代码**：把页面上的 renderRadial 原样抠出来在 node 里跑，
+        看它吐出来的结构（谁挂在谁底下）。
+        """
+        html = _render_radial_html()
+        _assert_the_legend_sits_beside_the_map(html)
+        # 样式那边也得跟上：并排要按**容器宽度**判——
+        # 按视口判会以为放得下，实际把图挤扁（三栏布局下中栏远窄于视口）。
+        assert "@container (min-width:" in HTML_PAGE, (
+            "侧栏的并排没按容器宽度判——三栏布局下中栏比视口窄得多，"
+            "按视口判会把图挤成一条"
+        )
+
+    def test_the_layout_guard_is_not_empty(self):
+        """把图例挪回图上面，这一栏必须报红
+
+        守卫自己也会退化：判据写松了，就成了一条永远绿着的假把式。
+        所以这里**故意喂一份坏结构**（图例回到舞台里、不在侧栏），
+        它必须拒。
+        """
+        broken = (
+            '<div class="radial-wrap"><div class="radial-stage">'
+            '<div class="radial-legend"><span>交接</span></div>'
+            '<div class="radial-host"><div class="radial-scale"></div></div>'
+            '</div></div>'
+        )
+        with pytest.raises(AssertionError):
+            _assert_the_legend_sits_beside_the_map(broken)
 
     def test_the_main_chain_is_never_cyclic(self):
         """协作边界声明的交接边组成的**主干必须无环**——有环就是有人把闭环声明错了

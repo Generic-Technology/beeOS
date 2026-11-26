@@ -728,15 +728,19 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .radial {{ position: relative; margin: 0 auto; }}
   /* 画布宿主：宽度不够时**横向滚动**，而不是把画布裁掉。
      拓扑画布的宽度是算出来的（固定 px），容器一变窄它不会自己缩——
-     缩放交给 fitRadial（见 JS），这里只负责兜住「缩到下限还塞不下」的情况。 */
-  .radial-host {{ overflow-x: auto; overflow-y: hidden; }}
+     缩放交给 fitRadial（见 JS），这里只负责兜住「缩到下限还塞不下」的情况。
+     它是舞台里的弹性列：宽度由**旁边那栏**（标题 + 图例）让出来。 */
+  .radial-host {{ flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; }}
   /* 缩放层：**布局盒跟视觉尺寸一致**。
      只写 transform: scale() 的话，视觉缩了但布局盒没缩——
      宿主按未缩放的宽度裁切，于是画布右边被切掉一截（而缩放看着是对的）。
      所以这里由 JS 把这一层的宽高设成 W*k / H*k，视觉与占位始终一致。
      overflow:hidden 把未缩放的原画布关在这一层里。
-     **transform 加在画布上，不加在这一层上**（加错层 = 缩两次 + 裁切）。 */
-  .radial-scale {{ overflow: hidden; margin: 0 auto 30px; }}
+     **transform 加在画布上，不加在这一层上**（加错层 = 缩两次 + 裁切）。
+     下外边距留 0：图的高度是按**可视高度**算出来的，
+     再加一段外边距，整张图就比可视区高出一截 → 读者得再滚一下
+     才看得全整个环（看一半的图比看小图更糟）。 */
+  .radial-scale {{ overflow: hidden; margin: 0 auto; }}
   .radial-edges {{ position: absolute; inset: 0; pointer-events: none; }}
   .radial .box-card {{
     position: absolute; width: 204px; height: 170px; overflow: visible;
@@ -782,12 +786,50 @@ HTML_PAGE = f"""<!DOCTYPE html>
   }}
   .radial .radial-center .cube-caption {{ margin-top: 2px; }}
   .radial-legend {{
-    display: flex; gap: 14px; justify-content: center; align-items: center;
-    font-size: 11px; color: #475569; margin: 2px 0 6px;
-    flex-wrap: wrap;   /* 容器变窄时换行，别把图例挤成一条 */
+    display: flex; flex-direction: row; flex-wrap: wrap;
+    gap: 6px 14px; align-items: center;
+    font-size: 11px; color: #475569;
   }}
   .radial-legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
   .radial-legend .muted {{ color: #94a3b8; }}
+  /* ===== 拓扑图的「边上」那一栏 =====
+     标题 + 图例原来横在图**上面**一整行。那一行占的是**竖向**空间，
+     而竖向才是这张图的瓶颈（图的宽高接近 1，装它的容器却是宽扁的）：
+     图例吃掉一行，图就得缩一截才塞得下——缩小的图看不清接线，
+     而「看不完的图」比「小图」更容易让人以为「就这些了」。
+
+     挪到图**左边**：那一片本来就是空的（地图居中，左右各空一块），
+     竖向一寸都不让，图就能吃满整屏高度。
+     窄屏放不下就回到图上面一行（图例横排、允许换行）——
+     宁可挤，也别把图压扁。
+
+     **按容器宽度分，不按视口宽度分**：三栏布局下中栏的实际宽度
+     跟视口宽度不是一回事（视口 1280 时中栏只有 450px 左右），
+     按视口判会以为放得下、实际把图挤成一条。 */
+  .radial-wrap {{ container-type: inline-size; }}
+  .radial-stage {{ display: flex; flex-direction: column; gap: 12px; }}
+  .radial-side {{ display: flex; flex-direction: column; gap: 10px; }}
+  .radial-side-title {{
+    font-size: 12px; font-weight: 600; color: #475569; line-height: 1.6;
+  }}
+  /* 品牌名**不许被大写**（跟 .section-title 一个道理）：
+     排版可以改，产品名不能被改写成 BEEBOX MAP。 */
+  .radial-side-title .brand-case {{ text-transform: none; letter-spacing: 0.02em; }}
+  .radial-side-note {{ font-weight: 400; color: #94a3b8; margin-top: 2px; }}
+  /* 拓扑这一段不留段后距：图的高度是按可视高度算的，
+     再加一段外边距，整张图就比可视区高出一截 → 读者得再滚一下。
+     （写两个类是为了压过 .section 的权重——两处都在同一张样式表里，
+     谁在后面谁说了算。） */
+  .section.section-topology {{ margin-bottom: 0; }}
+  @container (min-width: 720px) {{
+    .radial-stage {{ flex-direction: row; align-items: flex-start; gap: 20px; }}
+    .radial-side {{ flex: 0 0 210px; width: 210px; gap: 14px; }}
+    .radial-legend {{ flex-direction: column; align-items: flex-start; gap: 8px; }}
+    /* 图**贴着侧栏**（不居中）：图例是读这张图的钥匙，
+       钥匙和图之间空一大段，读的人就得来回找。
+       空出来的地方全堆到图的右边——那是这一栏的边角，不碍事。 */
+    .radial-scale {{ margin: 0; }}
+  }}
   /* 两类边必须一眼分得开：实线粗一点走环，虚线细一点走向心。
      反馈边是第三类：琥珀色点线，跟累积的青色虚线也不同——
      三条线里有两条是虚线，只靠颜色相近就分不出来。 */
@@ -2589,7 +2631,13 @@ function fitRadial() {{
   // 不由内容定，所以不是循环依赖）：`.content-scroll` 在总览页是
   // `flex:1 1 auto; min-height:0`，高度 = 外层分给它的那份，跟画布多高无关。
   const box = radial.closest('.content-scroll');
-  const availH = box ? box.clientHeight : 0;
+  let availH = box ? box.clientHeight : 0;
+  // 缩放层自己的上下外边距也占地方：不算进去，图就比可视区高出一截，
+  // 读者得再滚一下才看得全整个环——**看一半的图比看小图更糟**。
+  if (availH > 0) {{
+    const cs = getComputedStyle(scaler);
+    availH -= (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+  }}
   let k = Math.max(0.6, Math.min(1, avail / W));
   // 高度那条的下限松一点（0.45）：宁可小一点，也要**一屏看全整个环**——
   // 看一半的图比看一张小图更让人以为「就这些了」。
@@ -3236,7 +3284,13 @@ function splitHandoffs(layout) {{
   return {{ lines: lines, badges: badges }};
 }}
 
-function renderRadial(layout, stats) {{
+// 画这张图。
+//
+// **titleHtml 住在图的左边那一栏里**（跟图例一起），不横在图上面：
+// 图上面那一行是竖向空间，而竖向才是这张图的瓶颈——
+// 图例占一整行，图就得缩一截才塞得下（缩小的图看不清接线）。
+// 左栏是地图居中后空出来的那一块，白拿。
+function renderRadial(layout, stats, titleHtml) {{
   const n = layout.ring.length;
   const byId = {{}};
   for (const s of stats) byId[s.box_id] = s;
@@ -3493,7 +3547,20 @@ function renderRadial(layout, stats) {{
       <span class="muted">跨位的交接写在盒子上</span>
     </div>`;
 
-  return `${{legend}}
+  // 标题 + 图例 = **左边那一栏**。
+  //
+  // 为什么在边上而不是图上面：图上面那一行占的是竖向空间，
+  // 而竖向才是这张图的瓶颈（图的宽高接近 1，容器是宽扁的）。
+  // 图左、右两边本来就空着一大片（地图居中），左栏是白拿的。
+  const sideTitle = titleHtml
+    ? '<div class="radial-side-title">' + titleHtml + '</div>'
+    : '';
+
+  return `<div class="radial-wrap"><div class="radial-stage">
+    <div class="radial-side">
+      ${{sideTitle}}
+      ${{legend}}
+    </div>
     <div class="radial-host">
       <div class="radial-scale">
       <div class="radial" style="width:${{W}}px;height:${{H}}px">
@@ -3517,7 +3584,8 @@ function renderRadial(layout, stats) {{
       ${{cards}}
       </div>
       </div>
-    </div>`;
+    </div>
+  </div></div>`;
 }}
 
 // 连线必须接在**看得见**的东西上。
@@ -5111,11 +5179,15 @@ function render(data) {{
       const shapeNote = lay.shape === 'star'
         ? `${{lay.ring.length}} 只直投汇点 · 它们之间没有交接`
         : `环上 ${{lay.ring.length}} 只 · 汇点由接线推导`;
-      html += `<div class="section"><div class="section-title">${{esc(scopeLabel(lay.scope))}} 协作范围的
+      // 标题进**左栏**（跟图例一起），不横在图上面一行：
+      // 图上面那一行是竖向空间，而竖向是这张图的瓶颈——
+      // 标题 + 图例各占一行，图就得缩一截才塞得下。
+      // 话说一个字都不改，只换摆放的位置。
+      const titleHtml = `${{esc(scopeLabel(lay.scope))}} 协作范围的
         <span class="brand-case">BeeBox Map</span>
-        （${{shapeNote}}）</div>`;
-      html += renderRadial(lay, data.box_stats);
-      html += `</div>`;
+        <div class="radial-side-note">${{esc(shapeNote)}}</div>`;
+      html += `<div class="section section-topology">${{
+        renderRadial(lay, data.box_stats, titleHtml)}}</div>`;
     }} else {{
       if (_view === VIEW_TOPOLOGY && _task) {{
         html += `<div class="skeleton-note">这件任务走的是平铺，不是拓扑：
