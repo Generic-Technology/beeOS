@@ -16,7 +16,6 @@ import ast
 import json
 import pathlib
 import re
-from html.parser import HTMLParser
 
 import pytest
 
@@ -37,6 +36,7 @@ from kanban.web import HTML_PAGE
 from runtime.box_health import STATUS_FAIL, STATUS_PASS, inspect_box
 from runtime.store import TaskRunStore
 from tests.conftest import stub_compliant_llm
+from tests.test_web_kanban import _ClassParents
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 KANBAN_DIR = REPO / "kanban"
@@ -876,42 +876,6 @@ def _wiring(box_id: str) -> dict[str, list[str]]:
 # ============================================================
 # 拓扑图的**摆法**：图例和标题住在图的边上，不横在图上面
 # ============================================================
-
-
-class _ClassParents(HTMLParser):
-    """把一段 HTML 摊成「每个 class 挂在谁底下」
-
-    只看结构（谁是谁的子节点），不看长相。
-    """
-
-    VOID = {"br", "hr", "img", "input", "meta", "link", "source", "path", "line"}
-
-    def __init__(self, html: str) -> None:
-        super().__init__(convert_charrefs=True)
-        self.parent_of: dict[str, tuple[str, ...]] = {}
-        self._stack: list[tuple[str, str]] = []
-        self.feed(html)
-
-    def _register(self, attrs) -> str:
-        cls = (dict(attrs).get("class") or "").strip()
-        parent = self._stack[-1][1] if self._stack else ""
-        for c in cls.split():
-            self.parent_of.setdefault(c, tuple(parent.split()))
-        return cls
-
-    def handle_starttag(self, tag, attrs):
-        cls = self._register(attrs)
-        if tag not in self.VOID:
-            self._stack.append((tag, cls))
-
-    def handle_startendtag(self, tag, attrs):
-        self._register(attrs)
-
-    def handle_endtag(self, tag):
-        for i in range(len(self._stack) - 1, -1, -1):
-            if self._stack[i][0] == tag:
-                del self._stack[i:]
-                return
 
 
 def _assert_the_legend_sits_beside_the_map(html: str) -> None:

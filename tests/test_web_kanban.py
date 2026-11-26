@@ -39,6 +39,71 @@ from tests.fixtures.sample_box.beeline import get_beeline as get_sample_beeline
 from boxes.wms_design import get_definition as get_mod_def
 from boxes.wms_design import get_beeline as get_mod_beeline
 
+
+class _ClassParents:
+    """把一段 HTML 摊成「每个 class 挂在谁底下」+「每个 class 出现几次」
+
+    只看结构（谁是谁的子节点），不看长相。
+    """
+
+    VOID = {"br", "hr", "img", "input", "meta", "link", "source", "path", "line"}
+
+    def __init__(self, html: str) -> None:
+        from html.parser import HTMLParser
+
+        outer = self
+
+        class _P(HTMLParser):
+            def __init__(self) -> None:
+                super().__init__(convert_charrefs=True)
+                self.stack: list[tuple[str, str]] = []
+
+            def _register(self, attrs) -> str:
+                cls = (dict(attrs).get("class") or "").strip()
+                parent = self.stack[-1][1] if self.stack else ""
+                for c in cls.split():
+                    outer.count[c] = outer.count.get(c, 0) + 1
+                    outer.parent_of.setdefault(c, tuple(parent.split()))
+                return cls
+
+            def handle_starttag(self, tag, attrs):
+                cls = self._register(attrs)
+                if tag not in outer.VOID:
+                    self.stack.append((tag, cls))
+
+            def handle_startendtag(self, tag, attrs):
+                self._register(attrs)
+
+            def handle_endtag(self, tag):
+                for i in range(len(self.stack) - 1, -1, -1):
+                    if self.stack[i][0] == tag:
+                        del self.stack[i:]
+                        return
+
+        self.parent_of: dict[str, tuple[str, ...]] = {}
+        self.count: dict[str, int] = {}
+        parser = _P()
+        parser.feed(html)
+
+
+def _js_const_block(name: str) -> str:
+    """抠出页面上的一个 JS 常量（按方括号配平，能装对象字面量）
+
+    `_js_const` 只认 `const X = 数字` 这种单行字面量；
+    Tab 注册表里装的是函数引用，抠不出来——这里按括号配平取整块。
+    """
+    start = HTML_PAGE.index(f"const {name} = ")
+    i = HTML_PAGE.index("[", start)
+    depth = 0
+    for j in range(i, len(HTML_PAGE)):
+        if HTML_PAGE[j] == "[":
+            depth += 1
+        elif HTML_PAGE[j] == "]":
+            depth -= 1
+            if depth == 0:
+                return HTML_PAGE[start : j + 1] + ";"
+    raise AssertionError(f"HTML_PAGE 里常量 {name} 的括号没配平")
+
 def _registry_roster() -> list[str]:
     """看板名册 = 注册表按业务流向排出来的那一串（**从注册表推**，不手抄）
 
@@ -1341,6 +1406,57 @@ def _run_scope_links(cases: list[tuple[str, str]]) -> dict[tuple[str, str], str]
     return {tuple(json.loads(k)): tuple(v) for k, v in raw.items()}
 
 
+def _js_let(name: str) -> str:
+    """抠出页面上的一个 `let` 状态变量（单行声明）"""
+    for line in HTML_PAGE.splitlines():
+        s = line.strip()
+        if s.startswith(f"let {name} ="):
+            return s
+    raise AssertionError(f"HTML_PAGE 里找不到状态变量 {name}")
+
+
+def _render_sidebar_html() -> str:
+    """在 node 里真跑页面上的 renderSidebar（左栏），把它吐出来的 HTML 拿回来
+
+    抄一份渲染逻辑到 Python 里再测 = **第二份事实**：
+    页面改了左栏结构，守卫还在按老结构判，绿着说明不了任何事。
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node，跳过左栏 Tab 守卫")
+
+    src = "\n".join(
+        [
+            _js_const_block("SIDE_TABS"),
+            _js_let("_sideTab"),
+            _extract_js_function("esc"),
+            _extract_js_function("renderTaskList"),
+            _extract_js_function("renderSidebar"),
+            # 这些只管「链接长什么样 / 文字怎么写」，跟「谁挂在谁底下」无关：
+            # 换掉它们，省得把整页搬进 node。
+            "function scopeBoxIds(data) { return null; }",
+            "function currentScopeLabel() { return 'WMS 仓'; }",
+            "function taskHref(ref, scope, view) { return '/?task=' + ref; }",
+            "function overviewHref(view, scope) { return '/'; }",
+            "function fmtClock(at) { return '11-25 08:53'; }",
+            "function runStateLabel(s, a) { return s; }",
+            "let _task = '';",
+            "let _scopeFilter = 'WMS';",
+            "let _view = 'topology';",
+            "const DATA = {tasks: [], box_filter: ''};",
+            "console.log(renderSidebar(DATA));",
+        ]
+    )
+    proc = subprocess.run(
+        [node, "-e", src], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, f"node 跑 renderSidebar 失败：\n{proc.stderr}"
+    return proc.stdout
+
+
 class TestScopeAndViewLinksAreRealQueryUrls:
     """侧边栏每一条 href 都必须是一条**真的**查询 URL
 
@@ -1602,7 +1718,6 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         assert "boxHref(" not in sidebar, (
             "侧边栏不该再生成盒子详情链接——盒子在中间那栏"
         )
-        assert 'side-group-label">任务列表' in sidebar, "侧边栏应该是「任务列表」"
         assert "taskHref(" in sidebar, "活儿项要能点进去（真链接）"
         # 只查「没有 overviewHref」有盲区：有人用**硬编码** href 加回一个
         # 范围段也照样滑过去。结构判据没有盲区——侧边栏只准有一个分组。
@@ -1611,6 +1726,62 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
             f"{sidebar.count('side-group')} 个——范围被搬回来了"
         )
         assert "renderFilters" in HTML_PAGE, "顶部筛选条的渲染函数不见了"
+
+    def test_the_sidebar_is_a_tab_bar_with_the_task_list_as_its_first_tab(self):
+        """左栏是 **Tab 条 + 面板**；「任务列表」是其中一个 Tab
+
+        整条左栏都是**任务管理**的事：以后加功能 = **加一个 Tab**
+        （注册表里加一行 + 一个渲染函数），左栏骨架、样式、切换逻辑都不用动。
+        不是往列表下面再堆一段标题——堆多了读者得滚到最下面
+        才知道这栏还有什么。
+
+        判据跑的是**真代码**（node 里真跑 renderSidebar），看它吐出来的结构：
+        - Tab 条和面板区**平级**（Tab 条不在任何面板里面）
+        - 每个 Tab 都有对应的一个面板，一个都不多
+        - 恰好一个 Tab、恰好一个面板是当前选中的
+        """
+        html = _render_sidebar_html()
+        tree = _ClassParents(html)
+        parent = tree.parent_of
+
+        assert "side-tabs" in parent, "左栏没有 Tab 条"
+        assert "side-panels" in parent, "左栏没有面板区"
+        # Tab 条和面板区**平级**：Tab 条不在面板区里面
+        assert parent.get("side-tabs") == (), (
+            "Tab 条被塞进了某个面板里——它得跟面板区平级，"
+            "否则切 Tab 时它跟着一起消失"
+        )
+        assert parent.get("side-panels") == (), (
+            "面板区不在左栏顶上（它被别的元素包住了）"
+        )
+        # 每个 Tab 一个面板，一个都不多
+        assert tree.count.get("side-tab") == tree.count.get("side-panel"), (
+            f"Tab 数（{tree.count.get('side-tab')}）和面板数"
+            f"（{tree.count.get('side-panel')}）对不上——"
+            "有 Tab 没有面板，点进去是空的"
+        )
+        assert tree.count.get("side-tab", 0) >= 1, "左栏连一个 Tab 都没有"
+        # 恰好一个选中：Tab 和面板各一个
+        assert html.count("is-active") == 2, (
+            "当前选中的 Tab 和面板必须各恰好一个（"
+            f"实际 {html.count('is-active')} 处）"
+        )
+
+    def test_the_task_list_tab_is_registered_with_its_label(self):
+        """Tab 的名字在**注册表**里，不在段标题里
+
+        「任务列表」这四个字现在住在 Tab 条上。注册表是**唯一真源**：
+        以后加 Tab 的人照着这张表加，标签、面板、切换逻辑都不用另写一遍。
+        """
+        tabs = _js_const_block("SIDE_TABS")
+        assert "id: 'tasks'" in tabs, "「任务列表」这个 Tab 没在注册表里"
+        assert "label: '任务列表'" in tabs, "Tab 的名字写错了"
+        # 名字不许在面板里再写一遍：同一个名字一屏出现两次就是噪音
+        # （先剥注释——注释里当然会提到这个名字）
+        task_list = _strip_js_comments(_extract_js_function("renderTaskList"))
+        assert "任务列表" not in task_list, (
+            "「任务列表」已经住在 Tab 条上了，面板里别再写一遍"
+        )
 
     def test_the_page_header_is_just_the_title(self):
         """副标题和 in-flight 计数都删了，标题改名

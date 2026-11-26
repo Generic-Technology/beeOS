@@ -605,17 +605,39 @@ HTML_PAGE = f"""<!DOCTYPE html>
     padding: 20px 22px 24px;
     background: #fff; border: 1px solid #dbe3ec; border-radius: 12px;
   }}
-  .side-group-label {{
-    font-size: 10px; color: #94a3b8; letter-spacing: 0.1em;
-    text-transform: uppercase; margin-bottom: 6px;
+  /* ===== 左栏的 Tab =====
+     整条左栏都是**任务管理**的事：现在只有「任务列表」一个 Tab，
+     以后加功能 = 加一个 Tab（加一行 + 一个渲染函数），左栏骨架不动。
+
+     为什么是 Tab，而不是再往下加一段标题：左栏会越来越长，
+     读者得滚到最下面才知道这栏还有什么。Tab 把「这一栏有哪些功能」
+     摆在一行里，而且**那行位置不动**（切 Tab 时它一直在）。 */
+  .side-tabs {{
+    display: flex; gap: 2px; flex: 0 0 auto;
+    border-bottom: 1px solid #e6ecf3;
   }}
-  /* 标签后面那半句：这栏在**当前口径**下回答什么。
+  .side-tab {{
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    font-family: inherit; font-size: 12px; font-weight: 600; color: #64748b;
+    padding: 6px 10px 7px; margin-bottom: -1px;
+    border-bottom: 2px solid transparent;
+  }}
+  .side-tab:hover {{ color: #0f172a; }}
+  .side-tab.is-active {{ color: #0f766e; border-bottom-color: #0f766e; }}
+  .side-tab:focus-visible {{ outline: 2px solid #0f766e; outline-offset: -2px; }}
+  /* 面板：一次只露一个。没选中的那个 display:none——
+     它还在 DOM 里（切回来不用重新拉数据），
+     但**看不见也读不到**（读屏软件也读不到它）。 */
+  .side-panels {{ flex: 1 1 auto; min-height: 0; display: flex; }}
+  .side-panel {{
+    display: none; flex: 1 1 auto; min-height: 0; flex-direction: column;
+  }}
+  .side-panel.is-active {{ display: flex; }}
+  /* Tab 下面那行小字：这一栏在**当前口径**下回答什么。
      盒子页的左栏只列这只盒子参与过的任务——不说清楚，
      读者会以为这就是全平台的任务清单。 */
-  .side-group-sub {{
-    display: block; margin-top: 2px;
-    font-size: 10px; letter-spacing: 0; text-transform: none;
-    color: #64748b;
+  .side-scope-note {{
+    font-size: 10px; color: #64748b; margin-bottom: 8px; line-height: 1.5;
   }}
   .side-list {{ display: flex; flex-direction: column; gap: 2px; }}
   .side-item {{
@@ -2163,6 +2185,77 @@ function currentScopeLabel() {{
   return _scopeFilter === ALL_SCOPES ? '全部范围' : scopeLabel(_scopeFilter);
 }}
 
+// ===== 左栏的 Tab =====
+//
+// 整条左栏都是**任务管理**的事。现在只有「任务列表」一个 Tab；
+// 以后加功能 = **在这张表里加一行**（id + 标签 + 渲染函数），
+// 骨架、样式、切换逻辑都不用动——不重排左栏，不往列表下面再堆一段。
+//
+// Tab 条**固定在左栏顶上**（切 Tab 时那行不动）：它回答
+// 「这一栏有哪些功能」——这个答案埋在列表下面就答不了了。
+const SIDE_TABS = [
+  {{ id: 'tasks', label: '任务列表', render: renderTaskList }},
+];
+
+// 当前在哪个 Tab。
+// **不进 URL**：现在只有一个 Tab，没有第二个状态值得存；
+// 等真有第二个 Tab、读者开始要「把这一页发给同事看同一个 Tab」时再加。
+let _sideTab = 'tasks';
+
+// 左栏拼装：Tab 条 + 各个面板。
+//
+// 面板**全都渲染**，没选中的用 CSS 藏起来：切回来时不用重新拉数据。
+function renderSidebar(data) {{
+  let html = '<div class="side-tabs" role="tablist">';
+  for (const tab of SIDE_TABS) {{
+    const on = tab.id === _sideTab;
+    html += '<button type="button" class="side-tab' + (on ? ' is-active' : '')
+      + '" role="tab" aria-selected="' + (on ? 'true' : 'false')
+      + '" data-side-tab="' + esc(tab.id) + '">'
+      + esc(tab.label) + '</button>';
+  }}
+  html += '</div><div class="side-panels">';
+  for (const tab of SIDE_TABS) {{
+    const on = tab.id === _sideTab;
+    html += '<div class="side-panel' + (on ? ' is-active' : '')
+      + '" role="tabpanel" data-side-panel="' + esc(tab.id) + '">'
+      + tab.render(data) + '</div>';
+  }}
+  html += '</div>';
+  return html;
+}}
+
+// 切 Tab 的点击：**事件委托**绑在左栏这个容器上。
+//
+// 为什么不给每个按钮单独绑：左栏可能被整体重建（ensureSidebar），
+// 绑在按钮上的监听器会跟着那个节点一起没了——于是「按下去没反应」，
+// 而且**不报错**：按钮还在、样式还在，只是没人接它的点击。
+// 绑在容器上，容器不换，监听器就一直在。
+function initSideTabs() {{
+  const el = document.getElementById('sidebar');
+  if (!el) return;
+  el.addEventListener('click', (ev) => {{
+    // ev.target 未必是元素（点在文字节点上时可能是它）：
+    // 没有 closest 就不是点 Tab，交给别的逻辑
+    if (!ev.target || !ev.target.closest) return;
+    const btn = ev.target.closest('[data-side-tab]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-side-tab');
+    if (!id || id === _sideTab) return;
+    _sideTab = id;
+    // 立刻切，不等下一轮刷新——等 2 秒再切，按下去像没按
+    for (const b of el.querySelectorAll('[data-side-tab]')) {{
+      const on = (b.getAttribute('data-side-tab') || '') === id;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    }}
+    for (const p of el.querySelectorAll('[data-side-panel]')) {{
+      p.classList.toggle('is-active',
+        (p.getAttribute('data-side-panel') || '') === id);
+    }}
+  }});
+}}
+
 // ===== 左栏 = 任务（任务）=====
 //
 // 左栏回答「现在有哪些任务在飞」，中间的 BeeBox Map 回答「盒子和接线长什么样」。
@@ -2196,12 +2289,16 @@ function renderTaskList(data) {{
   const LIMIT = 12;
   let html = '';
   html += '<div class="side-group">';
-  html += '<div class="side-group-label">任务列表'
-    + (boxFilter ? '<span class="side-group-sub">这只盒子参与过的</span>' : '')
-    + (scope && !boxFilter
-        ? '<span class="side-group-sub">' + esc(currentScopeLabel()) + ' 牵到的</span>'
-        : '')
-    + '</div><div class="side-list">';
+  // 「任务列表」这个标题**住在上面的 Tab 条上**，这里不重复写一遍
+  // （同一个名字在一屏里出现两次，就是噪音）。
+  // 这里只留**口径**：这一栏在当前过滤下回答什么。
+  const qualifier = boxFilter
+    ? '这只盒子参与过的'
+    : (scope ? currentScopeLabel() + ' 牵到的' : '');
+  if (qualifier) {{
+    html += '<div class="side-scope-note">' + esc(qualifier) + '</div>';
+  }}
+  html += '<div class="side-list">';
   if (!tasks.length) {{
     if (boxFilter) {{
       html += '<div class="rail-empty">这只盒子还没参与过任何任务。'
@@ -2275,9 +2372,10 @@ function ensureSidebar(el, data, current) {{
     (data.tasks || []).map(
       t => t.ref + ':' + (t.at || '') + ':' + t.state + ':' + t.runs).join(','),
     _task,
+    _sideTab,   // 换了 Tab = 结构变了 = 该重建
   ].join('#');
   if (el.dataset.sig !== sig) {{
-    el.innerHTML = renderTaskList(data);
+    el.innerHTML = renderSidebar(data);
     el.dataset.sig = sig;
   }}
   // active 态每轮**先清后加**：只 add 不 remove 的话，上一轮选中的那件
@@ -5294,6 +5392,7 @@ window.addEventListener('resize', () => {{
   fitRadial();
 }});
 syncHeadHeight();
+initSideTabs();
 </script>
 </body>
 </html>
