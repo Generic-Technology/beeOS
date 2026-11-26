@@ -635,9 +635,12 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .side-panel.is-active {{ display: flex; }}
   /* Tab 下面那行小字：这一栏在**当前口径**下回答什么。
      盒子页的左栏只列这只盒子参与过的任务——不说清楚，
-     读者会以为这就是全平台的任务清单。 */
+     读者会以为这就是全平台的任务清单。
+
+     **它跟 Tab 条之间留一段空**：紧贴着 Tab 条，它就成了 Tab 的副标题，
+     而它其实说的是**下面那份列表**的口径。 */
   .side-scope-note {{
-    font-size: 10px; color: #64748b; margin-bottom: 8px; line-height: 1.5;
+    font-size: 10px; color: #64748b; margin: 10px 0 8px; line-height: 1.5;
   }}
   .side-list {{ display: flex; flex-direction: column; gap: 2px; }}
   .side-item {{
@@ -2291,10 +2294,16 @@ function renderTaskList(data) {{
   html += '<div class="side-group">';
   // 「任务列表」这个标题**住在上面的 Tab 条上**，这里不重复写一遍
   // （同一个名字在一屏里出现两次，就是噪音）。
+  //
   // 这里只留**口径**：这一栏在当前过滤下回答什么。
+  //
+  // **必须是一句完整的话**：原来这里是段标题的副句（「任务列表 / ……牵到的」），
+  // 标题搬进 Tab 之后它就成了**没有主语的悬空定语**——
+  // 而且紧贴 Tab 条，看着像 Tab 的副标题，其实它说的是**列表**的口径。
+  // 「只列 X」把主语补回来：谁在只列，列的是什么。
   const qualifier = boxFilter
-    ? '这只盒子参与过的'
-    : (scope ? currentScopeLabel() + ' 牵到的' : '');
+    ? '只列这只盒子参与过的任务'
+    : (scope ? '只列 ' + currentScopeLabel() + ' 牵到的任务' : '');
   if (qualifier) {{
     html += '<div class="side-scope-note">' + esc(qualifier) + '</div>';
   }}

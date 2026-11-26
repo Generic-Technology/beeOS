@@ -1415,11 +1415,14 @@ def _js_let(name: str) -> str:
     raise AssertionError(f"HTML_PAGE 里找不到状态变量 {name}")
 
 
-def _render_sidebar_html() -> str:
+def _render_sidebar_html(**data_overrides) -> str:
     """在 node 里真跑页面上的 renderSidebar（左栏），把它吐出来的 HTML 拿回来
 
     抄一份渲染逻辑到 Python 里再测 = **第二份事实**：
     页面改了左栏结构，守卫还在按老结构判，绿着说明不了任何事。
+
+    `data_overrides` 用来改喂进去的数据（当前范围 / 当前盒子），
+    好让守卫能验「过滤了才出现」的那些分支。
     """
     import shutil
     import subprocess
@@ -1427,6 +1430,9 @@ def _render_sidebar_html() -> str:
     node = shutil.which("node")
     if not node:
         pytest.skip("没有 node，跳过左栏 Tab 守卫")
+
+    data = {"tasks": [], "box_filter": ""}
+    data.update(data_overrides)
 
     src = "\n".join(
         [
@@ -1437,8 +1443,8 @@ def _render_sidebar_html() -> str:
             _extract_js_function("renderSidebar"),
             # 这些只管「链接长什么样 / 文字怎么写」，跟「谁挂在谁底下」无关：
             # 换掉它们，省得把整页搬进 node。
-            "function scopeBoxIds(data) { return null; }",
-            "function currentScopeLabel() { return 'WMS 仓'; }",
+            "function scopeBoxIds(data) { return new Set(['wms_ops_box']); }",
+            "function currentScopeLabel() { return 'WMS 仓储'; }",
             "function taskHref(ref, scope, view) { return '/?task=' + ref; }",
             "function overviewHref(view, scope) { return '/'; }",
             "function fmtClock(at) { return '11-25 08:53'; }",
@@ -1446,7 +1452,7 @@ def _render_sidebar_html() -> str:
             "let _task = '';",
             "let _scopeFilter = 'WMS';",
             "let _view = 'topology';",
-            "const DATA = {tasks: [], box_filter: ''};",
+            "const DATA = " + json.dumps(data, ensure_ascii=False) + ";",
             "console.log(renderSidebar(DATA));",
         ]
     )
@@ -1782,6 +1788,37 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         assert "任务列表" not in task_list, (
             "「任务列表」已经住在 Tab 条上了，面板里别再写一遍"
         )
+
+    def test_the_sidebar_scope_note_is_a_full_sentence(self):
+        """左栏那行口径说明必须是一句**完整的话**，不是悬空的定语
+
+        它原来是段标题的副句（「任务列表 / WMS 仓储 牵到的」）——
+        标题搬进 Tab 之后，它就成了**没有主语的悬空定语**，
+        而且紧贴 Tab 条，看着像 Tab 的副标题，
+        其实它说的是**下面那份列表**的口径。
+
+        「只列 X」把主语补回来：谁在只列，列的是什么。
+        两种过滤都要是完整句（都带「只列」）。
+        """
+        for overrides, what in (
+            ({"box_filter": "wms_ops_box"}, "盒子页"),
+            ({"tasks": [{"ref": "t1", "at": 0, "state": "completed",
+                         "boxes": [{"box_id": "wms_ops_box",
+                                    "display_name": "WMS Ops Box",
+                                    "status": "completed"}]}]}, "范围页"),
+        ):
+            html = _render_sidebar_html(**overrides)
+            m = re.search(r'<div class="side-scope-note">([^<]*)</div>', html)
+            assert m, f"{what}：左栏没有口径说明行"
+            text = m.group(1)
+            assert text.startswith("只列"), (
+                f"{what}：口径说明是悬空的定语（{text!r}）——"
+                "标题搬进 Tab 之后它没了主语，读起来像 Tab 的副标题，"
+                "其实说的是列表的口径"
+            )
+            assert "任务" in text, (
+                f"{what}：口径说明要写清列的是什么（{text!r}）"
+            )
 
     def test_the_page_header_is_just_the_title(self):
         """副标题和 in-flight 计数都删了，标题改名
