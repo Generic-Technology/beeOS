@@ -1,5 +1,5 @@
 """
-tests.test_workshop - BeeBox Workshop（工作台）的守卫
+tests.test_workshop - BeeOS Workshop（工作台）的守卫
 
 工作台第一版只做**体检台**：把一只盒子声明得对不对摊开给人看。
 
@@ -287,8 +287,40 @@ class TestHealthEndpoints:
 
         with urllib.request.urlopen(f"{server_url}/workshop") as resp:
             body = resp.read().decode("utf-8")
-        assert "BeeBox Workshop" in body
+        # 页头写的是**产品**名：工作台和看板是同一个服务里的两个页面
+        assert "BeeOS Workshop" in body
+        assert "BeeBox Workshop" not in body, (
+            "页头不该写子对象名（BeeBox）——两个面板都叫「BeeBox X」，"
+            "读者分不清自己看的是盒子还是平台"
+        )
         assert "workshop-data" in body
+
+    def test_both_pages_of_the_product_use_the_product_name(self, server_url):
+        """同一个产品的两个页面，页头写**同一个产品名**
+
+        看板 = 「BeeOS Fulfillment Center」，工作台 = 「BeeOS Workshop」。
+        两个页面是同一个服务里的两个页面（`/` 和 `/workshop`），
+        页头写子对象名（BeeBox）的话，两个面板都叫「BeeBox X」，
+        读者分不清自己看的是盒子还是平台。
+
+        **盒子那层的名字不许跟着改**：图上那张是「BeeBox Map」
+        （盒子和它们的接线）——那是一个**东西**的名字，不是页面名。
+        """
+        import urllib.request
+
+        from kanban.web import HTML_PAGE
+
+        assert "<h1>BeeOS Fulfillment Center</h1>" in HTML_PAGE, (
+            "看板的页头写产品名（beeOS）"
+        )
+        with urllib.request.urlopen(f"{server_url}/workshop") as resp:
+            body = resp.read().decode("utf-8")
+        assert "<h1>BeeOS Workshop</h1>" in body, (
+            "工作台的页头也写产品名（beeOS）"
+        )
+        assert "BeeBox Map" in HTML_PAGE, (
+            "图上那张是「BeeBox Map」——那是东西的名字，不是页面名"
+        )
 
     def test_the_workshop_is_read_only(self, server_url):
         """工作台第一版不许能改东西

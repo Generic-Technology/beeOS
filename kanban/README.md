@@ -85,7 +85,8 @@ runtime/
 - **抬头的名字分两层，别弄反**：抬头是**平台**名（BeeOS Fulfillment Center）——
   看板看的是「哪个协作范围有哪些盒子、谁交给谁、跑得怎么样」，层级在平台；
   图上那张是**盒子**名（BeeBox Map，盒子和它们的接线），
-  工作台是 BeeBox Workshop（做盒子的地方）。两个面板都叫「BeeBox X」的话，
+  工作台是 BeeOS Workshop（做盒子的地方）——它也是 beeOS 的一个页面。
+  两个面板都叫「BeeBox X」的话，
   读者分不清自己看的是盒子还是平台
 - **界面上两个产品名一样大写**（BeeOS / BeeBox）：同一个词两种写法
   （`beeOS` 跟 `BeeBox Map` 并排）看着像两样东西——那不是风格，是**名字不一致**。

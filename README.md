@@ -311,7 +311,7 @@ python scripts/new_box.py --help
   - `__init__.py` — 接入面包入口（边界声明：它和看板 / 工作台的区别）
   - `README.md` — 接入面说明（装什么不装什么、对外动作清单、六条纪律、当前状态）
 
-- **`workshop/`** — BeeBox Workshop：做 BeeBox 的工作台（与 `kanban/` 平级，
+- **`workshop/`** — BeeOS Workshop：做 BeeBox 的工作台（与 `kanban/` 平级，
   同一个服务、同一个端口，路径 `/workshop`）。第一版只做**体检台**：
   把一只盒子声明得对不对摊开给人看，只读。
   - `__init__.py` — 工作台包入口

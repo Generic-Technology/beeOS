@@ -440,13 +440,14 @@ HTML_PAGE = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<!-- 抬头写的是**平台**的名字：看板是 beeOS 的履约面（协作范围 / 接线 / 跑得怎么样），
-     层级在**平台**，不在盒子。写成「BeeBox …」是把容器名放在系统的位置上，
-     而且跟旁边那个「BeeBox Workshop」（体检台，层级在盒子）撞脸——
-     两个面板都叫 BeeBox X，读者分不清自己看的是盒子还是平台。
-     **盒子的名字一个字不动**：图上那张是「BeeBox Map」（盒子和它们的接线），
-     工作台是「BeeBox Workshop」（做盒子的地方）——那两个名字是对的，
-     改了才叫把层级说反。
+<!-- 抬头写的是**产品**的名字：beeOS 的两个页面（看板 / 工作台）
+     都是同一个服务里的页面，页头该写产品名，不该写子对象名。
+     写成「BeeBox …」是把容器名放在产品的位置上——
+     而且跟工作台撞脸：两个面板都叫 BeeBox X，
+     读者分不清自己看的是盒子还是平台。
+
+     **盒子的名字一个字不动**：图上那张是「BeeBox Map」（盒子和它们的接线）——
+     那是一个**东西**的名字，不是页面名。
 
      **界面上两个产品名一样大写**（BeeOS / BeeBox）：同一个词两种写法
      （beeOS 跟 BeeBox Map 并排）看着就像两样东西。
@@ -5492,7 +5493,7 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/" or parsed.path == "/index.html":
             self._serve_html()
         elif parsed.path == "/workshop" or parsed.path == "/workshop/":
-            # **BeeBox Workshop**（工作台）：盒子体检台，只读。
+            # **BeeOS Workshop**（工作台）：盒子体检台，只读。
             #
             # 目录平级、进程不分开——同一个服务、同一个端口。
             # 看板那边不放能改东西的入口，所以工作台单开一个路径。
@@ -5768,7 +5769,7 @@ class KanbanRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_workshop(self) -> None:
-        """BeeBox Workshop 的只读页面
+        """BeeOS Workshop 的只读页面
 
         体检数据是**现算的**：判定读的是当下这只盒子的声明，
         不是缓存的快照——快照会让人对着昨天的结论修今天的盒子。

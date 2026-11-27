@@ -1,7 +1,9 @@
 """
-workshop.views - BeeBox Workshop 的只读页面
+workshop.views - BeeOS Workshop 的只读页面
 
 **工作台是做 BeeBox 的地方，看板是盯故障的面。**
+页头写的是**产品**名（beeOS）：工作台和看板是同一个服务里的两个页面，
+页头该写产品名，不该写子对象名——「做盒子」这件事由副标题说明。
 看板那边不放能改东西的入口，所以工作台单开一个目录。
 
 第一版只做一件事：**体检台**——把一只盒子声明得对不对，摊开给人看。
@@ -125,7 +127,7 @@ def workshop_payload(store: Any = None) -> dict[str, Any]:
         "passed": sum(1 for h in healths if h.verdict == "pass"),
     }
     return {
-        "title": "BeeBox Workshop",
+        "title": "BeeOS Workshop",
         "subtitle": "盒子体检台 · 只读",
         "counts": counts,
         "boxes": boxes,
@@ -158,7 +160,7 @@ _PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BeeBox Workshop</title>
+<title>BeeOS Workshop</title>
 <style>
   :root {
     --bg: #0f1115;
@@ -267,7 +269,7 @@ _PAGE = r"""<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>BeeBox Workshop</h1>
+  <h1>BeeOS Workshop</h1>
   <div class="sub">盒子体检台 · 只读——把每只盒子声明得对不对摊开给人看。判定在 runtime/box_health.py，守卫和这个页面读同一份。</div>
   <div class="counts" id="counts"></div>
 </header>

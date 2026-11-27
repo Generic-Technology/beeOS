@@ -1,5 +1,5 @@
 """
-workshop - BeeBox Workshop：做 BeeBox 的工作台
+workshop - BeeOS Workshop：做 BeeBox 的工作台
 
 **和看板的区别**（为什么分成两个目录）：
 

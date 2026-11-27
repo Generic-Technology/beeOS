@@ -350,7 +350,7 @@ def _fake_catalog() -> dict:
         _fake_box("box_ok_2", "过的二号", "pass"),
     ]
     return {
-        "title": "BeeBox Workshop",
+        "title": "BeeOS Workshop",
         "subtitle": "盒子体检台 · 只读",
         "counts": {
             "boxes": len(boxes),

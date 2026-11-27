@@ -1951,17 +1951,16 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         """抬头写**平台**的名字（BeeOS）；盒子的名字（BeeBox Map）一个字不动
 
         两个面板是**不同层级**的东西：
-        - **BeeBox Workshop**（体检台）——层级在**盒子**：这只盒子声明得对不对
+        - **BeeOS Workshop**（体检台）——层级在**盒子**：这只盒子声明得对不对
         - **BeeOS Fulfillment Center**（本页面）——层级在**平台**：
           哪个协作范围有哪些盒子、谁交给谁、跑得怎么样
 
-        抬头顶着「BeeBox」= 把容器名放在系统的位置上，
-        而且跟旁边那个「BeeBox Workshop」撞脸：两个面板都叫 BeeBox X，
-        读者分不清自己看的是盒子还是平台。
+        两个页面是**同一个服务里的两个页面**（`/workshop` 和 `/`），
+        页头都写**产品名**（beeOS）：页头写子对象名（BeeBox），
+        两个面板都叫「BeeBox X」，读者分不清自己看的是盒子还是平台。
 
-        **反过来也不许改**：图上那张是「BeeBox Map」（盒子和它们的接线），
-        工作台是「BeeBox Workshop」（做盒子的地方）——
-        那是**盒子**的名字，层级本来就对，改成 BeeOS 才是把层级说反。
+        **反过来也不许改**：图上那张是「BeeBox Map」（盒子和它们的接线）——
+        那是一个**东西**的名字，不是页面名，改成 BeeOS 才是把层级说反。
         """
         code = _strip_js_comments(HTML_PAGE)
 
