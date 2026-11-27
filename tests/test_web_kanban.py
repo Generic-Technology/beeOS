@@ -1789,36 +1789,44 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
             "「任务列表」已经住在 Tab 条上了，面板里别再写一遍"
         )
 
-    def test_the_sidebar_scope_note_is_a_full_sentence(self):
-        """左栏那行口径说明必须是一句**完整的话**，不是悬空的定语
+    def test_the_scope_note_only_says_what_is_not_said_elsewhere(self):
+        """口径说明**只在别处没说过的时候**才出现
 
-        它原来是段标题的副句（「任务列表 / WMS 仓储 牵到的」）——
-        标题搬进 Tab 之后，它就成了**没有主语的悬空定语**，
-        而且紧贴 Tab 条，看着像 Tab 的副标题，
-        其实它说的是**下面那份列表**的口径。
-
-        「只列 X」把主语补回来：谁在只列，列的是什么。
-        两种过滤都要是完整句（都带「只列」）。
+        - **范围**：写在中栏的「范围」chip 上（右栏的小标题还写着一遍）。
+          左栏再说一遍就是**同一份信息的第二遍**——两份事实迟早不一致，
+          而且读者要把同一句话读两遍。所以范围页**不写**这行。
+        - **盒子**：页面上**没有任何地方**说明「这一栏被这只盒子过滤过」
+          （盒子页的中栏是这只盒子的详情，不是清单）→ 这行必须留着，
+          而且必须是**一句完整的话**（不能是悬空的定语）。
         """
-        for overrides, what in (
-            ({"box_filter": "wms_ops_box"}, "盒子页"),
-            ({"tasks": [{"ref": "t1", "at": 0, "state": "completed",
-                         "boxes": [{"box_id": "wms_ops_box",
-                                    "display_name": "WMS Ops Box",
-                                    "status": "completed"}]}]}, "范围页"),
-        ):
-            html = _render_sidebar_html(**overrides)
-            m = re.search(r'<div class="side-scope-note">([^<]*)</div>', html)
-            assert m, f"{what}：左栏没有口径说明行"
-            text = m.group(1)
-            assert text.startswith("只列"), (
-                f"{what}：口径说明是悬空的定语（{text!r}）——"
-                "标题搬进 Tab 之后它没了主语，读起来像 Tab 的副标题，"
-                "其实说的是列表的口径"
-            )
-            assert "任务" in text, (
-                f"{what}：口径说明要写清列的是什么（{text!r}）"
-            )
+        tasks = [{"ref": "t1", "at": 0, "state": "completed",
+                  "boxes": [{"box_id": "wms_ops_box",
+                             "display_name": "WMS Ops Box",
+                             "status": "completed"}]}]
+
+        # 范围页：不写这行
+        scope_html = _render_sidebar_html(tasks=tasks)
+        assert 'class="side-scope-note"' not in scope_html, (
+            "范围已经写在「范围」chip 上了，左栏不要再写一遍——"
+            "同一份信息两处，就是两份事实"
+        )
+
+        # 盒子页：写，而且必须是完整句
+        box_html = _render_sidebar_html(tasks=tasks, box_filter="wms_ops_box")
+        m = re.search(r'<div class="side-scope-note">([^<]*)</div>', box_html)
+        assert m, (
+            "盒子页要写清这一栏被过滤过——页面上没有别的地方说这件事，"
+            "读者会以为这就是全平台的任务清单"
+        )
+        text = m.group(1)
+        assert text.startswith("只列"), (
+            f"口径说明是悬空的定语（{text!r}）——"
+            "标题搬进 Tab 之后它没了主语，读起来像 Tab 的副标题，"
+            "其实说的是列表的口径"
+        )
+        assert "任务" in text, (
+            f"口径说明要写清列的是什么（{text!r}）"
+        )
 
     def test_the_page_header_is_just_the_title(self):
         """副标题和 in-flight 计数都删了，标题改名
