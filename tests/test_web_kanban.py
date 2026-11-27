@@ -87,18 +87,23 @@ class _ClassParents:
 
 
 def _js_const_block(name: str) -> str:
-    """抠出页面上的一个 JS 常量（按方括号配平，能装对象字面量）
+    """抠出页面上的一个 JS 常量（按括号配平，能装对象 / 数组字面量）
 
     `_js_const` 只认 `const X = 数字` 这种单行字面量；
     Tab 注册表里装的是函数引用，抠不出来——这里按括号配平取整块。
     """
-    start = HTML_PAGE.index(f"const {name} = ")
-    i = HTML_PAGE.index("[", start)
+    head = f"const {name} = "
+    start = HTML_PAGE.index(head)
+    i = start + len(head)
+    while HTML_PAGE[i] not in "[{":
+        i += 1
+    open_ch = HTML_PAGE[i]
+    close_ch = "]" if open_ch == "[" else "}"
     depth = 0
     for j in range(i, len(HTML_PAGE)):
-        if HTML_PAGE[j] == "[":
+        if HTML_PAGE[j] == open_ch:
             depth += 1
-        elif HTML_PAGE[j] == "]":
+        elif HTML_PAGE[j] == close_ch:
             depth -= 1
             if depth == 0:
                 return HTML_PAGE[start : j + 1] + ";"
@@ -1415,6 +1420,47 @@ def _js_let(name: str) -> str:
     raise AssertionError(f"HTML_PAGE 里找不到状态变量 {name}")
 
 
+def _render_rail_html(**data_overrides) -> str:
+    """在 node 里真跑页面上的 renderRailColumn（右栏），把它吐出来的 HTML 拿回来
+
+    右栏跟左栏**共用同一套 Tab 机制**——所以它得用同一套判据验，
+    而且验的是它自己那份注册表（RAIL_TABS）。
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node，跳过右栏 Tab 守卫")
+
+    data = {"op_trails": []}
+    data.update(data_overrides)
+
+    src = "\n".join(
+        [
+            _js_const_block("RAIL_TABS"),
+            _js_const_block("LEGACY_OP_IDS"),
+            _js_let("_railTab"),
+            _extract_js_function("esc"),
+            _extract_js_function("renderRail"),
+            _extract_js_function("renderTabColumn"),
+            _extract_js_function("renderRailColumn"),
+            # 只管「文字怎么写 / 链接长什么样」的替身，跟结构无关
+            "function scopeBoxIds(data) { return new Set(['wms_ops_box']); }",
+            "function currentScopeLabel() { return 'WMS 仓储'; }",
+            "function fmtClock(at) { return '11-25 08:53'; }",
+            "let _task = '';",
+            "const DATA = " + json.dumps(data, ensure_ascii=False) + ";",
+            "console.log(renderRailColumn(DATA));",
+        ]
+    )
+    proc = subprocess.run(
+        [node, "-e", src], capture_output=True, text=True, timeout=30
+    )
+    assert proc.returncode == 0, f"node 跑 renderRailColumn 失败：\n{proc.stderr}"
+    return proc.stdout
+
+
 def _render_sidebar_html(**data_overrides) -> str:
     """在 node 里真跑页面上的 renderSidebar（左栏），把它吐出来的 HTML 拿回来
 
@@ -1440,6 +1486,7 @@ def _render_sidebar_html(**data_overrides) -> str:
             _js_let("_sideTab"),
             _extract_js_function("esc"),
             _extract_js_function("renderTaskList"),
+            _extract_js_function("renderTabColumn"),
             _extract_js_function("renderSidebar"),
             # 这些只管「链接长什么样 / 文字怎么写」，跟「谁挂在谁底下」无关：
             # 换掉它们，省得把整页搬进 node。
@@ -1733,44 +1780,93 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
         )
         assert "renderFilters" in HTML_PAGE, "顶部筛选条的渲染函数不见了"
 
-    def test_the_sidebar_is_a_tab_bar_with_the_task_list_as_its_first_tab(self):
-        """左栏是 **Tab 条 + 面板**；「任务列表」是其中一个 Tab
+    def test_both_columns_are_tab_bars_driven_by_the_same_mechanism(self):
+        """左栏（任务管理）和右栏（操作管理）**共用同一套 Tab 机制**
 
-        整条左栏都是**任务管理**的事：以后加功能 = **加一个 Tab**
-        （注册表里加一行 + 一个渲染函数），左栏骨架、样式、切换逻辑都不用动。
-        不是往列表下面再堆一段标题——堆多了读者得滚到最下面
-        才知道这栏还有什么。
+        两栏长得一样不是巧合，是**同一段代码**渲出来的——
+        样式、切换逻辑、状态机各一份。
+        两处各写一套 → 改一处忘一处，右栏就慢慢长得跟左栏不一样了。
 
-        判据跑的是**真代码**（node 里真跑 renderSidebar），看它吐出来的结构：
-        - Tab 条和面板区**平级**（Tab 条不在任何面板里面）
+        判据跑的是**真代码**（node 里真跑两栏各自的渲染函数），看它们
+        吐出来的结构：
+        - 每栏都有 Tab 条 + 面板区，且两者**平级**
         - 每个 Tab 都有对应的一个面板，一个都不多
         - 恰好一个 Tab、恰好一个面板是当前选中的
         """
-        html = _render_sidebar_html()
-        tree = _ClassParents(html)
-        parent = tree.parent_of
+        for name, html in (
+            ("左栏", _render_sidebar_html()),
+            ("右栏", _render_rail_html()),
+        ):
+            tree = _ClassParents(html)
+            parent = tree.parent_of
+            assert "panel-tabs" in parent, f"{name}没有 Tab 条"
+            assert "panel-panels" in parent, f"{name}没有面板区"
+            # Tab 条和面板区**平级**：Tab 条不在面板区里面
+            assert parent.get("panel-tabs") == (), (
+                f"{name}的 Tab 条被塞进了某个面板里——它得跟面板区平级，"
+                "否则切 Tab 时它跟着一起消失"
+            )
+            assert parent.get("panel-panels") == (), (
+                f"{name}的面板区不在栏的顶上（它被别的元素包住了）"
+            )
+            # 每个 Tab 一个面板，一个都不多
+            assert tree.count.get("panel-tab") == tree.count.get("panel-panel"), (
+                f"{name}的 Tab 数（{tree.count.get('panel-tab')}）和面板数"
+                f"（{tree.count.get('panel-panel')}）对不上——"
+                "有 Tab 没有面板，点进去是空的"
+            )
+            assert tree.count.get("panel-tab", 0) >= 1, f"{name}连一个 Tab 都没有"
+            # 恰好一个选中：Tab 和面板各一个
+            assert html.count("is-active") == 2, (
+                f"{name}当前选中的 Tab 和面板必须各恰好一个"
+                f"（实际 {html.count('is-active')} 处）"
+            )
 
-        assert "side-tabs" in parent, "左栏没有 Tab 条"
-        assert "side-panels" in parent, "左栏没有面板区"
-        # Tab 条和面板区**平级**：Tab 条不在面板区里面
-        assert parent.get("side-tabs") == (), (
-            "Tab 条被塞进了某个面板里——它得跟面板区平级，"
-            "否则切 Tab 时它跟着一起消失"
+    def test_the_two_columns_have_their_own_tab_registries(self):
+        """两栏各有自己的注册表：左栏任务管理，右栏操作管理
+
+        加一个功能 = 在对应那张表里加一行（id + 标签 + 渲染函数）。
+        两张表**分开**：左栏的功能不能混进右栏——
+        「这栏有哪些功能」是这栏的事。
+        """
+        side = _js_const_block("SIDE_TABS")
+        rail = _js_const_block("RAIL_TABS")
+        assert "id: 'tasks'" in side and "label: '任务列表'" in side, (
+            "左栏的「任务列表」没在左栏注册表里"
         )
-        assert parent.get("side-panels") == (), (
-            "面板区不在左栏顶上（它被别的元素包住了）"
+        assert "id: 'trails'" in rail and "label: '操作轨迹'" in rail, (
+            "右栏的「操作轨迹」没在右栏注册表里"
         )
-        # 每个 Tab 一个面板，一个都不多
-        assert tree.count.get("side-tab") == tree.count.get("side-panel"), (
-            f"Tab 数（{tree.count.get('side-tab')}）和面板数"
-            f"（{tree.count.get('side-panel')}）对不上——"
-            "有 Tab 没有面板，点进去是空的"
+        assert "任务列表" not in rail, "任务列表是左栏的功能，别混进右栏"
+        assert "操作轨迹" not in side, "操作轨迹是右栏的功能，别混进左栏"
+
+    def test_the_rail_title_lives_on_the_tab_not_in_the_panel(self):
+        """右栏的「操作轨迹」住在 Tab 条上，面板里不许再写一遍
+
+        同一个名字一屏出现两次就是噪音；而且它是**同一份信息两处**
+        ——两份事实迟早不一致。
+
+        面板里那个「口径」小字**不写范围**：范围写在中栏的范围 chip 上，
+        右栏再说一遍就是同一份信息的第二遍。
+        """
+        html = _render_rail_html(op_trails=[{
+            "box_id": "wms_ops_box", "display_name": "WMS Ops Box",
+            "at": "2026-11-25T08:53:12",
+            "ops": [{"op_id": "ops_intake", "status": "completed"}],
+            "declared_ops": ["ops_intake"],
+        }])
+        assert html.count("操作轨迹") == 1, (
+            "「操作轨迹」出现 "
+            f"{html.count('操作轨迹')} 次——它住在 Tab 条上，面板里别再写一遍"
         )
-        assert tree.count.get("side-tab", 0) >= 1, "左栏连一个 Tab 都没有"
-        # 恰好一个选中：Tab 和面板各一个
-        assert html.count("is-active") == 2, (
-            "当前选中的 Tab 和面板必须各恰好一个（"
-            f"实际 {html.count('is-active')} 处）"
+        note = re.search(r'<div class="panel-note">([^<]*)</div>', html)
+        assert note, "右栏没有口径说明行"
+        assert "WMS 仓储" not in note.group(1), (
+            f"右栏的口径说明又写了一遍范围（{note.group(1)!r}）——"
+            "范围写在中栏的「范围」chip 上"
+        )
+        assert "最近一次履约" in note.group(1), (
+            "右栏的口径说明要写清这一栏给的是什么"
         )
 
     def test_the_task_list_tab_is_registered_with_its_label(self):
@@ -1806,14 +1902,14 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
 
         # 范围页：不写这行
         scope_html = _render_sidebar_html(tasks=tasks)
-        assert 'class="side-scope-note"' not in scope_html, (
+        assert 'class="panel-note"' not in scope_html, (
             "范围已经写在「范围」chip 上了，左栏不要再写一遍——"
             "同一份信息两处，就是两份事实"
         )
 
         # 盒子页：写，而且必须是完整句
         box_html = _render_sidebar_html(tasks=tasks, box_filter="wms_ops_box")
-        m = re.search(r'<div class="side-scope-note">([^<]*)</div>', box_html)
+        m = re.search(r'<div class="panel-note">([^<]*)</div>', box_html)
         assert m, (
             "盒子页要写清这一栏被过滤过——页面上没有别的地方说这件事，"
             "读者会以为这就是全平台的任务清单"

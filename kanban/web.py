@@ -527,9 +527,12 @@ HTML_PAGE = f"""<!DOCTYPE html>
     padding: 14px;
     background: #fff; border: 1px solid #dbe3ec; border-radius: 12px;
   }}
-  /* ===== 右侧「操作轨迹」面板 =====
-     跟左侧盒子列表同一个角色：一个常驻的、跟主画面并排的读数区。
-     左边回答「有哪些盒子」，右边回答「它们刚才跑了哪几步」。
+  /* ===== 右侧「操作管理」面板 =====
+     跟左栏同一个角色：一个常驻的、跟主画面并排的读数区。
+     左栏回答「现在有哪些任务在飞」，右栏回答「它们刚才跑了哪几步」。
+
+     **栏的标题住在 Tab 条上**（.panel-tab），这里不再另写一遍——
+     同一个名字一屏出现两次就是噪音。
 
      高度上限跟着视口走：面板自己内部滚动，不把整页撑长。 */
   .rail {{
@@ -541,14 +544,10 @@ HTML_PAGE = f"""<!DOCTYPE html>
     background: #fff; border: 1px solid #dbe3ec; border-radius: 12px;
     overflow: hidden;
   }}
-  .rail-title {{
-    font-size: 10px; color: #94a3b8; letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }}
-  .rail-sub {{ font-size: 11px; color: #64748b; margin-top: -6px; }}
   .rail-list {{
     display: flex; flex-direction: column; gap: 10px;
-    overflow-y: auto; min-height: 0; padding-right: 2px;
+    flex: 1 1 auto; min-height: 0;
+    overflow-y: auto; padding-right: 2px;
   }}
   .rail-box {{
     border: 1px solid #e2e8f0; border-radius: 9px; padding: 8px 9px;
@@ -605,41 +604,42 @@ HTML_PAGE = f"""<!DOCTYPE html>
     padding: 20px 22px 24px;
     background: #fff; border: 1px solid #dbe3ec; border-radius: 12px;
   }}
-  /* ===== 左栏的 Tab =====
-     整条左栏都是**任务管理**的事：现在只有「任务列表」一个 Tab，
-     以后加功能 = 加一个 Tab（加一行 + 一个渲染函数），左栏骨架不动。
+  /* ===== 两栏的 Tab（一套机制，两栏共用）=====
+     左栏 = 任务管理，右栏 = 操作管理。两条栏长得一样不是巧合，
+     是**同一段代码**渲出来的：样式、切换逻辑、状态机各一份。
+     （两处各写一套 → 改一处忘一处，右栏就慢慢长得不一样了。）
 
-     为什么是 Tab，而不是再往下加一段标题：左栏会越来越长，
+     为什么是 Tab，而不是再往下加一段标题：栏会越来越长，
      读者得滚到最下面才知道这栏还有什么。Tab 把「这一栏有哪些功能」
      摆在一行里，而且**那行位置不动**（切 Tab 时它一直在）。 */
-  .side-tabs {{
+  .panel-tabs {{
     display: flex; gap: 2px; flex: 0 0 auto;
     border-bottom: 1px solid #e6ecf3;
   }}
-  .side-tab {{
+  .panel-tab {{
     appearance: none; border: 0; background: transparent; cursor: pointer;
     font-family: inherit; font-size: 12px; font-weight: 600; color: #64748b;
     padding: 6px 10px 7px; margin-bottom: -1px;
     border-bottom: 2px solid transparent;
   }}
-  .side-tab:hover {{ color: #0f172a; }}
-  .side-tab.is-active {{ color: #0f766e; border-bottom-color: #0f766e; }}
-  .side-tab:focus-visible {{ outline: 2px solid #0f766e; outline-offset: -2px; }}
+  .panel-tab:hover {{ color: #0f172a; }}
+  .panel-tab.is-active {{ color: #0f766e; border-bottom-color: #0f766e; }}
+  .panel-tab:focus-visible {{ outline: 2px solid #0f766e; outline-offset: -2px; }}
   /* 面板：一次只露一个。没选中的那个 display:none——
      它还在 DOM 里（切回来不用重新拉数据），
      但**看不见也读不到**（读屏软件也读不到它）。 */
-  .side-panels {{ flex: 1 1 auto; min-height: 0; display: flex; }}
-  .side-panel {{
+  .panel-panels {{ flex: 1 1 auto; min-height: 0; display: flex; }}
+  .panel-panel {{
     display: none; flex: 1 1 auto; min-height: 0; flex-direction: column;
   }}
-  .side-panel.is-active {{ display: flex; }}
+  .panel-panel.is-active {{ display: flex; }}
   /* Tab 下面那行小字：这一栏在**当前口径**下回答什么。
      盒子页的左栏只列这只盒子参与过的任务——不说清楚，
      读者会以为这就是全平台的任务清单。
 
      **它跟 Tab 条之间留一段空**：紧贴着 Tab 条，它就成了 Tab 的副标题，
-     而它其实说的是**下面那份列表**的口径。 */
-  .side-scope-note {{
+     而它其实说的是**下面那份内容**的口径。 */
+  .panel-note {{
     font-size: 10px; color: #64748b; margin: 10px 0 8px; line-height: 1.5;
   }}
   .side-list {{ display: flex; flex-direction: column; gap: 2px; }}
@@ -2188,14 +2188,92 @@ function currentScopeLabel() {{
   return _scopeFilter === ALL_SCOPES ? '全部范围' : scopeLabel(_scopeFilter);
 }}
 
-// ===== 左栏的 Tab =====
+// ===== 两栏的 Tab：一套机制，两张注册表 =====
+//
+// 左栏 = **任务管理**（SIDE_TABS），右栏 = **操作管理**（RAIL_TABS）。
+// 两条栏长得一样不是巧合，是**同一段代码**渲出来的——
+// 样式、切换逻辑、状态机各一份；两处各写一套，
+// 改一处忘一处，右栏就慢慢长得跟左栏不一样了。
+//
+// 每一栏的 Tab 条**固定在栏的顶上**（切 Tab 时那行不动）：它回答
+// 「这一栏有哪些功能」——这个答案埋在内容下面就答不了了。
+//
+// 加一个功能 = **在对应那张表里加一行**（id + 标签 + 渲染函数），
+// 骨架、样式、切换逻辑都不用动。
+function renderTabColumn(tabs, activeId, data) {{
+  let html = '<div class="panel-tabs" role="tablist">';
+  for (const tab of tabs) {{
+    const on = tab.id === activeId;
+    html += '<button type="button" class="panel-tab' + (on ? ' is-active' : '')
+      + '" role="tab" aria-selected="' + (on ? 'true' : 'false')
+      + '" data-panel-tab="' + esc(tab.id) + '">'
+      + esc(tab.label) + '</button>';
+  }}
+  html += '</div><div class="panel-panels">';
+  for (const tab of tabs) {{
+    const on = tab.id === activeId;
+    // 面板**全都渲染**，没选中的用 CSS 藏起来：切回来时不用重新拉数据。
+    html += '<div class="panel-panel' + (on ? ' is-active' : '')
+      + '" role="tabpanel" data-panel-for="' + esc(tab.id) + '">'
+      + tab.render(data) + '</div>';
+  }}
+  html += '</div>';
+  return html;
+}}
+
+// 切 Tab：把这一栏的 Tab / 面板的选中态对到 id 上。
+function applyPanelTab(el, id) {{
+  for (const b of el.querySelectorAll('[data-panel-tab]')) {{
+    const on = (b.getAttribute('data-panel-tab') || '') === id;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  }}
+  for (const p of el.querySelectorAll('[data-panel-for]')) {{
+    p.classList.toggle('is-active',
+      (p.getAttribute('data-panel-for') || '') === id);
+  }}
+}}
+
+// 切 Tab 的点击：**事件委托**绑在栏的容器上。
+//
+// 为什么不给每个按钮单独绑：栏的内容可能被整体重建（ensureSidebar /
+// ensureRail），绑在按钮上的监听器会跟着那个节点一起没了——
+// 于是「按下去没反应」，而且**不报错**：按钮还在、样式还在，
+// 只是没人接它的点击。绑在容器上，容器不换，监听器就一直在。
+function bindPanelTabs(el, getActive, setActive) {{
+  if (!el) return;
+  el.addEventListener('click', (ev) => {{
+    // ev.target 未必是元素（点在文字节点上时可能是它）：
+    // 没有 closest 就不是点 Tab，交给别的逻辑
+    if (!ev.target || !ev.target.closest) return;
+    const btn = ev.target.closest('[data-panel-tab]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-panel-tab');
+    if (!id || id === getActive()) return;
+    setActive(id);
+    // 立刻切，不等下一轮刷新——等 2 秒再切，按下去像没按
+    applyPanelTab(el, id);
+  }});
+}}
+
+function initColumnTabs() {{
+  bindPanelTabs(
+    document.getElementById('sidebar'),
+    () => _sideTab,
+    (id) => {{ _sideTab = id; }}
+  );
+  bindPanelTabs(
+    document.getElementById('rail'),
+    () => _railTab,
+    (id) => {{ _railTab = id; }}
+  );
+}}
+
+// ===== 左栏 = 任务管理 =====
 //
 // 整条左栏都是**任务管理**的事。现在只有「任务列表」一个 Tab；
 // 以后加功能 = **在这张表里加一行**（id + 标签 + 渲染函数），
 // 骨架、样式、切换逻辑都不用动——不重排左栏，不往列表下面再堆一段。
-//
-// Tab 条**固定在左栏顶上**（切 Tab 时那行不动）：它回答
-// 「这一栏有哪些功能」——这个答案埋在列表下面就答不了了。
 const SIDE_TABS = [
   {{ id: 'tasks', label: '任务列表', render: renderTaskList }},
 ];
@@ -2206,57 +2284,8 @@ const SIDE_TABS = [
 let _sideTab = 'tasks';
 
 // 左栏拼装：Tab 条 + 各个面板。
-//
-// 面板**全都渲染**，没选中的用 CSS 藏起来：切回来时不用重新拉数据。
 function renderSidebar(data) {{
-  let html = '<div class="side-tabs" role="tablist">';
-  for (const tab of SIDE_TABS) {{
-    const on = tab.id === _sideTab;
-    html += '<button type="button" class="side-tab' + (on ? ' is-active' : '')
-      + '" role="tab" aria-selected="' + (on ? 'true' : 'false')
-      + '" data-side-tab="' + esc(tab.id) + '">'
-      + esc(tab.label) + '</button>';
-  }}
-  html += '</div><div class="side-panels">';
-  for (const tab of SIDE_TABS) {{
-    const on = tab.id === _sideTab;
-    html += '<div class="side-panel' + (on ? ' is-active' : '')
-      + '" role="tabpanel" data-side-panel="' + esc(tab.id) + '">'
-      + tab.render(data) + '</div>';
-  }}
-  html += '</div>';
-  return html;
-}}
-
-// 切 Tab 的点击：**事件委托**绑在左栏这个容器上。
-//
-// 为什么不给每个按钮单独绑：左栏可能被整体重建（ensureSidebar），
-// 绑在按钮上的监听器会跟着那个节点一起没了——于是「按下去没反应」，
-// 而且**不报错**：按钮还在、样式还在，只是没人接它的点击。
-// 绑在容器上，容器不换，监听器就一直在。
-function initSideTabs() {{
-  const el = document.getElementById('sidebar');
-  if (!el) return;
-  el.addEventListener('click', (ev) => {{
-    // ev.target 未必是元素（点在文字节点上时可能是它）：
-    // 没有 closest 就不是点 Tab，交给别的逻辑
-    if (!ev.target || !ev.target.closest) return;
-    const btn = ev.target.closest('[data-side-tab]');
-    if (!btn) return;
-    const id = btn.getAttribute('data-side-tab');
-    if (!id || id === _sideTab) return;
-    _sideTab = id;
-    // 立刻切，不等下一轮刷新——等 2 秒再切，按下去像没按
-    for (const b of el.querySelectorAll('[data-side-tab]')) {{
-      const on = (b.getAttribute('data-side-tab') || '') === id;
-      b.classList.toggle('is-active', on);
-      b.setAttribute('aria-selected', on ? 'true' : 'false');
-    }}
-    for (const p of el.querySelectorAll('[data-side-panel]')) {{
-      p.classList.toggle('is-active',
-        (p.getAttribute('data-side-panel') || '') === id);
-    }}
-  }});
+  return renderTabColumn(SIDE_TABS, _sideTab, data);
 }}
 
 // ===== 左栏 = 任务（任务）=====
@@ -2311,7 +2340,7 @@ function renderTaskList(data) {{
     ? '只列这只盒子参与过的任务'
     : '';
   if (qualifier) {{
-    html += '<div class="side-scope-note">' + esc(qualifier) + '</div>';
+    html += '<div class="panel-note">' + esc(qualifier) + '</div>';
   }}
   html += '<div class="side-list">';
   if (!tasks.length) {{
@@ -2437,6 +2466,23 @@ const LEGACY_OP_IDS = {{
   package_design: 'package_model',
 }};
 
+// ===== 右栏 = 操作管理 =====
+//
+// 整条右栏都是**操作管理**的事。现在只有「操作轨迹」一个 Tab；
+// 以后加别的操作视图 = **在这张表里加一行**（id + 标签 + 渲染函数），
+// 跟左栏一模一样的加法——两栏共用同一套 Tab 机制。
+const RAIL_TABS = [
+  {{ id: 'trails', label: '操作轨迹', render: renderRail }},
+];
+
+// 当前在哪个 Tab（不进 URL，理由同左栏）。
+let _railTab = 'trails';
+
+// 右栏拼装：Tab 条 + 各个面板。
+function renderRailColumn(data) {{
+  return renderTabColumn(RAIL_TABS, _railTab, data);
+}}
+
 function renderRail(data) {{
   const allTrails = data.op_trails || [];
   // **范围也过滤**：右栏给的是「这些盒子最近一次履约的 op 顺序」，
@@ -2446,12 +2492,14 @@ function renderRail(data) {{
   const trails = scope
     ? allTrails.filter(t => scope.has(t.box_id))
     : allTrails;
-  let html = '<div class="rail-title">操作轨迹</div>';
+  let html = '';
   // 口径跟着「选中的任务」走，说清楚这一栏给的是**哪一次**运行。
-  html += '<div class="rail-sub">'
-    + (scope
-      ? currentScopeLabel() + ' 协作范围里，'
-      : '')
+  //
+  // **不写范围**：范围写在中栏的「范围」chip 上，右栏再说一遍
+  // 就是同一份信息的第二遍。任务那一半**必须写**——
+  // 它改的是「是哪一次运行」（这只盒子后来又跑过别的任务），
+  // 不是「列哪些盒子」。
+  html += '<div class="panel-note">'
     + (_task
       ? '这件任务里每只盒子最近一次履约的 op 执行顺序'
       : '每只盒子最近一次履约的 op 执行顺序')
@@ -2552,11 +2600,14 @@ function fmtClock(iso) {{
 // 轨迹面板每 2 秒跟着数据走，但**结构没变就不重建**：
 // 重建会把滚动位置弹回顶部，读者正在看的那条 op 会跳走。
 function ensureRail(el, data) {{
-  const sig = JSON.stringify((data.op_trails || []).map(t => [
-    t.box_id, t.task_run_id, (t.ops || []).map(o => o.op_id + ':' + o.status).join(','),
-  ]));
+  const sig = JSON.stringify([
+    (data.op_trails || []).map(t => [
+      t.box_id, t.task_run_id, (t.ops || []).map(o => o.op_id + ':' + o.status).join(','),
+    ]),
+    _railTab,   // 换了 Tab = 结构变了 = 该重建
+  ]);
   if (el.dataset.sig !== sig) {{
-    el.innerHTML = renderRail(data);
+    el.innerHTML = renderRailColumn(data);
     el.dataset.sig = sig;
   }}
 }}
@@ -5407,7 +5458,7 @@ window.addEventListener('resize', () => {{
   fitRadial();
 }});
 syncHeadHeight();
-initSideTabs();
+initColumnTabs();
 </script>
 </body>
 </html>
