@@ -59,7 +59,7 @@ SCOPE = FulfillmentScopeDeclaration(
     boxes=[
         # **链首**：市场信号（站外需求）→ 店里的事实 → 诊断 → 实验 → 档案。
         # 为什么不在诊断上挂第二个上游：诊断挂两个上游，环图就画不出来
-        # （beeOS 的环要求相邻有交接边）。
+        # （BeeOS 的环要求相邻有交接边）。
         "shopify_market_signal_box",
         "shopify_snapshot_box",
         "shopify_traffic_diagnosis_box",

@@ -440,7 +440,7 @@ HTML_PAGE = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<!-- 抬头写的是**产品**的名字：beeOS 的两个页面（看板 / 工作台）
+<!-- 抬头写的是**产品**的名字：BeeOS 的两个页面（看板 / 工作台）
      都是同一个服务里的页面，页头该写产品名，不该写子对象名。
      写成「BeeBox …」是把容器名放在产品的位置上——
      而且跟工作台撞脸：两个面板都叫 BeeBox X，
@@ -450,7 +450,7 @@ HTML_PAGE = f"""<!DOCTYPE html>
      那是一个**东西**的名字，不是页面名。
 
      **界面上两个产品名一样大写**（BeeOS / BeeBox）：同一个词两种写法
-     （beeOS 跟 BeeBox Map 并排）看着就像两样东西。
+     （BeeOS 跟 BeeBox Map 并排）看着就像两样东西。
      文档和代码散文里的小写不算数——那里的「beeBox」说的是
      「一只盒子」这个概念（core.models - beeBox Definition 顶层数据结构），
      不是产品名。 -->
@@ -485,7 +485,7 @@ HTML_PAGE = f"""<!DOCTYPE html>
     background: #fff; border: 1px solid #dbe3ec; border-radius: 12px;
     /* **固定在视口顶部**：往下滚时不跟着走。
        以前它是普通流里的第一块，一滚就滚出视野——而它恰好是
-       「这是 beeOS 看板 / 上次刷新是什么时候」这两句话唯一的位置。
+       「这是 BeeOS 看板 / 上次刷新是什么时候」这两句话唯一的位置。
        读者往拓扑图下面翻的时候，看板还开着，但那两句话没了。
        z-index 要高于内容与两侧栏：它们都可能在 header 下面滑动。 */
     position: sticky; top: 0; z-index: 40;
@@ -875,13 +875,23 @@ HTML_PAGE = f"""<!DOCTYPE html>
   .edge-handoff {{ stroke: #64748b; stroke-width: 2; fill: none; }}
   /* 跨位的交接不画线，写在盒子上（见 splitHandoffs）。
      「也交给 X」这句是**额外**的一条交接——主链之外的补充，
-     写成字比画成横穿全图的线更准，也更安静。 */
+     写成字比画成横穿全图的线更准，也更安静。
+
+     **贴在卡片的右下角，往侧边探出去**，不吊在卡片下面中央：
+     吊在下面中央时，它会横在「往下一只盒子」的那条连线上面
+     （线被它盖掉一截，读起来像线断了），而且看着像飘在盒子外面的东西。
+
+     名字**分两行**（「也交给」一行、目标盒名一行）：
+     一行的话整条 ≈146px，横在卡片中间就会压到那条竖线；
+     两行只要 ≈90px，右下角这一块恰好没有连线经过。 */
   .box-extra {{
-    display: block; width: fit-content; margin: 5px auto 0;
-    padding: 2px 9px; border-radius: 999px;
+    position: absolute; right: -8px; bottom: 4px;
+    display: flex; flex-direction: column; align-items: flex-end;
+    padding: 2px 8px; border-radius: 8px;
     background: #eef2f7; color: #64748b;
-    font-size: 11px; line-height: 1.5; white-space: nowrap;
+    font-size: 10px; line-height: 1.35;
   }}
+  .box-extra-lead {{ color: #94a3b8; }}
   /* 累积边（辐条）：**退到背景**。
      它们是「产出并进档案」这条关系——真实，但次要：
      主链的交接才是这张图要回答的事。辐条抢眼的时候，
@@ -3689,9 +3699,14 @@ function renderRadial(layout, stats, titleHtml) {{
       : 'box-card';
     // 跨位的交接：写成盒子上的一行字，不画线（见 splitHandoffs）。
     // 名字取目标盒的显示名（不取 box_id——那个是内部标识）。
+    // **分两行**（「也交给」/ 名字）：一行太长，会横在「往下一只盒子」
+    // 的那条连线上（线被盖掉一截，读起来像线断了）。
     const extra = (extraHandoffs[id] || []).map((t) => {{
       const nm = (byId[t] && byId[t].meta && byId[t].meta.display_name) || t;
-      return '<span class="box-extra">也交给 ' + esc(nm) + '</span>';
+      return '<span class="box-extra">'
+        + '<span class="box-extra-lead">也交给</span>'
+        + '<span class="box-extra-name">' + esc(nm) + '</span>'
+        + '</span>';
     }}).join('');
     // 纯字符串拼接，不用模板字符串：`${...}` 只有在反引号里才是插值，
     // 裸露出来就是 SyntaxError——而且页面会停在 Loading，看起来像数据没到。

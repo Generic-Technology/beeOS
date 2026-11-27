@@ -388,7 +388,7 @@ class TestKanbanServer:
         resp = conn.getresponse()
         assert resp.status == 200
         body = resp.read().decode("utf-8")
-        assert "beeOS Kanban" in body
+        assert "BeeOS Fulfillment Center" in body
         assert "<script>" in body
         assert "/api/data" in body  # JS fetch URL
         conn.close()
@@ -1956,7 +1956,7 @@ class TestHomepageIsQuieterAndTheViewIsATabBar:
           哪个协作范围有哪些盒子、谁交给谁、跑得怎么样
 
         两个页面是**同一个服务里的两个页面**（`/workshop` 和 `/`），
-        页头都写**产品名**（beeOS）：页头写子对象名（BeeBox），
+        页头都写**产品名**（BeeOS）：页头写子对象名（BeeBox），
         两个面板都叫「BeeBox X」，读者分不清自己看的是盒子还是平台。
 
         **反过来也不许改**：图上那张是「BeeBox Map」（盒子和它们的接线）——
@@ -2593,7 +2593,7 @@ class TestABoxIsAQueryableUnit:
 class TestTheHeaderStaysAndTheTrailPanelSitsOnTheRight:
     """两件都是读者一直在找的东西：
 
-    - **头部不跟着滚动跑掉**——它是「这是 beeOS 看板 / 上次刷新是什么时候」
+    - **头部不跟着滚动跑掉**——它是「这是 BeeOS 看板 / 上次刷新是什么时候」
       这两句话唯一的位置。读者往拓扑图下面翻的时候，看板还开着，
       但那两句话没了。
     - **右侧常驻一条操作轨迹**，跟左侧盒子列表并排：左边回答「有哪些盒子」，
@@ -2618,7 +2618,7 @@ class TestTheHeaderStaysAndTheTrailPanelSitsOnTheRight:
     def test_the_header_is_sticky_at_the_top(self):
         body = self._rule(".page-head")
         assert "position: sticky" in body, (
-            "头部不固定 = 往下滚两屏就看不见「这是 beeOS 看板」和刷新时间了"
+            "头部不固定 = 往下滚两屏就看不见「这是 BeeOS 看板」和刷新时间了"
         )
         assert "top: 0" in body, "头部要吸在视口顶端"
         assert "z-index" in body, (

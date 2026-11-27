@@ -1,7 +1,7 @@
 # 示例：订单异常履约盒（Order Exception Fulfillment Box）
 
 > **这只盒子已经不在仓库里了（2026-10-28 删除）。**
-> 它是 beeOS 的第一只盒子（2026-09），从未注册进 `BOX_REGISTRY`——
+> 它是 BeeOS 的第一只盒子（2026-09），从未注册进 `BOX_REGISTRY`——
 > 看板不显示、投料口不接收，op 全是确定性模拟返回值。
 > 删它的原因：它是**样例**而不是产品，留着会让人以为「仓库里还挂着一只
 > 运营线盒子」；而它同时还是运行时测试的样板盒——测机制和测某只盒子
@@ -13,7 +13,7 @@
 > **日期**：2026-09-18
 > **对应**：[beebox-design.md](./beebox-design.md) · [beebox-gtm.md §2 Catalog](./beeos-gtm.md#2-履约盒子-catalog) · [beebox-definition-schema.md](./beebox-definition-schema.md) · [beebox-beeline-schema.md](./beebox-beeline-schema.md)
 
-第一只履约盒子的完整示例。**订单异常履约盒**走通 beeOS 所有核心概念——验证 beeBox 设计模式可以承载真实业务责任。
+第一只履约盒子的完整示例。**订单异常履约盒**走通 BeeOS 所有核心概念——验证 beeBox 设计模式可以承载真实业务责任。
 
 ---
 
@@ -35,7 +35,7 @@
 | 客户投诉 | 客户得到回应和解决方案 |
 | 部分缺货 | 客户获得部分商品 + 部分退款 |
 
-**为什么是这个盒子**：天然包含 beeOS 设计的全部核心概念——Contract / Policy / Queen / Capability / BeeLine / TaskRun / Result / Acceptance / Evidence / Metrics。1 个盒子验证整个架构。
+**为什么是这个盒子**：天然包含 BeeOS 设计的全部核心概念——Contract / Policy / Queen / Capability / BeeLine / TaskRun / Result / Acceptance / Evidence / Metrics。1 个盒子验证整个架构。
 
 ---
 
@@ -961,7 +961,7 @@ Production Runs                 ✓ 1,200,000（示意：上线 6 个月，月�
 
 ## §9 验证清单
 
-这个示例验证了 beeOS 设计的全部核心概念：
+这个示例验证了 BeeOS 设计的全部核心概念：
 
 | 概念 | 验证位置 |
 |---|---|
@@ -975,6 +975,6 @@ Production Runs                 ✓ 1,200,000（示意：上线 6 个月，月�
 | **Catalog 盒子设计**（输入 / 输出 / 责任 / SLA / 成本 / 证据）| §1 + §7 |
 | **Certification 9 项** | §7 Certification 卡片 |
 
-**这个示例证明**：beeOS 设计可以承载真实业务责任，订单异常履约盒可以跑通 beeBox → release → instance → task run → Acceptance → 证据 → 指标的全链路。
+**这个示例证明**：BeeOS 设计可以承载真实业务责任，订单异常履约盒可以跑通 beeBox → release → instance → task run → Acceptance → 证据 → 指标的全链路。
 
 下一步：把这个示例变成实际可执行的 beeBox（implementation）。

@@ -277,7 +277,7 @@ class TestTaskRunStore:
 class TestKanbanRender:
     def test_empty_dashboard(self, store: TaskRunStore):
         out = render_dashboard(store)
-        assert "beeOS Kanban" in out
+        assert "BeeOS Kanban" in out
         assert "(no boxes yet)" in out
         assert "(no task runs yet)" in out
         assert "(no active exceptions)" in out
@@ -294,7 +294,7 @@ class TestKanbanRender:
         store.append(tr, box_id=box.id, acceptance_status=eval_result.status.value)
 
         out = render_dashboard(store)
-        assert "beeOS Kanban" in out
+        assert "BeeOS Kanban" in out
         assert box.id in out
         assert "completed" in out
         assert "Boxes Registered" in out

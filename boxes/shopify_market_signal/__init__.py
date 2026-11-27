@@ -28,7 +28,7 @@ market_signal → snapshot → diagnosis → experiment → archive
 ```
 
 **为什么在链首而不是挂在诊断上**：诊断要挂两个上游，环图就画不出来
-（beeOS 的环要求相邻有交接边）。所以市场信号从链首进，
+（BeeOS 的环要求相邻有交接边）。所以市场信号从链首进，
 「这一轮的事实」= 店里的数据 + 市场的需求。
 
 ## 成熟度：skeleton

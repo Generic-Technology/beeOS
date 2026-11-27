@@ -7,7 +7,7 @@
 > **日期**：2026-09-15
 > **对应**：[beebox-design.md §1.6 运行关系](./beebox-design.md#16-运行关系) · §3.3 instance · §3.4 履约实现 · [beebox-runtime-schema.md](./beebox-runtime-schema.md)
 
-runtime 平台的整体设计规格。**runtime 平台是 beeOS 平台的基础设施层**——提供 beeBox / beeline / schema / bee 等业务对象"跑起来"所需的运行时能力。
+runtime 平台的整体设计规格。**runtime 平台是 BeeOS 平台的基础设施层**——提供 beeBox / beeline / schema / bee 等业务对象"跑起来"所需的运行时能力。
 
 ---
 
@@ -17,10 +17,10 @@ runtime 平台对外只暴露 1 类对象：**runtime**——其唯一职责是"
 
 | 层级 | 内容 | 设计文件 |
 |---|---|---|
-| **业务层（beeOS 平台）** | beeBox / beeline / schema / bee 等业务对象 + workshop / kanban 面板 | `beebox-design.md` + 各 schema 文件 |
+| **业务层（BeeOS 平台）** | beeBox / beeline / schema / bee 等业务对象 + workshop / kanban 面板 | `beebox-design.md` + 各 schema 文件 |
 | **基础设施层（runtime 平台）** | runtime 对象 + 5 类内部组件（trigger handler / executor / worker pool / queen engine / monitor / audit）| `beebox-runtime-design.md` + `beebox-runtime-schema.md` |
 
-**runtime 平台跟 beeOS 平台是 2 个独立产品**——runtime 升级不影响 beeOS 平台业务对象（runtime 兼容性边界，§5）。
+**runtime 平台跟 BeeOS 平台是 2 个独立产品**——runtime 升级不影响 BeeOS 平台业务对象（runtime 兼容性边界，§5）。
 
 ---
 
@@ -127,7 +127,7 @@ runtime 生命周期 4 个状态：
 
 ## 6. 接口约定
 
-runtime 平台给 beeOS 平台提供：
+runtime 平台给 BeeOS 平台提供：
 
 | 接口 | 用途 |
 |---|---|
@@ -138,25 +138,25 @@ runtime 平台给 beeOS 平台提供：
 | **queen 引擎入口** | runtime 平台加载 release 时同步加载 definition 顶层 `queen` 配置，由 queen engine 执行 |
 
 **关键点**：
-- runtime 平台接口是 beeOS 平台跟 runtime 平台交互的边界
-- 接口稳定 → beeOS 平台演进不需要 runtime 平台配合
-- 接口变动 → runtime 平台升级需要 beeOS 平台配合
+- runtime 平台接口是 BeeOS 平台跟 runtime 平台交互的边界
+- 接口稳定 → BeeOS 平台演进不需要 runtime 平台配合
+- 接口变动 → runtime 平台升级需要 BeeOS 平台配合
 
 ---
 
-## 7. 跟 beeOS 平台的关系
+## 7. 跟 BeeOS 平台的关系
 
-| 维度 | beeOS 平台 | runtime 平台 |
+| 维度 | BeeOS 平台 | runtime 平台 |
 |---|---|---|
 | **职责** | 业务对象 + 面板 | 把 release 部署成 instance 并持续运行 |
 | **演进** | 业务对象演进（definition / release / beeline 等）| 平台版本演进（runtime_version 升级）|
-| **使用方** | owner / 运维（通过 workshop / kanban）| beeOS 平台自身 |
+| **使用方** | owner / 运维（通过 workshop / kanban）| BeeOS 平台自身 |
 | **演进影响** | 业务侧改进（产品演进）| 底层兼容性（release 可不可在新 runtime 上跑）|
 
 **关键点**：
-- runtime 平台**独立于** beeOS 平台演进（runtime 可以升级 / 降级，beeOS 业务对象在新 runtime 上重新部署）
+- runtime 平台**独立于** BeeOS 平台演进（runtime 可以升级 / 降级，BeeOS 业务对象在新 runtime 上重新部署）
 - 同一份 release 可以跑在不同 runtime_version 的 runtime 上（兼容性由 runtime 平台在 instance 启动时判定）
-- beeOS 平台通过 runtime 平台的 API 交互（runtime 注册 / instance 启动 / task run 触发 / audit 查询）
+- BeeOS 平台通过 runtime 平台的 API 交互（runtime 注册 / instance 启动 / task run 触发 / audit 查询）
 
 ---
 

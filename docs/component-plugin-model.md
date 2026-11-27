@@ -142,7 +142,7 @@ BeeBox
 形状不合的产出**不跑验收**——验收读的正是产出里的字段，
 形状都不对了，判据的结论只会是一串误导人的 n/a。
 
-**判据是「履约契约」，不是「验收组件」。** beeOS 的判据是 runtime 的**契约闸**
+**判据是「履约契约」，不是「验收组件」。** BeeOS 的判据是 runtime 的**契约闸**
 （`runtime/contract.py` 的结构校验 + `runtime/acceptance.py` 的业务验收）：
 它读最终产出、判对错、**不产出物、不进链、不进产出契约**。
 若把判据做成链上一跳，就得回答「判定结果进不进产出」——那是另一个量级的改动，
@@ -1414,7 +1414,7 @@ M7 把第三种形状补上，并给「这一跳最多花多久」一个答案�
 
 - **M8 递归组合**：一般复合组件（复合里装复合）+ 插件挂在任意节点 —— **设计已定稿**（[recursive-composition.md](recursive-composition.md)），待实现
 - **还没落地的插件能力**：`op.after` 的 **per_attempt 形态**（要「一次尝试也能看到错误」的视图设计——`op.after` 的视图键现在只有 `input` / `output`，失败那次尝试没有产出可看）；around 的**第一个业务用户**（机制已落地，暂无盒子挂它）
-- **M9 对外接入面**：把 beeOS 开放给通用外部 agent（Codex / Claude Code / 豆包 / 千问办公 …）——**设计稿见 [agent-integration.md](agent-integration.md)**。机制侧要动的**只有三处**：
+- **M9 对外接入面**：把 BeeOS 开放给通用外部 agent（Codex / Claude Code / 豆包 / 千问办公 …）——**设计稿见 [agent-integration.md](agent-integration.md)**。机制侧要动的**只有三处**：
   1. **身份与授权挂 `op.before` 准入钩子**（§1.3.2）——落点唯一；
   2. **跨履约的去重台账**（§1.3.3 第 5 条说它「还没做」）——那是 `idempotency.mode=required` 兑现不了的原因，**接 agent 之前必须补上**，否则调用方一重试就重复写目标对象；
   3. **编排层的执行状态**（§12.14）——链的**结构**已经能从协作边界声明推导

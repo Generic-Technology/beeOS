@@ -1027,3 +1027,31 @@ def test_box_readme_scale_numbers_match_definition(box_dir: str) -> None:
                         f"{schemas_n} 个 schema"
                     )
     assert not bad, "\n".join(bad)
+
+
+def test_the_docs_write_the_platform_name_the_same_way() -> None:
+    """文档里的平台名一律大写（BeeOS）——只有路径 / URL 例外
+
+    产品名是**一个词**，两种写法就是两个名字。界面（看板 / 工作台 / CLI）
+    已经统一成 BeeOS，文档再写小写 beeOS = 同一个产品两个名字。
+
+    **例外只有路径和 URL**：`git clone .../beeOS.git`、`cd beeOS`、
+    `github.com/Generic-Technology/beeOS`——那些是**标识符**，
+    改了就不是那个仓库了。
+    """
+    bad: list[str] = []
+    for md in _md_files():
+        text = md.read_text(encoding="utf-8")
+        for m in re.finditer(r"beeOS", text):
+            start = m.start()
+            prefix = text[max(0, start - 24):start]
+            suffix = text[m.end():m.end() + 4]
+            if (
+                prefix.endswith("Generic-Technology/")
+                or prefix.endswith("cd ")
+                or suffix.startswith(".git")
+            ):
+                continue
+            line_no = text.count("\n", 0, start) + 1
+            bad.append(f"{_rel(md)}:{line_no}: 平台名写成小写「beeOS」")
+    assert not bad, "\n".join(bad)

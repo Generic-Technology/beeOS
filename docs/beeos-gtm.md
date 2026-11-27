@@ -1,4 +1,4 @@
-# beeOS GTM（Go-To-Market）
+# BeeOS GTM（Go-To-Market）
 
 > **这是商业定位稿，产品形态已经往前走。** 目录里的盒子已经从两只长到八只，
 > 商业叙述以本文为准，**产品现状**以 [仓库 README](../README.md) 为准。
@@ -6,18 +6,18 @@
 > **日期**：2026-09-18
 > **对应**：[beebox-design.md §0.5 产品语言](./beebox-design.md#05-产品语言与商业叙事) · [§1.1 第一性定义](./beebox-design.md#11-第一性定义)（bounded Business Fulfillment Unit）
 
-beeOS 的商业定位、履约盒子 Catalog 设计、成熟度 Certification、商业飞轮、单行业起步策略。
+BeeOS 的商业定位、履约盒子 Catalog 设计、成熟度 Certification、商业飞轮、单行业起步策略。
 
 ---
 
 ## 0. 商业定位
 
-**beeOS 不卖 AI，不卖 Workflow。beeOS 交付成熟的履约盒子。**
+**BeeOS 不卖 AI，不卖 Workflow。BeeOS 交付成熟的履约盒子。**
 
 > 一个履约盒子，承接一项明确的业务责任，并以可验证的业务结果完成履约。
 
 **核心定位**：
-- beeOS = 平台（基础设施 + 履约盒子市场）
+- BeeOS = 平台（基础设施 + 履约盒子市场）
 - beeBox = 产品（履约盒子 = 客户真正购买的东西）
 - 履约结果 = 价值（可验证的业务结果，不是 AI 能力）
 
@@ -29,12 +29,12 @@ beeOS 的商业定位、履约盒子 Catalog 设计、成熟度 Certification、
 |---|---|---|---|
 | **履约盒子**（beeBox）| 客户真正购买的东西——"帮我完成 X" | 企业客户（业务负责人）| 产品层 |
 | **履约盒子市场**（Catalog）| 成熟盒子的集合，按行业 / 业务价值流分类 | 企业客户挑选 + 安装 + 配置 | 产品层 |
-| **beeOS 基础设施**（platform）| Contract / Policy / Queen / BeeLine / Runtime / Release / Instance / Evidence / Metrics | beeOS 团队 | 平台层 |
+| **BeeOS 基础设施**（platform）| Contract / Policy / Queen / BeeLine / Runtime / Release / Instance / Evidence / Metrics | BeeOS 团队 | 平台层 |
 
 **关系图**：
 
 ```
-                    beeOS
+                    BeeOS
                       │
               Fulfillment Platform
                       │
@@ -50,8 +50,8 @@ beeOS 的商业定位、履约盒子 Catalog 设计、成熟度 Certification、
 ```
 
 **关键点**：
-- 客户甚至可以不知道 beeOS 内部细节——只用履约盒子
-- 平台层（beeOS）演进不影响客户对盒子（beeBox）的使用
+- 客户甚至可以不知道 BeeOS 内部细节——只用履约盒子
+- 平台层（BeeOS）演进不影响客户对盒子（beeBox）的使用
 - 盒子可以跨行业 / 跨业务复用——但**不是 marketplace 模式**（详见 §6 单行业起步）
 
 ---
@@ -76,7 +76,7 @@ beeOS 的商业定位、履约盒子 Catalog 设计、成熟度 Certification、
 
 ### 2.2 Catalog 示例（高频业务盒子）
 
-beeOS Catalog 覆盖**两类业务履约**——业务运营履约（Operations Line）+ 业务软件履约（Software Line）。每条产品线各自独立分类。
+BeeOS Catalog 覆盖**两类业务履约**——业务运营履约（Operations Line）+ 业务软件履约（Software Line）。每条产品线各自独立分类。
 
 #### 2.2.1 业务运营履约线（Operations Line）
 
@@ -135,7 +135,7 @@ beeOS Catalog 覆盖**两类业务履约**——业务运营履约（Operations 
   └─────→ 反馈给业务建模（持续改进）
 ```
 
-每段都是独立的 Business Fulfillment，盒子之间通过**经过验收的业务结果**而不是原始数据连接——这是 beeOS 的核心差异化。
+每段都是独立的 Business Fulfillment，盒子之间通过**经过验收的业务结果**而不是原始数据连接——这是 BeeOS 的核心差异化。
 
 > **关键点**：每个盒子都必须明确回答 6 个问题——它**负责什么**、**不负责什么**、**输入是什么**、**输出是什么**、**验收标准是什么**、**出异常怎么办**。模糊的"AI 履约盒 / 智能自动化盒"是 product-speak，不是 Catalog 设计。
 
@@ -210,7 +210,7 @@ Production Runs           ✓ 1,200,000
 ## 4. 商业飞轮
 
 ```
-             beeOS
+             BeeOS
                │
         ┌──────┴──────┐
         ▼             ▼
@@ -287,7 +287,7 @@ Order
 **5 个盒子的协同**：
 - 订单接收盒 → 触发支付异常盒 / 库存异常盒（按需）
 - 发货履约盒 → 触发售后处理盒（按需）
-- 5 个盒子组合起来 → 整个订单价值流被 beeOS 管理
+- 5 个盒子组合起来 → 整个订单价值流被 BeeOS 管理
 
 **为什么这样起步**：
 - 电商订单价值流 = 高频 + 高价值 + 业务结果清晰（解决率 / 时效 / 成本可量化）
@@ -333,11 +333,11 @@ Order
 ```
 → **深** > **广**——每个盒子都扎实，每个客户都跑通
 
-### 6.3 不要把 beeOS 当产品卖
+### 6.3 不要把 BeeOS 当产品卖
 
 **坏路线**：
 ```
-"我们有 beeOS，可以编排 Agent、Workflow、API、Runtime……"
+"我们有 BeeOS，可以编排 Agent、Workflow、API、Runtime……"
 ```
 → 客户买的是平台，付钱的是平台使用费——但客户需要的是"帮我完成业务"
 
@@ -367,21 +367,21 @@ GTM / Catalog / Certification 都跟技术架构一一对应——**业务语言
 **关键点**：
 - GTM 跟技术架构**完全一致**——不是 marketing 包装，是同 1 个对象的两种视角
 - 客户看到的是"履约盒子"（业务语言）
-- beeOS 团队看到的是"beeBox + Contract + Policy + Procedure + Acceptance"（技术语言）
+- BeeOS 团队看到的是"beeBox + Contract + Policy + Procedure + Acceptance"（技术语言）
 - 两边都是真的，视角不同
 
 ---
 
 ## 8. 创业叙事（一句话）
 
-> **beeOS 是平台，beeBox 是产品，履约结果是价值。**
+> **BeeOS 是平台，beeBox 是产品，履约结果是价值。**
 >
-> beeOS 不卖 AI，不卖 Workflow。beeOS 交付成熟的履约盒子。
+> BeeOS 不卖 AI，不卖 Workflow。BeeOS 交付成熟的履约盒子。
 > 一个履约盒子，承接一项明确的业务责任，并以可验证的业务结果完成履约。
 
 这三个层次分开后：
 - 客户清楚买的是什么（履约盒子 = 业务结果）
-- beeOS 团队清楚造的是什么（beeBox = 平台单元）
+- BeeOS 团队清楚造的是什么（beeBox = 平台单元）
 - 投资人清楚值的是什么（每个盒子的 ROI + 飞轮放大）
 
 ---
@@ -390,7 +390,7 @@ GTM / Catalog / Certification 都跟技术架构一一对应——**业务语言
 
 | GTM 概念 | 技术对应 | design 章节 |
 |---|---|---|
-| **三层产品** | beeBox / Catalog / beeOS | §0.5 / §1.4 |
+| **三层产品** | beeBox / Catalog / BeeOS | §0.5 / §1.4 |
 | **履约盒子 Catalog** | beeBox definition + beeline + queen + schemas 完整定义 | §3.1 / [beebox-definition-schema.md](./beebox-definition-schema.md) |
 | **Certification 9 项** | 12 字段履约事实 + Acceptance 阶段 + Evidence | §2.4 / §3.4.6 |
 | **商业飞轮** | 数据驱动持续改进（queen.rules.continuous_improvement）| §1.3 / §3.4.7 |

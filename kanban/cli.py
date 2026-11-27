@@ -7,7 +7,7 @@ kanban.cli - 履约盒子运行面板（CLI）
 - 实时性 + 历史回溯
 
 CLI 输出（终端友好的纯文本）：
-  beeOS Kanban — Operational Dashboard
+  BeeOS Kanban — Operational Dashboard
   ====================================
   
   Boxes Registered
@@ -56,7 +56,7 @@ def render_dashboard(store: TaskRunStore, box_filter: Optional[str] = None) -> s
         box_filter: 可选，按 box_id 过滤（只显示该 box 的记录）
     """
     lines: list[str] = []
-    title = "beeOS Kanban — Operational Dashboard"
+    title = "BeeOS Kanban — Operational Dashboard"
     if box_filter:
         title += f"  [filter: {box_filter}]"
     lines.append(title)
@@ -167,7 +167,7 @@ def render_dashboard(store: TaskRunStore, box_filter: Optional[str] = None) -> s
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="beeOS Kanban CLI dashboard")
+    parser = argparse.ArgumentParser(description="BeeOS Kanban CLI dashboard")
     parser.add_argument(
         "--store",
         default="logs/task_runs.jsonl",

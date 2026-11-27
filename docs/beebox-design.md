@@ -1,17 +1,17 @@
-# beeOS / beeBox 设计 v0.1
+# BeeOS / beeBox 设计 v0.1
 
 > **这是设计稿，实现已经往前走。** 本文定的是概念与契约（仍然有效），
 > 但仓库现状（盒子全部 live、beeline 住在盒子里、盒间接力通道已落地）
 > 以 [仓库 README](../README.md) 为准——本文停在 v0.1 草稿时的两只盒子架构。
 > **状态**：v0.1 草稿 · 修订中
 > **日期**：2026-09-13
-> **定位**：beeOS = 业务履约操作系统（Business Fulfillment Operating System），beeBox = bounded 业务履约单元（bounded Business Fulfillment Unit）
+> **定位**：BeeOS = 业务履约操作系统（Business Fulfillment Operating System），beeBox = bounded 业务履约单元（bounded Business Fulfillment Unit）
 
 ---
 
 ## 0. 架构宣言
 
-beeOS is a Business Fulfillment Operating System.
+BeeOS is a Business Fulfillment Operating System.
 
 Its fundamental unit is the beeBox: a bounded Business Fulfillment Unit.
 
@@ -23,7 +23,7 @@ A Business Fulfillment fulfills a business intent under an explicit contract and
 
 ## 0.5 产品语言与商业叙事
 
-beeOS 是**技术 / 品牌名称**，"履约盒子"（fulfillment box）是**产品语言**——两者指代同一类对象（beeBox），只是面向不同读者。
+BeeOS 是**技术 / 品牌名称**，"履约盒子"（fulfillment box）是**产品语言**——两者指代同一类对象（beeBox），只是面向不同读者。
 
 **对客户怎么说**（不是编排器，是履约盒子）：
 
@@ -35,7 +35,7 @@ beeOS 是**技术 / 品牌名称**，"履约盒子"（fulfillment box）是**产
 
 **商业叙事（一句）**：
 
-> **beeOS 不卖 AI，不卖 Workflow。beeOS 交付成熟的履约盒子。**
+> **BeeOS 不卖 AI，不卖 Workflow。BeeOS 交付成熟的履约盒子。**
 >
 > 一个履约盒子，承接一项明确的业务责任，并以可验证的业务结果完成履约。
 
@@ -45,11 +45,11 @@ beeOS 是**技术 / 品牌名称**，"履约盒子"（fulfillment box）是**产
 |---|---|---|
 | **履约盒子**（beeBox）| 客户真正购买的东西——"帮我完成 X" | 企业客户 |
 | **履约盒子市场**（Catalog）| 成熟盒子的集合，按行业 / 业务价值流分类 | 企业客户挑选 + 安装 + 配置 |
-| **beeOS 基础设施**（platform）| 背后提供 Contract / Policy / Queen / BeeLine / Runtime / Evidence / Metrics 能力 | beeOS 团队 |
+| **BeeOS 基础设施**（platform）| 背后提供 Contract / Policy / Queen / BeeLine / Runtime / Evidence / Metrics 能力 | BeeOS 团队 |
 
 **关键点**：
-- "beeOS 是平台，beeBox 是产品，履约结果是价值"——这三个层次分开后，创业叙事清晰
-- 客户甚至可以不知道 beeOS 内部细节——只用履约盒子
+- "BeeOS 是平台，beeBox 是产品，履约结果是价值"——这三个层次分开后，创业叙事清晰
+- 客户甚至可以不知道 BeeOS 内部细节——只用履约盒子
 - 详细 GTM（Catalog 设计 / 成熟度 Certification / 商业飞轮 / 单行业起步策略）见 [docs/beeos-gtm.md](./beeos-gtm.md)
 
 ---
@@ -143,7 +143,7 @@ beeBox 不是 workflow 容器，而是 1 个**履约单元**（unit of fulfillme
 
 ### 1.4 边界关系
 
-beeBox 的所有概念分**核心层**和**机制层**——核心层是 beeOS 真正在管理的业务事实，机制层是让核心层能成立的具体实现。
+beeBox 的所有概念分**核心层**和**机制层**——核心层是 BeeOS 真正在管理的业务事实，机制层是让核心层能成立的具体实现。
 
 **核心层**（业务事实）：
 
@@ -165,7 +165,7 @@ beeBox 的所有概念分**核心层**和**机制层**——核心层是 beeOS �
 | **runtime** | 把 release 部署成 instance 的服务 | execution environment（履约的运行基础）|
 | **queen** | beeBox 的自治运营智能体（definition 顶层字段）| autonomous control（履约的智能决策）|
 
-> **核心层是 beeOS 业务的基本事实**；机制层是为核心层服务的实现，机制变了不影响核心语义。
+> **核心层是 BeeOS 业务的基本事实**；机制层是为核心层服务的实现，机制变了不影响核心语义。
 
 例子（电商订单履行）：
 
@@ -214,7 +214,7 @@ flowchart TB
 - **runtime** = 把 release 部署成 instance 并持续运行的服务（1 类对象）
 - **beeBox instance** = 部署在 runtime 里的应用实例
 - **关系**：1 runtime → 1...N instance（同一 runtime 可跑不同 release 的 instance，也可以跑同一 release 的多副本）
-- **多 runtime 场景**：1 个 beeOS 平台可有 1...N 个 runtime，按用途 / 区域 / 租户划分（dev / staging / prod / 不同云厂商 / 不同区域）——每个 runtime 是独立的隔离边界
+- **多 runtime 场景**：1 个 BeeOS 平台可有 1...N 个 runtime，按用途 / 区域 / 租户划分（dev / staging / prod / 不同云厂商 / 不同区域）——每个 runtime 是独立的隔离边界
 - runtime **不属于 beeBox 产品本身**——它是 beeBox 跑在什么之上
 - **runtime 升级 = 创建新 runtime + 在新 runtime 上重新部署 instance + 切流**（runtime 不可变——运行中的 runtime 不能升级配置 / 版本；instance 启动后绑定 runtime 不能换，要换只能重新部署）
 
@@ -810,7 +810,7 @@ runtime 只做通用条件求值——它不认识什么是库区 / 拣货 / 收
 
 ## 4. workshop 和 kanban 面板
 
-beeOS 平台提供 **2 个面板产品入口**，分别面向不同角色、不同工作场景：
+BeeOS 平台提供 **2 个面板产品入口**，分别面向不同角色、不同工作场景：
 
 | 面板 | 角色 | 对象层级 |
 |---|---|---|
@@ -869,7 +869,7 @@ beeOS 平台提供 **2 个面板产品入口**，分别面向不同角色、不�
 
 ### 4.3 两面板的协作
 
-workshop 和 kanban 是 beeOS 平台的 2 个独立入口，但通过 beeBox 对象协作：
+workshop 和 kanban 是 BeeOS 平台的 2 个独立入口，但通过 beeBox 对象协作：
 
 ```mermaid
 flowchart TB
@@ -902,4 +902,4 @@ flowchart TB
 2. **kanban 调整**——kanban 看到某 instance 异常 → 切流到健康 instance → workshop 不变（设计不变，运维动作）
 3. **owner 看板反馈**——owner 在 kanban 看板看自己 beeBox 的运行数据（queen engine 同步产出建议）→ workshop 调 definition
 
-两面板都是 beeOS 平台的产品入口，**没有先后依赖**——owner 优先用 workshop 设计 beeBox；运维优先用 kanban 运维 beeBox；持续改善靠 2 个面板协作完成（§1.3）。
+两面板都是 BeeOS 平台的产品入口，**没有先后依赖**——owner 优先用 workshop 设计 beeBox；运维优先用 kanban 运维 beeBox；持续改善靠 2 个面板协作完成（§1.3）。

@@ -20,7 +20,7 @@ runtime 是 1 类对象——把 1 个或多个 release 部署成 1...N 个 inst
 | **环境标识** | runtime 标识其运行环境（dev / staging / prod / 不同区域）|
 | **版本演进** | runtime 升级 = 创建新 runtime（runtime_version 变更）|
 
-1 个 beeOS 平台可有 1...N 个 runtime——按用途 / 区域 / 租户划分：
+1 个 BeeOS 平台可有 1...N 个 runtime——按用途 / 区域 / 租户划分：
 
 | 用途 | 典型例子 |
 |---|---|
@@ -73,7 +73,7 @@ runtime:
 ## 4. 字段约束
 
 - **必填字段**：`id` / `type` / `region` / `cloud_provider` / `runtime_version` / `status` 不可省略
-- **id 唯一**：`id` 在 beeOS 平台内全局唯一
+- **id 唯一**：`id` 在 BeeOS 平台内全局唯一
 - **type 决定边界**：`type` 标识 runtime 用途，runtime 平台按 type 实施隔离策略（dev runtime 不允许访问 prod 数据等）
 - **type 一旦设定不修改**——runtime 用途变更 = 创建新 runtime（避免误用）
 - **status 状态机**：`启动中 → 就绪 → 排空中 → 已停止`，不允许跳变（异常情况强杀除外）

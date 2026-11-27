@@ -143,7 +143,7 @@ def _probe_sku(ctx: ProbeContext) -> dict[str, Any]:
     所以编码带随机后缀，每轮一个干净的商品。
 
     代价：验证实例的主数据里会多出探针商品（每个都标了
-    `remark=beeOS 测试盒自动创建`）。这是**验证实例**才允许的代价——
+    `remark=BeeOS 测试盒自动创建`）。这是**验证实例**才允许的代价——
     生产实例上根本不会跑到这一步（造数场景被挡住）。
     """
     client = ctx.client
@@ -155,7 +155,7 @@ def _probe_sku(ctx: ProbeContext) -> dict[str, Any]:
         "unit": "箱",
         "batchManaged": 1,
         "shelfLifeDays": 365,
-        "remark": "beeOS 测试盒自动创建，勿用于真实业务",
+        "remark": "BeeOS 测试盒自动创建，勿用于真实业务",
     })
     return created
 
@@ -204,8 +204,8 @@ def _receive_and_putaway(
     order = client.create_inbound_order({
         "warehouseId": warehouse_id,
         "supplierCode": "SUP-BEEOS-PROBE",
-        "supplierName": "beeOS 测试盒",
-        "remark": "beeOS 测试盒探针造数",
+        "supplierName": "BeeOS 测试盒",
+        "remark": "BeeOS 测试盒探针造数",
         "items": [{"skuId": sku_id, "expectedQty": qty}],
     })
     inbound_id = order["id"]
@@ -229,7 +229,7 @@ def _receive_and_putaway(
         raise WmsError(f"入库单 {inbound_id} 收货后没有生成上架任务")
     client.execute_putaway(tasks[0]["id"], {
         "toLocationId": storage_location_id,
-        "operator": "beeOS 测试盒",
+        "operator": "BeeOS 测试盒",
     })
     receipt_items = receipt.get("items") or []
     return {
@@ -289,7 +289,7 @@ def _prepare_batch_expiry(ctx: ProbeContext) -> dict[str, Any]:
         "warehouseId": warehouse_id,
         "customerId": customer["id"],
         "priority": 5,
-        "remark": "beeOS 测试盒探针造数",
+        "remark": "BeeOS 测试盒探针造数",
         "items": [{"skuId": sku["id"], "orderedQty": BATCH_QTY}],
     })
     outbound_id = outbound["id"]

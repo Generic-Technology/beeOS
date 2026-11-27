@@ -1219,15 +1219,26 @@ class TestRadialLayoutIsDerived:
 
         写 box_id 的话，读者看到的是「也交给 wms_testing_box」——
         那是内部标识，业务方看不懂。
+
+        **名字分两行**（「也交给」一行、目标盒名一行）：
+        一行的话整条 ≈146px，横在卡片中间就会压到「往下一只盒子」
+        的那条连线——线被盖掉一截，读起来像线断了。
         """
         from tests.test_web_kanban import _strip_js_comments
 
         code = _strip_js_comments(HTML_PAGE)
-        assert "也交给 " in code, "跨位的交接没写在盒子上"
+        assert "也交给" in code, "跨位的交接没写在盒子上"
         assert "display_name" in code, "盒子上的那行字没取显示名"
         # 显示名要跟目标盒对上，而不是随便写一个名字
         assert "byId[t].meta.display_name" in code, (
             "盒子上的那行字没跟目标盒对上——写的是硬编码的名字"
+        )
+        # 两行：前缀一行、名字一行（宽度才压得住连线）
+        assert 'class="box-extra-lead"' in code, (
+            "角标的前缀没单独一行——一行的话会横在连线上"
+        )
+        assert 'class="box-extra-name"' in code, (
+            "角标的目标盒名没单独一行"
         )
 
     def test_the_legend_and_title_sit_beside_the_map(self):

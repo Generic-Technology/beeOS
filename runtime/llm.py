@@ -2,7 +2,7 @@
 runtime.llm - LLM 调用客户端（最小可替换实现）
 
 定位：
-- 这是 beeOS 的基础设施，不是业务语义——runtime 只知道"调一个模型"，
+- 这是 BeeOS 的基础设施，不是业务语义——runtime 只知道"调一个模型"，
   不知道被设计的领域是什么
 - 业务提示词不属于本模块：它由调用方（结构化器）传入，本模块只管传输与解析
 
@@ -169,7 +169,7 @@ def _resolve_endpoint() -> tuple[str, str]:
             "no usable LLM credential: "
             f"{_CONFIG_PATH} provider.minimax.options.apiKey is a placeholder. "
             f"Set a real key in that file, or export {_ENV_KEY}=<key> "
-            "before starting beeOS (and restart the web server)."
+            "before starting BeeOS (and restart the web server)."
         )
 
     base = (env_base or str(options.get("baseURL") or "")).strip().rstrip("/")

@@ -311,12 +311,12 @@ class TestHealthEndpoints:
         from kanban.web import HTML_PAGE
 
         assert "<h1>BeeOS Fulfillment Center</h1>" in HTML_PAGE, (
-            "看板的页头写产品名（beeOS）"
+            "看板的页头写产品名（BeeOS）"
         )
         with urllib.request.urlopen(f"{server_url}/workshop") as resp:
             body = resp.read().decode("utf-8")
         assert "<h1>BeeOS Workshop</h1>" in body, (
-            "工作台的页头也写产品名（beeOS）"
+            "工作台的页头也写产品名（BeeOS）"
         )
         assert "BeeBox Map" in HTML_PAGE, (
             "图上那张是「BeeBox Map」——那是东西的名字，不是页面名"
